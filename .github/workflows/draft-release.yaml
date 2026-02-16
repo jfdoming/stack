@@ -29,7 +29,7 @@ jobs:
       - name: Resolve release tag and check if it exists
         id: version
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -53,7 +53,7 @@ jobs:
       - name: Download binary artifacts from CI Build run
         if: steps.version.outputs.release_exists != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         shell: bash
@@ -81,7 +81,7 @@ jobs:
       - name: Create draft release and attach binaries
         if: steps.version.outputs.release_exists != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         shell: bash
         run: |
           set -euo pipefail
