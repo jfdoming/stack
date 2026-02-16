@@ -7,6 +7,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `src/app.rs`: runtime bootstrap (CLI parse, git/db/provider init) and command dispatch.
 - `src/args/`: CLI flags/subcommands (`clap`).
 - `src/commands/`: per-command execution flows.
+- `src/commands/nav.rs`: stack navigation commands (`top`, `bottom`, `up`, `down`) for branch switching.
 - `src/core/`: stack graph logic, sync planner, sync executor, plain tree rendering.
 - `src/db/`: SQLite schema/migrations and persistence for branches, parent links, sync metadata, PR cache.
 - `src/git/`: git command wrapper (branch ops, fetch, replay/rebase, stash, merge-base).

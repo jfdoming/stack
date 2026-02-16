@@ -131,6 +131,30 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             ctx.cli.global.yes,
             ctx.cli.global.debug,
         ),
+        Some(Commands::Top) => commands::nav::run(
+            &ctx.db,
+            &ctx.git,
+            commands::nav::NavCommand::Top,
+            ctx.cli.global.porcelain,
+        ),
+        Some(Commands::Bottom) => commands::nav::run(
+            &ctx.db,
+            &ctx.git,
+            commands::nav::NavCommand::Bottom,
+            ctx.cli.global.porcelain,
+        ),
+        Some(Commands::Up) => commands::nav::run(
+            &ctx.db,
+            &ctx.git,
+            commands::nav::NavCommand::Up,
+            ctx.cli.global.porcelain,
+        ),
+        Some(Commands::Down) => commands::nav::run(
+            &ctx.db,
+            &ctx.git,
+            commands::nav::NavCommand::Down,
+            ctx.cli.global.porcelain,
+        ),
         Some(Commands::Completions(args)) => commands::completions::run(args.shell),
     }
 }

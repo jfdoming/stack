@@ -35,6 +35,10 @@ cargo install --path .
 stack                 # one-shot stack visualization
 stack --interactive   # fullscreen interactive UI
 stack create --parent main --name feat/child
+stack up               # switch to direct child in stack
+stack down             # switch to direct parent in stack
+stack top              # jump to top-most descendant
+stack bottom           # jump to root ancestor
 stack track feat/child
 stack track --all --dry-run
 stack untrack <branch>

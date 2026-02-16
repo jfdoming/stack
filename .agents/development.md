@@ -5,6 +5,10 @@
 - `cargo test`: run unit tests.
 - `cargo fmt`: apply rustfmt formatting.
 - `cargo run -- --help`: top-level command help.
+- `cargo run -- top`: switch to the top-most descendant in the current stack path.
+- `cargo run -- bottom`: switch to the root ancestor branch for the current stack path.
+- `cargo run -- up`: switch to a direct child branch.
+- `cargo run -- down`: switch to the direct parent branch.
 - `cargo run -- sync --dry-run`: preview sync plan without execution.
 - `cargo run -- track feat/branch --parent main`: track an existing local branch under a parent branch.
 - `cargo run -- track --all --dry-run`: preview inferred relationships for all local non-base branches.
@@ -21,6 +25,7 @@
 ## Local behaviour notes
 - `stack` without args prints a one-shot tree visualization by default.
 - `stack --interactive` opens the fullscreen TUI.
+- `stack up`/`stack top` prompt for child selection in TTY mode when the current branch has multiple tracked children; non-interactive mode returns an ambiguity error.
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.

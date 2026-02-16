@@ -2,6 +2,15 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.9.0 - 2026-02-16
+- Added stack navigation commands:
+  - `stack top` to jump to the top-most descendant in the current stack path.
+  - `stack bottom` to jump to the root ancestor in the current stack path.
+  - `stack up` to switch to a direct child branch.
+  - `stack down` to switch to the direct parent branch.
+- In TTY mode, `stack up` and `stack top` now prompt for child selection when multiple tracked children exist; non-interactive mode reports an ambiguity error.
+- Added integration coverage for up/down, top/bottom, and multi-child ambiguity handling.
+
 ## 0.8.25 - 2026-02-16
 - `stack sync` now restores the branch that was checked out before the sync run, even when restack operations switch branch context.
 - Added integration coverage to ensure post-sync branch context returns to the original branch.
