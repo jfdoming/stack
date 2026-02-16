@@ -390,7 +390,7 @@ fn render_pr_link(
         let label = if let Some(number) = pr_number {
             format!("PR #{number}")
         } else {
-            "open compare".to_string()
+            "no PR".to_string()
         };
         format!(" {}", osc8_hyperlink(&url, &label).dark_grey().underlined())
     } else {
@@ -520,6 +520,29 @@ mod tests {
         );
         assert!(rendered.contains("\u{1b}]8;;https://github.com/acme/repo/pull/123\u{1b}\\"));
         assert!(rendered.contains("PR #123"));
+    }
+
+    #[test]
+    fn render_tree_colored_uses_no_pr_label_for_compare_link() {
+        let branches = vec![BranchRecord {
+            id: 1,
+            name: "feat/no-pr".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: None,
+            cached_pr_number: None,
+            cached_pr_state: Some("none".to_string()),
+        }];
+
+        let rendered = render_tree(
+            &branches,
+            true,
+            Some("https://github.com/acme/repo"),
+            "main",
+        );
+        assert!(rendered.contains(
+            "\u{1b}]8;;https://github.com/acme/repo/compare/main...feat/no-pr?expand=1\u{1b}\\"
+        ));
+        assert!(rendered.contains("no PR"));
     }
 
     #[test]
