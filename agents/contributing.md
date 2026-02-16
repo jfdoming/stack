@@ -20,5 +20,6 @@ PRs should include:
 Update documentation in the same PR as code changes:
 - update `AGENTS.md` when top-level navigation or contributor workflow changes,
 - add/update files in `agents/` when module behavior, architecture, or workflows change.
+- append a concise entry to `agents/changelog.md` for significant behavior changes.
 
 Prefer small, targeted updates over large rewrites.
