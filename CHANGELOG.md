@@ -2,6 +2,13 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.4 - 2026-02-16
+- Added a shared branch PR-body helper in `src/util/pr_body.rs` and wired both:
+  - `stack pr` default body generation, and
+  - `stack` compare-link body generation
+  to use the same source, preventing format drift.
+- Updated manual PR fallback output so styled TTY mode shows exactly `open PR manually` as clickable OSC 8 text.
+
 ## 0.10.3 - 2026-02-16
 - Optimized `stack sync` PR metadata refresh by batching GitHub PR list lookups instead of running one `gh` metadata query per branch.
 - Added sync integration coverage to assert batched PR metadata lookup usage.

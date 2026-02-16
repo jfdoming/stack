@@ -10,7 +10,7 @@ use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
 use crate::ui::interaction::confirm_inline_yes_no;
-use crate::util::pr_body::{ManagedBranchRef, managed_pr_section};
+use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
 use crate::util::terminal::osc8_hyperlink;
 use crate::util::url::{github_owner_from_web_url, url_encode_component};
 
@@ -226,10 +226,7 @@ pub fn run(
         Err(err) => {
             eprintln!("warning: could not auto-open PR URL ({err})");
             let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-            println!(
-                "open PR manually: {}",
-                format_manual_pr_link(&url, use_clickable)
-            );
+            println!("{}", format_manual_pr_link(&url, use_clickable));
         }
     }
     Ok(())
@@ -237,9 +234,11 @@ pub fn run(
 
 fn format_manual_pr_link(url: &str, use_clickable: bool) -> String {
     if use_clickable {
-        return osc8_hyperlink(url, url).underlined().to_string();
+        return osc8_hyperlink(url, "open PR manually")
+            .underlined()
+            .to_string();
     }
-    url.to_string()
+    format!("open PR manually: {url}")
 }
 
 fn format_existing_pr_ref(git: &Git, base_branch: &str, number: i64) -> Result<String> {
@@ -378,14 +377,6 @@ fn compose_pr_body(
     managed: Option<&ManagedPrSection>,
     user_body: Option<&str>,
 ) -> Option<String> {
-    let user_body = user_body.and_then(|b| {
-        if b.trim().is_empty() {
-            None
-        } else {
-            Some(b.trim())
-        }
-    });
-
     let parent = managed
         .and_then(|m| m.parent.as_ref())
         .map(|p| ManagedBranchRef {
@@ -398,14 +389,13 @@ fn compose_pr_body(
             branch: c.branch.clone(),
             pr_number: c.pr_number,
         });
-    let managed_section =
-        managed_pr_section(base_url, base_branch, parent.as_ref(), first_child.as_ref());
-
-    Some(if let Some(user) = user_body {
-        format!("{managed_section}\n\n{user}")
-    } else {
-        managed_section
-    })
+    Some(compose_branch_pr_body(
+        base_url,
+        base_branch,
+        parent.as_ref(),
+        first_child.as_ref(),
+        user_body,
+    ))
 }
 
 #[cfg(test)]
@@ -494,13 +484,13 @@ mod tests {
         let url = "https://github.com/acme/repo/pull/1";
         let out = format_manual_pr_link(url, true);
         assert!(out.contains("\u{1b}]8;;https://github.com/acme/repo/pull/1\u{1b}\\"));
-        assert!(out.contains(url));
+        assert!(out.contains("open PR manually"));
     }
 
     #[test]
     fn format_manual_pr_link_plain_keeps_full_url() {
         let url = "https://github.com/acme/repo/compare/main...very/long/branch/name?expand=1";
         let out = format_manual_pr_link(url, false);
-        assert_eq!(out, url);
+        assert_eq!(out, format!("open PR manually: {url}"));
     }
 }

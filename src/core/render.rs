@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crossterm::style::Stylize;
 
 use crate::db::BranchRecord;
+use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
 use crate::util::url::url_encode_component;
 
 pub fn render_tree(
@@ -152,12 +153,20 @@ fn render_pr_link(
                 " [no PR (same base/head)]".to_string()
             };
         }
-        let body = compose_stack_pr_body(
+        let parent_ref = parent_branch.map(|branch| ManagedBranchRef {
+            branch: branch.to_string(),
+            pr_number: None,
+        });
+        let first_child_ref = child_branches.first().map(|branch| ManagedBranchRef {
+            branch: branch.clone(),
+            pr_number: None,
+        });
+        let body = compose_branch_pr_body(
             base,
             compare_base,
-            head_branch,
-            parent_branch,
-            child_branches,
+            parent_ref.as_ref(),
+            first_child_ref.as_ref(),
+            None,
         );
         format!(
             "{}/compare/{}...{}?expand=1&body={}",
@@ -183,32 +192,6 @@ fn render_pr_link(
 
 fn osc8_hyperlink(url: &str, label: &str) -> String {
     format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
-}
-
-fn compose_stack_pr_body(
-    base_url: &str,
-    base_branch: &str,
-    head_branch: &str,
-    parent_branch: Option<&str>,
-    child_branches: &[String],
-) -> String {
-    let root = base_url.trim_end_matches('/');
-    let mut lines = vec!["### Stack Flow".to_string()];
-    lines.push(format!(
-        "[{base_branch}]({root}/tree/{base_branch}) → [{head_branch}]({root}/tree/{head_branch})"
-    ));
-    if let Some(parent) = parent_branch {
-        lines.push(format!("parent: [{parent}]({root}/tree/{parent})"));
-    }
-    if !child_branches.is_empty() {
-        let children = child_branches
-            .iter()
-            .map(|child| format!("[{child}]({root}/tree/{child})"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        lines.push(format!("children: {children}"));
-    }
-    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -342,7 +325,7 @@ mod tests {
         assert!(!rendered.contains("[PR:none]"));
         assert!(rendered.contains("[no PR]"));
         assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
-        assert!(rendered.contains("body=%23%23%23%20Stack%20Flow"));
+        assert!(rendered.contains("stack%3Amanaged%3Astart"));
         assert!(rendered.contains("%E2%86%92"));
     }
 
