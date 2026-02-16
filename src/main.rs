@@ -660,8 +660,12 @@ fn cmd_track(
 
     for change in apply_changes.iter() {
         println!(
-            "track {}: '{}' -> '{}' (source: {}, confidence: {})",
-            if opts.dry_run { "preview" } else { "plan" },
+            "{} '{}' under '{}' (source: {}, confidence: {})",
+            if opts.dry_run {
+                "would track"
+            } else {
+                "tracking"
+            },
             change.branch,
             change.new_parent,
             change.source.as_str(),
@@ -669,21 +673,21 @@ fn cmd_track(
         );
     }
     for skip in skipped {
-        println!("track skipped '{}': {}", skip.branch, skip.reason);
+        println!("skipped '{}': {}", skip.branch, skip.reason);
     }
     for branch in &unresolved {
-        println!("track unresolved '{}': no confident parent found", branch);
+        println!("could not determine a parent for '{}'", branch);
     }
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }
 
     if opts.dry_run {
-        println!("track dry run complete");
+        println!("track dry run complete; no changes were made");
     } else if applied {
-        println!("track applied");
+        println!("tracking updated");
     } else {
-        println!("track not applied: no relationship changes");
+        println!("no tracking changes were needed");
     }
 
     if args.all && !opts.dry_run && !is_tty && !unresolved.is_empty() {
