@@ -118,6 +118,9 @@ pub fn build_sync_plan(
         if !branch_exists.get(&branch.name).copied().unwrap_or(false) {
             continue;
         }
+        if branch.name == base_branch {
+            db.set_pr_cache(&branch.name, None, None)?;
+        }
 
         if let Some(pr) = pr_by_branch.get(&branch.name).cloned() {
             let state = match pr.state {

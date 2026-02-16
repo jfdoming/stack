@@ -139,6 +139,14 @@ fn render_pr_link(
     default_base_branch: &str,
     color: bool,
 ) -> String {
+    if head_branch == default_base_branch {
+        return if color {
+            format!(" {}", "[no PR (same base/head)]".dark_grey())
+        } else {
+            " [no PR (same base/head)]".to_string()
+        };
+    }
+
     let Some(base) = pr_base_url else {
         return String::new();
     };
@@ -247,7 +255,7 @@ mod tests {
     fn render_tree_includes_pr_link_when_repo_url_known() {
         let branches = vec![BranchRecord {
             id: 1,
-            name: "main".to_string(),
+            name: "feat/a".to_string(),
             parent_branch_id: None,
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: Some(42),
@@ -338,7 +346,7 @@ mod tests {
             name: "main".to_string(),
             parent_branch_id: None,
             last_synced_head_sha: Some("abc".to_string()),
-            cached_pr_number: None,
+            cached_pr_number: Some(6944),
             cached_pr_state: None,
         }];
 
@@ -350,5 +358,6 @@ mod tests {
         );
         assert!(rendered.contains("[no PR (same base/head)]"));
         assert!(!rendered.contains("/compare/main...main"));
+        assert!(!rendered.contains("/pull/6944"));
     }
 }
