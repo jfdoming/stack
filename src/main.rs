@@ -91,8 +91,14 @@ struct TrackSkip {
 
 #[derive(Debug, Clone)]
 struct ManagedPrSection {
-    parent: Option<String>,
-    children: Vec<String>,
+    parent: Option<BranchPrRef>,
+    children: Vec<BranchPrRef>,
+}
+
+#[derive(Debug, Clone)]
+struct BranchPrRef {
+    branch: String,
+    pr_number: Option<i64>,
 }
 
 fn main() -> Result<()> {
@@ -1109,18 +1115,24 @@ fn cmd_pr(
             ),
         };
     let managed_pr_section = current_record.and_then(|record| {
-        let parent = record
-            .parent_branch_id
-            .and_then(|parent_id| by_id.get(&parent_id).map(|r| r.name.clone()));
+        let parent = record.parent_branch_id.and_then(|parent_id| {
+            by_id.get(&parent_id).map(|r| BranchPrRef {
+                branch: r.name.clone(),
+                pr_number: r.cached_pr_number,
+            })
+        });
         if parent.is_none() {
             return None;
         }
-        let mut children: Vec<String> = records
+        let mut children: Vec<BranchPrRef> = records
             .iter()
             .filter(|r| r.parent_branch_id == Some(record.id))
-            .map(|r| r.name.clone())
+            .map(|r| BranchPrRef {
+                branch: r.name.clone(),
+                pr_number: r.cached_pr_number,
+            })
             .collect();
-        children.sort();
+        children.sort_by(|a, b| a.branch.cmp(&b.branch));
         Some(ManagedPrSection { parent, children })
     });
 
@@ -1653,15 +1665,39 @@ fn compose_pr_body(
         "[{base_branch}]({root}/tree/{base_branch}) -> [{head_branch}]({root}/tree/{head_branch})"
     ));
 
+    let parent_chain = managed
+        .and_then(|m| m.parent.as_ref())
+        .map(|p| format_pr_chain_node(root, p))
+        .unwrap_or_else(|| "previous".to_string());
+    let child_chain = managed
+        .map(|m| {
+            if m.children.is_empty() {
+                "next".to_string()
+            } else {
+                m.children
+                    .iter()
+                    .map(|c| format_pr_chain_node(root, c))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        })
+        .unwrap_or_else(|| "next".to_string());
+    lines.push(format!(
+        "PR chain: {parent_chain} -> #this PR -> {child_chain}"
+    ));
+
     if let Some(managed) = managed {
-        if let Some(parent) = managed.parent.as_deref() {
-            lines.push(format!("parent: [{parent}]({root}/tree/{parent})"));
+        if let Some(parent) = managed.parent.as_ref() {
+            lines.push(format!(
+                "parent: [{}]({root}/tree/{})",
+                parent.branch, parent.branch
+            ));
         }
         if !managed.children.is_empty() {
             let child_links = managed
                 .children
                 .iter()
-                .map(|child| format!("[{child}]({root}/tree/{child})"))
+                .map(|child| format!("[{}]({root}/tree/{})", child.branch, child.branch))
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!("children: {child_links}"));
@@ -1674,6 +1710,14 @@ fn compose_pr_body(
     } else {
         managed_block
     })
+}
+
+fn format_pr_chain_node(root: &str, node: &BranchPrRef) -> String {
+    if let Some(number) = node.pr_number {
+        format!("[#{number}]({root}/pull/{number})")
+    } else {
+        format!("[{}]({root}/tree/{})", node.branch, node.branch)
+    }
 }
 
 fn truncate_for_display(value: &str, max_chars: usize) -> String {
@@ -1906,8 +1950,20 @@ mod tests {
     #[test]
     fn compose_pr_body_prepends_managed_section() {
         let managed = ManagedPrSection {
-            parent: Some("feat/parent".to_string()),
-            children: vec!["feat/child-a".to_string(), "feat/child-b".to_string()],
+            parent: Some(BranchPrRef {
+                branch: "feat/parent".to_string(),
+                pr_number: Some(123),
+            }),
+            children: vec![
+                BranchPrRef {
+                    branch: "feat/child-a".to_string(),
+                    pr_number: Some(125),
+                },
+                BranchPrRef {
+                    branch: "feat/child-b".to_string(),
+                    pr_number: None,
+                },
+            ],
         };
         let body = compose_pr_body(
             "https://github.com/acme/repo",
@@ -1920,6 +1976,9 @@ mod tests {
         assert!(body.starts_with("### Stack Flow"));
         assert!(body.contains(
             "[feat/base](https://github.com/acme/repo/tree/feat/base) -> [feat/head](https://github.com/acme/repo/tree/feat/head)"
+        ));
+        assert!(body.contains(
+            "PR chain: [#123](https://github.com/acme/repo/pull/123) -> #this PR -> [#125](https://github.com/acme/repo/pull/125), [feat/child-b](https://github.com/acme/repo/tree/feat/child-b)"
         ));
         assert!(
             body.contains("parent: [feat/parent](https://github.com/acme/repo/tree/feat/parent)")
@@ -1944,6 +2003,7 @@ mod tests {
         assert!(body.contains(
             "[main](https://github.com/acme/repo/tree/main) -> [feat/demo](https://github.com/acme/repo/tree/feat/demo)"
         ));
+        assert!(body.contains("PR chain: previous -> #this PR -> next"));
         assert!(body.ends_with("User body text"));
     }
 }
