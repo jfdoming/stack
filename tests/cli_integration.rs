@@ -82,6 +82,20 @@ fn configure_local_push_url(repo: &Path) -> PathBuf {
     bare
 }
 
+#[cfg(unix)]
+fn install_fake_browser_openers(fake_bin: &Path, log_path: &Path) {
+    let script = format!(
+        "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nexit 0\n",
+        log_path.display()
+    );
+    for bin in ["xdg-open", "open"] {
+        let path = fake_bin.join(bin);
+        fs::write(&path, &script).expect("write fake browser opener");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("chmod fake browser opener");
+    }
+}
+
 fn run_git(repo: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(repo)
@@ -402,7 +416,9 @@ fn pr_yes_pushes_and_prints_pr_open_link() {
     let bare = configure_local_push_url(repo.path());
 
     let fake_bin = repo.path().join("fake-bin");
+    let open_log = repo.path().join("open.log");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
@@ -423,8 +439,15 @@ fn pr_yes_pushes_and_prints_pr_open_link() {
             "pushed 'feat/pr-create' to 'origin'",
         ))
         .stdout(predicate::str::contains(
-            "open PR: https://github.com/acme/stack-test/compare/main...feat/pr-create?expand=1",
+            "opened PR URL in browser: https://github.com/acme/stack-test/compare/main...feat/pr-create?expand=1",
         ));
+
+    let open_calls = fs::read_to_string(&open_log).expect("read open log");
+    assert!(
+        open_calls
+            .contains("https://github.com/acme/stack-test/compare/main...feat/pr-create?expand=1"),
+        "expected browser opener call, got: {open_calls}"
+    );
 
     let pushed = Command::new("git")
         .current_dir(&bare)
@@ -477,7 +500,9 @@ fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
     configure_local_push_url(repo.path());
 
     let fake_bin = repo.path().join("fake-bin");
+    let open_log = repo.path().join("open.log");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
@@ -495,8 +520,16 @@ fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "open PR: https://github.com/acme/stack-test/compare/main...alice:feat/fork-pr-open?expand=1",
+            "opened PR URL in browser: https://github.com/acme/stack-test/compare/main...alice:feat/fork-pr-open?expand=1",
         ));
+
+    let open_calls = fs::read_to_string(&open_log).expect("read open log");
+    assert!(
+        open_calls.contains(
+            "https://github.com/acme/stack-test/compare/main...alice:feat/fork-pr-open?expand=1"
+        ),
+        "expected browser opener call, got: {open_calls}"
+    );
 }
 
 #[cfg(unix)]
@@ -511,7 +544,9 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
     configure_local_push_url(repo.path());
 
     let fake_bin = repo.path().join("fake-bin");
+    let open_log = repo.path().join("open.log");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
@@ -529,11 +564,18 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "open PR: https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1",
+            "opened PR URL in browser: https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1",
         ))
         .stderr(predicate::str::contains(
             "could not determine existing PR status from gh",
         ));
+
+    let open_calls = fs::read_to_string(&open_log).expect("read open log");
+    assert!(
+        open_calls
+            .contains("https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1"),
+        "expected browser opener call, got: {open_calls}"
+    );
 }
 
 #[cfg(unix)]

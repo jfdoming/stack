@@ -32,7 +32,7 @@
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
-- `stack pr` requires confirmation before pushing and printing an open-PR link unless `--yes` is passed.
+- `stack pr` requires confirmation before pushing and auto-opening the PR URL in a browser unless `--yes` is passed.
 - On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base; link-open flow still requires confirmation (or `--yes`).
 - `stack pr` blocks self-targeted PRs (`base == head`) with a clear message instead of generating a broken compare link.
 - For fork branches, `stack pr` builds compare links against `upstream` (when configured) and uses `owner:branch` head refs.

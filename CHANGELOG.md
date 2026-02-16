@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.15 - 2026-02-16
+- `stack pr` now auto-opens the generated PR URL in a browser after push, with a manual URL fallback message when opener launch fails.
+
 ## 0.8.14 - 2026-02-16
 - `stack pr` now detects fork branches and builds compare links against `upstream` (when configured), using `owner:branch` head refs for cross-repo PRs.
 
