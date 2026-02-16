@@ -36,7 +36,7 @@ Keep version bumps task-scoped: finish the task, then bump once.
 ## Documentation hygiene
 Update documentation in the same PR as code changes:
 - update `AGENTS.md` when top-level navigation or contributor workflow changes,
-- add/update files in `agents/` when module behaviour, architecture, or workflows change.
+- add/update files in `.agents/` when module behaviour, architecture, or workflows change.
 - append a concise entry to `CHANGELOG.md` whenever a new version is released.
 
 Prefer small, targeted updates over large rewrites.
