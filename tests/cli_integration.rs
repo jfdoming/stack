@@ -31,6 +31,19 @@ fn init_repo() -> TempDir {
     dir
 }
 
+fn init_repo_without_origin() -> TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    run_git(dir.path(), &["init", "-b", "main"]);
+    run_git(dir.path(), &["config", "user.email", "test@example.com"]);
+    run_git(dir.path(), &["config", "user.name", "Stack Test"]);
+    run_git(dir.path(), &["config", "commit.gpgsign", "false"]);
+
+    fs::write(dir.path().join("README.md"), "init\n").expect("write readme");
+    run_git(dir.path(), &["add", "README.md"]);
+    run_git(dir.path(), &["commit", "-m", "initial"]);
+    dir
+}
+
 fn run_git(repo: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(repo)
@@ -214,5 +227,23 @@ fn stack_default_output_includes_pr_hyperlink_when_cached_pr_exists() {
         .success()
         .stdout(predicate::str::contains(
             "https://github.com/acme/stack-test/pull/123",
+        ));
+}
+
+#[test]
+fn sync_succeeds_without_origin_remote() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/local"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "no 'origin' remote configured; skipping fetch",
         ));
 }
