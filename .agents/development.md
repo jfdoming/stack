@@ -37,6 +37,7 @@
 - In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.
+- In stack tree output, branches without a PR show a clickable `no PR` compare label.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.

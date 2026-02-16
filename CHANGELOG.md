@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.9 - 2026-02-16
+- Updated stack tree compare-link label from `open compare` to `no PR` in styled TTY output, while keeping it clickable.
+
 ## 0.8.8 - 2026-02-16
 - When `stack pr` detects an existing PR, the printed PR hash now renders as a clickable terminal link in styled TTY output.
 
