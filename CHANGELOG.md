@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.11 - 2026-02-16
+- Consolidated PR link-target resolution into a shared helper (`src/util/pr_links.rs`) used by both `stack pr` and `stack` summary rendering.
+- Fixed `stack` summary PR/compare links to use per-branch repo context (including fork/upstream head refs) instead of a single global repo base.
+
 ## 0.10.10 - 2026-02-16
 - In `stack` view rendering, base branch entries now always show `no PR (same base/head)` and ignore stale cached PR numbers.
 - During `stack sync`, base branch PR cache is explicitly cleared to avoid lingering incorrect PR links.

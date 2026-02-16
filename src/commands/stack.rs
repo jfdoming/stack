@@ -3,10 +3,11 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::Result;
 
-use crate::core::render_tree;
+use crate::core::{BranchLinkTarget, render_tree};
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::ui::tui;
+use crate::util::pr_links::determine_pr_link_target;
 use crate::views::{BranchView, print_json};
 
 pub fn run(
@@ -31,11 +32,46 @@ pub fn run(
 
     let should_color = is_tty && std::env::var_os("NO_COLOR").is_none();
     let pr_base_url = git.remote_web_url(base_remote)?;
+    let link_targets = build_branch_link_targets(git, &records, base_branch);
     println!(
         "{}",
-        render_tree(&records, should_color, pr_base_url.as_deref(), base_branch)
+        render_tree(
+            &records,
+            should_color,
+            pr_base_url.as_deref(),
+            base_branch,
+            Some(&link_targets),
+        )
     );
     Ok(())
+}
+
+fn build_branch_link_targets(
+    git: &Git,
+    records: &[BranchRecord],
+    base_branch: &str,
+) -> HashMap<String, BranchLinkTarget> {
+    let by_id: HashMap<i64, String> = records.iter().map(|r| (r.id, r.name.clone())).collect();
+    let mut out = HashMap::new();
+    for rec in records {
+        let compare_base = rec
+            .parent_branch_id
+            .and_then(|id| by_id.get(&id).cloned())
+            .unwrap_or_else(|| base_branch.to_string());
+        if compare_base == rec.name {
+            continue;
+        }
+        if let Ok(target) = determine_pr_link_target(git, &compare_base, &rec.name) {
+            out.insert(
+                rec.name.clone(),
+                BranchLinkTarget {
+                    base_url: target.base_url,
+                    head_ref: target.head_ref,
+                },
+            );
+        }
+    }
+    out
 }
 
 fn to_branch_views(git: &Git, records: &[BranchRecord]) -> Result<Vec<BranchView>> {
