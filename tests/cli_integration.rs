@@ -403,6 +403,59 @@ fn delete_command_splices_children_and_deletes_local_branch() {
 }
 
 #[test]
+fn untrack_command_splices_children_and_removes_branch_record() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/a", "--name", "feat/b"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/b", "--name", "feat/c"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["untrack", "feat/b", "--porcelain"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"action\": \"untrack\""));
+
+    let output = stack_cmd(repo.path())
+        .args(["--porcelain"])
+        .output()
+        .expect("run stack --porcelain");
+    assert!(output.status.success());
+    let branches: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let rows = branches.as_array().expect("branch array");
+
+    assert!(
+        !rows.iter().any(|row| row["name"] == "feat/b"),
+        "feat/b should be untracked"
+    );
+
+    let feat_c = rows
+        .iter()
+        .find(|row| row["name"] == "feat/c")
+        .expect("feat/c entry");
+    assert_eq!(feat_c["parent"], "feat/a");
+}
+
+#[test]
+fn unlink_subcommand_is_removed() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["unlink", "feat/a"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand 'unlink'"));
+}
+
+#[test]
 fn create_without_parent_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();
 

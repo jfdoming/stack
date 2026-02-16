@@ -8,6 +8,7 @@
 - `cargo run -- sync --dry-run`: preview sync plan without execution.
 - `cargo run -- track feat/branch --parent main`: track an existing local branch under a parent branch.
 - `cargo run -- track --all --dry-run`: preview inferred relationships for all local non-base branches.
+- `cargo run -- untrack feat/branch`: remove a tracked branch record and splice children to its former parent.
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 

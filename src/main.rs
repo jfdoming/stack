@@ -161,9 +161,7 @@ fn run() -> Result<()> {
             },
         ),
         Some(Commands::Doctor(args)) => cmd_doctor(&db, &git, cli.global.porcelain, args.fix),
-        Some(Commands::Unlink(args)) => {
-            cmd_unlink(&db, &args.branch, args.drop_record, cli.global.porcelain)
-        }
+        Some(Commands::Untrack(args)) => cmd_untrack(&db, &args.branch, cli.global.porcelain),
         Some(Commands::Delete(args)) => cmd_delete(
             &db,
             &git,
@@ -834,29 +832,23 @@ fn cmd_doctor(db: &Database, git: &Git, porcelain: bool, fix: bool) -> Result<()
     Ok(())
 }
 
-fn cmd_unlink(db: &Database, branch: &str, drop_record: bool, porcelain: bool) -> Result<()> {
+fn cmd_untrack(db: &Database, branch: &str, porcelain: bool) -> Result<()> {
     if db.branch_by_name(branch)?.is_none() {
         return Err(anyhow!("branch '{}' is not tracked", branch));
     }
 
-    if drop_record {
-        db.delete_branch(branch)?;
-    } else {
-        db.clear_parent(branch)?;
-    }
+    db.splice_out_branch(branch)?;
 
     let payload = serde_json::json!({
         "branch": branch,
-        "drop_record": drop_record,
+        "action": "untrack",
         "status": "ok"
     });
 
     if porcelain {
         print_json(&payload)?;
-    } else if drop_record {
-        println!("removed branch record '{branch}'");
     } else {
-        println!("unlinked '{branch}' from parent");
+        println!("untracked '{branch}' and spliced stack children to its parent");
     }
 
     Ok(())
