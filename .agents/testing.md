@@ -3,6 +3,11 @@
 Use this file for test strategy, scope, and execution expectations.
 
 ## Default Test Workflow
+- Use TDD for behaviour changes:
+  - write or update tests first,
+  - run the relevant tests and confirm they fail before implementation,
+  - implement the change only after observing failure,
+  - rerun tests to confirm they pass.
 - Run `cargo test` before finalizing code changes.
 - Run `cargo fmt` before committing.
 - Prefer adding tests in the same module as the change (`mod tests`) when practical.
