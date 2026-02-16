@@ -114,6 +114,10 @@ impl Git {
     }
 
     pub fn fetch_origin(&self) -> Result<()> {
+        if !self.has_remote("origin")? {
+            eprintln!("warning: no 'origin' remote configured; skipping fetch");
+            return Ok(());
+        }
         self.run(["fetch", "origin"])
     }
 
@@ -185,6 +189,19 @@ impl Git {
             .output()
             .map(|out| String::from_utf8_lossy(&out.stdout).contains("replay"))
             .unwrap_or(false)
+    }
+
+    fn has_remote(&self, name: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["remote"])
+            .output()
+            .context("failed to list git remotes")?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+        let remotes = String::from_utf8(output.stdout)?;
+        Ok(remotes.lines().any(|line| line.trim() == name))
     }
 
     pub fn replay_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
