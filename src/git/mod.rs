@@ -74,6 +74,14 @@ impl Git {
         self.run(["branch", name, parent])
     }
 
+    pub fn checkout_branch(&self, branch: &str) -> Result<()> {
+        self.run(["checkout", branch])
+    }
+
+    pub fn delete_local_branch(&self, branch: &str) -> Result<()> {
+        self.run(["branch", "-D", branch])
+    }
+
     pub fn head_sha(&self, branch: &str) -> Result<String> {
         self.capture(["rev-parse", branch])
             .map(|s| s.trim().to_string())
