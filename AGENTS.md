@@ -15,9 +15,9 @@ Read these before making any code or doc change:
 1. `TASKS.md`
 2. `.agents/contributing.md`
 3. `.agents/development.md`
-4. `.agents/docs.md`
 
 Then read `.agents/architecture.md` for task-relevant codebase context.
+Read `.agents/docs.md` before making or updating documentation.
 Read `.agents/testing.md` before writing or modifying any tests.
 
 ## Critical Global Rules
@@ -27,6 +27,8 @@ Read `.agents/testing.md` before writing or modifying any tests.
 - Prompt for missing required args/options in interactive mode whenever practical.
 - Use Canadian English in user-facing text/docs.
 - Docs-only changes do not require a version bump or changelog entry.
+- Make doc updates in the same task when behaviour, flags, workflows, architecture, or user-facing output changes.
+- Add or update tests in the same task when behaviour, control flow, output contracts, or bug fixes change runtime behaviour.
 
 ## Scope Of `AGENTS.md`
 - Keep only global guardrails and doc index/navigation in this file.
