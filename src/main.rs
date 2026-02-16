@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
 use crossterm::style::Stylize;
 use dialoguer::console::Term;
-use dialoguer::{Input, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
 use thiserror::Error;
@@ -318,10 +318,7 @@ fn cmd_sync(
         let operation_count = plan_view.operations.len();
         confirm_with_select(
             "Apply sync plan?",
-            &[
-                format!("Will run {operation_count} planned operation(s)."),
-                "Enter to select, Esc/Ctrl-C to cancel.".to_string(),
-            ],
+            Some(&format!("{operation_count} operation(s) pending")),
             "Yes - apply sync updates now",
             "No - keep plan only (no changes)",
         )?
@@ -571,15 +568,14 @@ fn cmd_delete(
     let should_apply = if yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        confirm_with_select(
-            &format!("Delete '{}' and close its upstream PR?", payload["branch"]),
-            &[
-                format!("Parent after splice: {}", payload["parent"]),
-                format!("PR number: {:?}", payload["pr_number"]),
-                "Enter to select, Esc/Ctrl-C to cancel.".to_string(),
-            ],
-            "Yes - delete branch, close PR, and splice stack",
-            "No - cancel delete",
+        prompt_or_cancel(
+            Confirm::new()
+                .with_prompt(format!(
+                    "Delete '{}' and close its upstream PR? [y/N]",
+                    payload["branch"]
+                ))
+                .default(false)
+                .interact(),
         )?
     } else {
         false
@@ -697,12 +693,12 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
 
 fn confirm_with_select(
     prompt: &str,
-    details: &[String],
+    summary: Option<&str>,
     yes_label: &str,
     no_label: &str,
 ) -> Result<bool> {
-    for line in details {
-        println!("  {}", line.as_str().dark_grey());
+    if let Some(line) = summary {
+        println!("  {}", line.dark_grey());
     }
     let theme = ColorfulTheme::default();
     let options = vec![
