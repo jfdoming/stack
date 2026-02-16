@@ -59,3 +59,14 @@ Update documentation in the same PR as code changes:
 - For iterations on the same task, keep a single changelog entry (update the existing entry instead of adding another).
 
 Prefer small, targeted updates over large rewrites.
+
+## Rust quality checklist
+Before finalizing Rust changes, verify:
+- model intent with types (prefer explicit structs/enums over ambiguous primitives/flags),
+- borrow first and avoid unnecessary clones,
+- keep APIs composable and idiomatic (`new`, `from_*`, `as_*`, iterators, traits where useful),
+- add contextual errors at boundaries (`anyhow::Context`) and avoid panics for recoverable paths,
+- prefer clear `match`/`if let` control flow over deeply nested conditionals,
+- keep mutable state and scope minimal,
+- run `cargo fmt` and `cargo test` as default quality gates,
+- use `cargo clippy` for non-trivial refactors and resolve meaningful lints instead of suppressing by default.
