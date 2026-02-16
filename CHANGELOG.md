@@ -2,6 +2,12 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.2.13 - 2026-02-16
+- Defaulted inline operation confirmation to `Yes`.
+- Auto-selected the only viable branch for create/delete flows and reported the assumption.
+- Replaced ambiguous cancellation text after declined operations with a clearer no-op message.
+- Standardized contributor docs to Canadian English spellings.
+
 ## 0.2.12 - 2026-02-16
 - Unified sync and delete confirmations to the inline yes/no toggle style.
 - Finalized compact confirmation behavior after prompt UX iterations.

@@ -170,6 +170,12 @@ fn cmd_create(
 
     let parent = if let Some(parent) = parent_arg {
         parent.clone()
+    } else if parent_candidates.len() == 1 {
+        let assumed = parent_candidates[0].clone();
+        if !porcelain {
+            println!("assuming parent branch '{assumed}' (only viable branch)");
+        }
+        assumed
     } else if stdout().is_terminal() && stdin().is_terminal() {
         let default_idx = parent_candidates
             .iter()
@@ -500,20 +506,28 @@ fn cmd_delete(
 ) -> Result<()> {
     let current = git.current_branch()?;
     let records = db.list_branches()?;
+    let viable_names: Vec<String> = records
+        .iter()
+        .filter(|r| r.name != base_branch)
+        .map(|r| r.name.clone())
+        .collect();
     let theme = ColorfulTheme::default();
+
+    if args.branch.is_none() && viable_names.is_empty() {
+        return Err(anyhow!("no tracked non-base branches available to delete"));
+    }
 
     let target = if let Some(branch) = &args.branch {
         branch.clone()
-    } else if stdout().is_terminal() && stdin().is_terminal() {
-        let tracked_names: Vec<String> = records.iter().map(|r| r.name.clone()).collect();
-        if tracked_names.is_empty() {
-            return Err(anyhow!("no tracked branches available to delete"));
+    } else if viable_names.len() == 1 {
+        let assumed = viable_names[0].clone();
+        if !porcelain {
+            println!("assuming target branch '{assumed}' (only viable branch)");
         }
-        let picker_items = build_delete_picker_items(&tracked_names, &current, &records);
-        let default_idx = tracked_names
-            .iter()
-            .position(|b| b == &current)
-            .unwrap_or(0);
+        assumed
+    } else if stdout().is_terminal() && stdin().is_terminal() {
+        let picker_items = build_delete_picker_items(&viable_names, &current, &records);
+        let default_idx = viable_names.iter().position(|b| b == &current).unwrap_or(0);
         let idx = prompt_or_cancel(
             Select::with_theme(&theme)
                 .with_prompt(
@@ -523,7 +537,7 @@ fn cmd_delete(
                 .default(default_idx)
                 .interact(),
         )?;
-        tracked_names[idx].clone()
+        viable_names[idx].clone()
     } else {
         return Err(anyhow!(
             "branch required in non-interactive mode; pass stack delete <branch>"
@@ -576,7 +590,7 @@ fn cmd_delete(
     };
     if !should_apply {
         if !porcelain {
-            println!("delete cancelled");
+            println!("delete not applied: confirmation declined; no changes made");
         }
         return Ok(());
     }
@@ -691,7 +705,7 @@ fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
     execute!(out, Hide).context("failed to hide cursor for inline confirm")?;
 
     let result = (|| -> Result<bool> {
-        let mut yes_selected = false;
+        let mut yes_selected = true;
         loop {
             execute!(out, Clear(ClearType::CurrentLine)).context("failed to clear line")?;
             write!(out, "\r{prompt}  ").context("failed to write prompt")?;
