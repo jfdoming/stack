@@ -184,12 +184,24 @@ fn cmd_create(
 
     db.set_parent(&child, Some(&parent))?;
     let child_sha = git.head_sha(&child)?;
+    let create_url = git
+        .origin_web_url()?
+        .map(|base| {
+            format!(
+                "{}/compare/{}...{}?expand=1",
+                base.trim_end_matches('/'),
+                parent,
+                child
+            )
+        })
+        .unwrap_or_default();
     db.set_sync_sha(&child, &child_sha)?;
     let out = serde_json::json!({
         "created": child,
         "parent": parent,
         "head_sha": child_sha,
         "db": db_summary_path(git)?,
+        "create_url": create_url,
     });
 
     if porcelain {
@@ -198,14 +210,28 @@ fn cmd_create(
         let use_color = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         if use_color {
             println!(
-                "created stack branch: {} -> {}",
+                "created stack branch: {} -> {}{}",
                 out["parent"].as_str().unwrap_or("<unknown>").green().bold(),
-                out["created"].as_str().unwrap_or("<unknown>").cyan().bold()
+                out["created"].as_str().unwrap_or("<unknown>").cyan().bold(),
+                if out["create_url"].as_str().unwrap_or_default().is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " {}",
+                        out["create_url"].as_str().unwrap_or_default().dark_grey()
+                    )
+                }
             );
         } else {
             println!(
-                "created stack branch: {} -> {}",
-                out["parent"], out["created"]
+                "created stack branch: {} -> {}{}",
+                out["parent"],
+                out["created"],
+                if out["create_url"].as_str().unwrap_or_default().is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", out["create_url"])
+                }
             );
         }
     }
