@@ -4,7 +4,8 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::style::Stylize;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
 
-use crate::commands::shared::{build_branch_picker_items, prompt_or_cancel};
+use crate::ui::interaction::prompt_or_cancel;
+use crate::ui::pickers::build_branch_picker_items;
 use crate::core::rank_parent_candidates;
 use crate::db::Database;
 use crate::git::Git;
@@ -100,7 +101,7 @@ pub fn run(
     });
 
     if porcelain {
-        crate::output::print_json(&out)?;
+        crate::views::print_json(&out)?;
     } else {
         let use_color = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         if use_color {

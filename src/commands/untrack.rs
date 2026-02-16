@@ -3,7 +3,8 @@ use std::io::{IsTerminal, stdin, stdout};
 use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
 
-use crate::commands::shared::{build_delete_picker_items, confirm_inline_yes_no, prompt_or_cancel};
+use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
+use crate::ui::pickers::build_delete_picker_items;
 use crate::db::Database;
 use crate::git::Git;
 
@@ -81,7 +82,7 @@ pub fn run(
             "reason": "base branch cannot be untracked"
         });
         if porcelain {
-            crate::output::print_json(&payload)?;
+            crate::views::print_json(&payload)?;
         } else {
             println!("base branch '{base_branch}' remains tracked as stack root; no changes made");
         }
@@ -101,7 +102,7 @@ pub fn run(
     });
 
     if porcelain {
-        crate::output::print_json(&payload)?;
+        crate::views::print_json(&payload)?;
     } else {
         println!("removed '{branch}' from the stack and re-linked its child branches");
     }

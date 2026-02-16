@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 use clap::CommandFactory;
 use dialoguer::{Select, theme::ColorfulTheme};
 
-use crate::cli::Cli;
-use crate::commands::shared::prompt_or_cancel;
+use crate::args::Cli;
+use crate::ui::interaction::prompt_or_cancel;
 
 pub fn run(shell: Option<clap_complete::Shell>) -> Result<()> {
     let shell = if let Some(shell) = shell {

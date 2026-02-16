@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::output::BranchView;
+use crate::views::BranchView;
 
 pub fn run_stack_tui(branches: &[BranchView]) -> Result<()> {
     enable_raw_mode()?;

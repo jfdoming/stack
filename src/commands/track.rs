@@ -4,10 +4,9 @@ use std::io::{IsTerminal, stdin, stdout};
 use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
 
-use crate::cli::TrackArgs;
-use crate::commands::shared::{
-    UserCancelled, build_branch_picker_items, confirm_inline_yes_no, prompt_or_cancel,
-};
+use crate::args::TrackArgs;
+use crate::ui::interaction::{UserCancelled, confirm_inline_yes_no, prompt_or_cancel};
+use crate::ui::pickers::build_branch_picker_items;
 use crate::core::rank_parent_candidates;
 use crate::db::{BranchRecord, Database, ParentUpdate};
 use crate::git::Git;
@@ -363,7 +362,7 @@ pub fn run(
     });
 
     if opts.porcelain {
-        crate::output::print_json(&payload)?;
+        crate::views::print_json(&payload)?;
         if args.all && !opts.dry_run && !is_tty && !unresolved.is_empty() {
             return Err(anyhow!("some branches could not be resolved"));
         }

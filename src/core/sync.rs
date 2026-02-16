@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 
 use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
-use crate::output::{OperationView, SyncPlanView};
+use crate::views::{OperationView, SyncPlanView};
 use crate::provider::{PrState, Provider};
 
 #[derive(Debug, Clone)]
