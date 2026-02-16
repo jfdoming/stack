@@ -1105,6 +1105,22 @@ fn cmd_pr(
         );
     }
 
+    if current == base {
+        let reason = format!(
+            "cannot open PR from '{}' into itself; switch to a non-base branch or set a different parent/base",
+            current
+        );
+        if porcelain {
+            return print_json(&serde_json::json!({
+                "head": current,
+                "base": base,
+                "can_open_link": false,
+                "error": reason,
+            }));
+        }
+        return Err(anyhow!(reason));
+    }
+
     let existing = match provider.resolve_pr_by_head(&current, cached_number) {
         Ok(existing) => existing,
         Err(err) => {
@@ -1460,6 +1476,12 @@ fn build_pr_open_url(
     body: Option<&str>,
     draft: bool,
 ) -> Result<String> {
+    if base == head {
+        return Err(anyhow!(
+            "cannot build PR link when base and head are the same branch ('{}')",
+            head
+        ));
+    }
     let Some(base_url) = git.remote_web_url(remote)? else {
         return Err(anyhow!(
             "unable to derive PR URL from remote '{}'; configure a GitHub-style remote URL",

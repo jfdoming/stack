@@ -544,6 +544,41 @@ fn pr_untracked_branch_requires_yes_in_non_interactive_mode() {
         ));
 }
 
+#[test]
+fn pr_on_base_branch_fails_with_clear_message() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["--yes", "pr"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cannot open PR from 'main' into itself",
+        ));
+}
+
+#[test]
+fn pr_on_base_branch_porcelain_reports_blocked_state() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["pr", "--porcelain"])
+        .output()
+        .expect("run stack pr porcelain on base branch");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["head"], "main");
+    assert_eq!(json["base"], "main");
+    assert_eq!(json["can_open_link"], false);
+    assert!(json["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("cannot open PR from 'main' into itself"));
+}
+
 #[cfg(unix)]
 #[test]
 fn track_infer_uses_fork_qualified_head_for_pr_detection() {
