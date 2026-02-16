@@ -2,10 +2,7 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
-## 0.11.0 - 2026-02-16
-- `stack track` now refreshes PR cache metadata for newly tracked branches after successful non-dry-run updates, so immediate `stack` output reflects current PR links/states.
-- Added integration coverage for track-time PR cache refresh.
-- Reapplied shared PR link-target resolution so `stack pr` and `stack` rendering both use consistent per-branch repo/head selection in fork/upstream flows.
+## 0.11.1 - 2026-02-16
 - Refined managed PR-body stack flow formatting:
   - omit leading ellipsis when the base branch is the direct parent,
   - insert an arrow after leading ellipsis (`… →`),
@@ -13,6 +10,11 @@ All notable changes to this repository are documented here. Each version in `Car
   - omit trailing continuation when the current branch has no child branch,
   - replace `#this PR (this PR)` with `(this PR)`.
 - Base-branch links in managed PR-body stack flow now point to the exact merge-base commit (`/commit/<sha>`) instead of the moving base branch tree ref.
+
+## 0.11.0 - 2026-02-16
+- `stack track` now refreshes PR cache metadata for newly tracked branches after successful non-dry-run updates, so immediate `stack` output reflects current PR links/states.
+- Added integration coverage for track-time PR cache refresh.
+- Reapplied shared PR link-target resolution so `stack pr` and `stack` rendering both use consistent per-branch repo/head selection in fork/upstream flows.
 
 ## 0.10.11 - 2026-02-16
 - Consolidated PR link-target resolution into a shared helper (`src/util/pr_links.rs`) used by both `stack pr` and `stack` summary rendering.
