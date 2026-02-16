@@ -133,6 +133,51 @@ impl Git {
         Ok("main".to_string())
     }
 
+    pub fn origin_web_url(&self) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["remote", "get-url", "origin"])
+            .output()
+            .context("failed to read origin remote URL")?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let raw = String::from_utf8(output.stdout)?.trim().to_string();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(rest) = raw.strip_prefix("git@") {
+            if let Some((host, repo)) = rest.split_once(':') {
+                return Ok(Some(format!(
+                    "https://{}/{}",
+                    host.trim_end_matches('/'),
+                    repo.trim_end_matches(".git")
+                )));
+            }
+        }
+
+        if let Some(rest) = raw.strip_prefix("ssh://git@")
+            && let Some((host, repo)) = rest.split_once('/')
+        {
+            return Ok(Some(format!(
+                "https://{}/{}",
+                host.trim_end_matches('/'),
+                repo.trim_end_matches(".git")
+            )));
+        }
+
+        if raw.starts_with("https://") || raw.starts_with("http://") {
+            return Ok(Some(
+                raw.trim_end_matches(".git")
+                    .trim_end_matches('/')
+                    .to_string(),
+            ));
+        }
+
+        Ok(None)
+    }
+
     pub fn supports_replay(&self) -> bool {
         Command::new("git")
             .current_dir(&self.root)
