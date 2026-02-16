@@ -10,8 +10,9 @@ use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
 use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
+use crate::util::pr_links::determine_pr_link_target;
 use crate::util::terminal::osc8_hyperlink;
-use crate::util::url::{github_owner_from_web_url, url_encode_component};
+use crate::util::url::url_encode_component;
 
 #[derive(Debug, Clone)]
 struct ManagedPrSection {
@@ -135,7 +136,7 @@ pub fn run(
             return crate::views::print_json(&payload);
         }
         if let Some(number) = payload["existing_pr_number"].as_i64() {
-            let pr_ref = format_existing_pr_ref(git, &base, number)?;
+            let pr_ref = format_existing_pr_ref(git, &base, &current, number)?;
             println!(
                 "PR already exists for '{}': {}",
                 payload["head"].as_str().unwrap_or_default(),
@@ -154,7 +155,7 @@ pub fn run(
         if porcelain {
             return crate::views::print_json(&payload);
         }
-        let pr_ref = format_existing_pr_ref(git, &base, number)?;
+        let pr_ref = format_existing_pr_ref(git, &base, &current, number)?;
         println!(
             "PR already exists for '{}': {}",
             payload["head"].as_str().unwrap_or_default(),
@@ -210,20 +211,17 @@ fn format_manual_pr_link(url: &str, use_clickable: bool) -> String {
     format!("open PR manually: {url}")
 }
 
-fn format_existing_pr_ref(git: &Git, base_branch: &str, number: i64) -> Result<String> {
+fn format_existing_pr_ref(git: &Git, base_branch: &str, head_branch: &str, number: i64) -> Result<String> {
     let label = format!("#{number}");
     let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     if !use_clickable {
         return Ok(label);
     }
 
-    let Some(remote) = git.remote_for_branch(base_branch)? else {
+    let Ok(link_target) = determine_pr_link_target(git, base_branch, head_branch) else {
         return Ok(label);
     };
-    let Some(base_url) = git.remote_web_url(&remote)? else {
-        return Ok(label);
-    };
-    let url = format!("{}/pull/{}", base_url.trim_end_matches('/'), number);
+    let url = format!("{}/pull/{}", link_target.base_url.trim_end_matches('/'), number);
     Ok(osc8_hyperlink(&url, &label).underlined().to_string())
 }
 
@@ -236,50 +234,9 @@ fn build_pr_open_url(
     draft: bool,
     managed: Option<&ManagedPrSection>,
 ) -> Result<String> {
-    if base == head {
-        return Err(anyhow!(
-            "cannot build PR link when base and head are the same branch ('{}')",
-            head
-        ));
-    }
-    let head_remote = git
-        .remote_for_branch(head)?
-        .unwrap_or_else(|| "origin".to_string());
-    let head_url = git.remote_web_url(&head_remote)?;
-    let mut base_remote = git
-        .remote_for_branch(base)?
-        .or_else(|| git.remote_for_branch(head).ok().flatten())
-        .unwrap_or_else(|| "origin".to_string());
-    if let (Some(head_url), Some(upstream_url)) = (
-        head_url.as_deref(),
-        git.remote_web_url("upstream")?.as_deref(),
-    ) && let (Some(head_owner), Some(upstream_owner)) = (
-        github_owner_from_web_url(head_url),
-        github_owner_from_web_url(upstream_url),
-    ) && head_owner != upstream_owner
-    {
-        base_remote = "upstream".to_string();
-    }
-
-    let Some(base_url) = git.remote_web_url(&base_remote)? else {
-        return Err(anyhow!(
-            "unable to derive PR URL from remote '{}'; configure a GitHub-style remote URL",
-            base_remote
-        ));
-    };
-
-    let head_ref = if let (Some(head_url), Some(base_owner)) =
-        (head_url.as_deref(), github_owner_from_web_url(&base_url))
-        && let Some(head_owner) = github_owner_from_web_url(head_url)
-    {
-        if head_owner != base_owner {
-            format!("{head_owner}:{head}")
-        } else {
-            head.to_string()
-        }
-    } else {
-        head.to_string()
-    };
+    let link_target = determine_pr_link_target(git, base, head)?;
+    let base_url = link_target.base_url;
+    let head_ref = link_target.head_ref;
     let mut params = vec!["expand=1".to_string()];
     if let Some(title) = title
         && !title.is_empty()

@@ -6,11 +6,18 @@ use crate::db::BranchRecord;
 use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
 use crate::util::url::url_encode_component;
 
+#[derive(Debug, Clone)]
+pub struct BranchLinkTarget {
+    pub base_url: String,
+    pub head_ref: String,
+}
+
 pub fn render_tree(
     branches: &[BranchRecord],
     color: bool,
     pr_base_url: Option<&str>,
     default_base_branch: &str,
+    link_targets: Option<&HashMap<String, BranchLinkTarget>>,
 ) -> String {
     let mut out = String::new();
     let mut children: HashMap<Option<i64>, Vec<&BranchRecord>> = HashMap::new();
@@ -29,6 +36,7 @@ pub fn render_tree(
         color: bool,
         pr_base_url: Option<&'a str>,
         default_base_branch: &'a str,
+        link_targets: Option<&'a HashMap<String, BranchLinkTarget>>,
     }
 
     fn walk(out: &mut String, parent: Option<i64>, prefix: &str, ctx: &RenderCtx<'_>) {
@@ -53,6 +61,7 @@ pub fn render_tree(
                     .unwrap_or_default();
                 let pr_link = render_pr_link(
                     ctx.pr_base_url,
+                    ctx.link_targets.and_then(|targets| targets.get(&node.name)),
                     node.cached_pr_number,
                     parent_name,
                     &child_names,
@@ -86,6 +95,7 @@ pub fn render_tree(
         color,
         pr_base_url,
         default_base_branch,
+        link_targets,
     };
     walk(&mut out, None, "", &ctx);
     if out.is_empty() {
@@ -132,6 +142,7 @@ fn render_sync_state(has_sha: bool, color: bool) -> String {
 
 fn render_pr_link(
     pr_base_url: Option<&str>,
+    link_target: Option<&BranchLinkTarget>,
     pr_number: Option<i64>,
     parent_branch: Option<&str>,
     child_branches: &[String],
@@ -147,7 +158,10 @@ fn render_pr_link(
         };
     }
 
-    let Some(base) = pr_base_url else {
+    let base = link_target
+        .map(|target| target.base_url.as_str())
+        .or(pr_base_url);
+    let Some(base) = base else {
         return String::new();
     };
     let url = if let Some(number) = pr_number {
@@ -182,7 +196,9 @@ fn render_pr_link(
             "{}/compare/{}...{}?expand=1&body={}",
             base.trim_end_matches('/'),
             compare_base,
-            head_branch,
+            link_target
+                .map(|target| target.head_ref.as_str())
+                .unwrap_or(head_branch),
             url_encode_component(&body)
         )
     };
@@ -230,7 +246,7 @@ mod tests {
             },
         ];
 
-        let rendered = render_tree(&branches, false, None, "main");
+        let rendered = render_tree(&branches, false, None, "main", None);
         assert!(rendered.contains("└── feat/a"));
         assert!(rendered.contains("[PR:open]"));
         assert!(rendered.contains("[SYNC:never]"));
@@ -247,7 +263,7 @@ mod tests {
             cached_pr_state: Some("open".to_string()),
         }];
 
-        let rendered = render_tree(&branches, true, None, "main");
+        let rendered = render_tree(&branches, true, None, "main", None);
         assert!(rendered.contains("\u{1b}["));
     }
 
@@ -267,6 +283,7 @@ mod tests {
             false,
             Some("https://github.com/acme/repo"),
             "main",
+            None,
         );
         assert!(rendered.contains("https://github.com/acme/repo/pull/42"));
     }
@@ -287,6 +304,7 @@ mod tests {
             true,
             Some("https://github.com/acme/repo"),
             "main",
+            None,
         );
         assert!(rendered.contains("\u{1b}]8;;https://github.com/acme/repo/pull/123\u{1b}\\"));
         assert!(rendered.contains("PR #123"));
@@ -308,6 +326,7 @@ mod tests {
             true,
             Some("https://github.com/acme/repo"),
             "main",
+            None,
         );
         assert!(rendered.contains(
             "\u{1b}]8;;https://github.com/acme/repo/compare/main...feat/no-pr?expand=1&body="
@@ -331,6 +350,7 @@ mod tests {
             false,
             Some("https://github.com/acme/repo"),
             "main",
+            None,
         );
         assert!(!rendered.contains("[PR:none]"));
         assert!(rendered.contains("[no PR]"));
@@ -355,6 +375,7 @@ mod tests {
             false,
             Some("https://github.com/acme/repo"),
             "main",
+            None,
         );
         assert!(rendered.contains("[no PR (same base/head)]"));
         assert!(!rendered.contains("/compare/main...main"));
