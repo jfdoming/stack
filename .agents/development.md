@@ -21,6 +21,7 @@
 ## Local behaviour notes
 - `stack` without args prints a one-shot tree visualization by default.
 - `stack --interactive` opens the fullscreen TUI.
+- `stack create` does not print an immediate compare URL because a just-created branch has no diff yet.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.

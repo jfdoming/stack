@@ -339,20 +339,7 @@ fn cmd_create(
 
     db.set_parent(&child, Some(&parent))?;
     let child_sha = git.head_sha(&child)?;
-    let create_url = if let Some(remote) = git.remote_for_branch(&parent)? {
-        if let Some(base) = git.remote_web_url(&remote)? {
-            format!(
-                "{}/compare/{}...{}?expand=1",
-                base.trim_end_matches('/'),
-                parent,
-                child
-            )
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
+    let create_url = String::new();
     db.set_sync_sha(&child, &child_sha)?;
     let out = serde_json::json!({
         "created": child,
