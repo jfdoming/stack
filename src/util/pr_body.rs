@@ -44,7 +44,7 @@ pub fn managed_pr_section(
     } else {
         format!("{prefix}{parent_chain} → (this PR)")
     };
-    format!("{MANAGED_BODY_MARKER_START}\n{managed_line}<hr />\n{MANAGED_BODY_MARKER_END}")
+    format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n<hr />\n{MANAGED_BODY_MARKER_END}")
 }
 
 pub fn compose_branch_pr_body(
