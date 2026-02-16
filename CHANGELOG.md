@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.6 - 2026-02-16
+- Fixed inline yes/no prompt redraw so toggling no longer leaves repeated wrapped lines when prompts exceed terminal width.
+
 ## 0.8.5 - 2026-02-16
 - Added global `--debug` mode to surface full gh parse/error details; default mode keeps user-facing warnings concise.
 

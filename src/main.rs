@@ -12,7 +12,7 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
-use crossterm::cursor::{Hide, Show};
+use crossterm::cursor::{Hide, MoveToColumn, Show};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
 use crossterm::style::Stylize;
@@ -1433,8 +1433,9 @@ fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
     let result = (|| -> Result<bool> {
         let mut yes_selected = true;
         loop {
-            execute!(out, Clear(ClearType::CurrentLine)).context("failed to clear line")?;
-            write!(out, "\r{prompt}  ").context("failed to write prompt")?;
+            execute!(out, MoveToColumn(0), Clear(ClearType::FromCursorDown))
+                .context("failed to clear inline confirm area")?;
+            write!(out, "{prompt}  ").context("failed to write prompt")?;
 
             let yes = if yes_selected {
                 format!("{} {}", "●".green().bold(), "Yes".green().bold())
