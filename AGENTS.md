@@ -22,6 +22,7 @@ Read `.agents/testing.md` before writing or modifying any tests.
 
 ## Critical Global Rules
 - Execute tasks strictly in `TASKS.md` order, one at a time.
+- Treat `TASKS.md` as a live queue: new tasks may be added over time, and you always continue with the first unchecked item in the current file order.
 - Re-read `TASKS.md` after each completed task.
 - Create exactly one commit per completed `TASKS.md` item.
 - Prompt for missing required args/options in interactive mode whenever practical.
