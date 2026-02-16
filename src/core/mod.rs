@@ -10,7 +10,9 @@ use crate::provider::{PrState, Provider};
 
 #[derive(Debug, Clone)]
 pub enum SyncOp {
-    Fetch,
+    Fetch {
+        remote: String,
+    },
     Restack {
         branch: String,
         onto: String,
@@ -33,11 +35,11 @@ impl SyncPlan {
         let mut operations = Vec::new();
         for op in &self.ops {
             match op {
-                SyncOp::Fetch => operations.push(OperationView {
+                SyncOp::Fetch { remote } => operations.push(OperationView {
                     kind: "fetch".to_string(),
-                    branch: "origin".to_string(),
+                    branch: remote.clone(),
                     onto: None,
-                    details: "fetch origin".to_string(),
+                    details: format!("fetch {remote}"),
                 }),
                 SyncOp::Restack {
                     branch,
@@ -96,9 +98,12 @@ pub fn build_sync_plan(
     git: &Git,
     provider: &dyn Provider,
     base_branch: &str,
+    base_remote: &str,
 ) -> Result<SyncPlan> {
     let tracked = db.list_branches()?;
-    let mut ops = vec![SyncOp::Fetch];
+    let mut ops = vec![SyncOp::Fetch {
+        remote: base_remote.to_string(),
+    }];
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
 
@@ -128,7 +133,7 @@ pub fn build_sync_plan(
             if matches!(pr.state, PrState::Merged) {
                 let new_base = pr
                     .merge_commit_oid
-                    .unwrap_or_else(|| format!("origin/{base_branch}"));
+                    .unwrap_or_else(|| format!("{base_remote}/{base_branch}"));
                 if let Some(children_ids) = children.get(&branch.id) {
                     for child_id in children_ids {
                         if let Some(child) = by_id.get(child_id) {
@@ -198,7 +203,7 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
     let result: Result<()> = (|| {
         for op in &plan.ops {
             match op {
-                SyncOp::Fetch => git.fetch_origin()?,
+                SyncOp::Fetch { remote } => git.fetch_remote(remote)?,
                 SyncOp::Restack { branch, onto, .. } => {
                     let old_base = git.merge_base(branch, onto)?;
                     if replay_supported {

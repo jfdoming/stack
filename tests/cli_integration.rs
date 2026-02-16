@@ -44,6 +44,25 @@ fn init_repo_without_origin() -> TempDir {
     dir
 }
 
+fn init_repo_with_named_remote(remote: &str) -> TempDir {
+    let dir = init_repo_without_origin();
+    run_git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            remote,
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+    run_git(dir.path(), &["config", "branch.main.remote", remote]);
+    run_git(
+        dir.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+    dir
+}
+
 fn run_git(repo: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(repo)
@@ -266,4 +285,21 @@ fn stack_default_output_includes_pr_creation_link_when_pr_missing() {
         .stdout(predicate::str::contains(
             "https://github.com/acme/stack-test/compare/main...feat/new-pr?expand=1",
         ));
+}
+
+#[test]
+fn sync_plan_fetch_uses_base_branch_remote() {
+    let repo = init_repo_with_named_remote("upstream");
+
+    let output = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run stack sync");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let ops = json["operations"].as_array().expect("operations array");
+    let fetch = ops.first().expect("has first op");
+    assert_eq!(fetch["kind"], "fetch");
+    assert_eq!(fetch["branch"], "upstream");
 }

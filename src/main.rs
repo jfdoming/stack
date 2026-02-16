@@ -29,6 +29,12 @@ use crate::provider::GithubProvider;
 #[error("cancelled by user")]
 struct UserCancelled;
 
+struct SyncRunOptions {
+    porcelain: bool,
+    yes: bool,
+    dry_run: bool,
+}
+
 fn main() -> Result<()> {
     if let Err(err) = run() {
         if err.downcast_ref::<UserCancelled>().is_some() {
@@ -62,10 +68,18 @@ fn run() -> Result<()> {
     let default_base = git.default_base_branch()?;
     db.set_base_branch_if_missing(&default_base)?;
     let base_branch = db.repo_meta()?.base_branch;
+    let base_remote = git.base_remote_for_stack(&base_branch)?;
     let provider = GithubProvider::new(git.clone());
 
     match cli.command {
-        None => cmd_stack(&db, &git, cli.porcelain, cli.interactive),
+        None => cmd_stack(
+            &db,
+            &git,
+            cli.porcelain,
+            cli.interactive,
+            &base_branch,
+            &base_remote,
+        ),
         Some(Commands::Create(args)) => {
             cmd_create(&db, &git, &args.parent, &args.name, cli.porcelain)
         }
@@ -74,9 +88,12 @@ fn run() -> Result<()> {
             &git,
             &provider,
             &base_branch,
-            cli.porcelain,
-            cli.yes,
-            args.dry_run,
+            &base_remote,
+            SyncRunOptions {
+                porcelain: cli.porcelain,
+                yes: cli.yes,
+                dry_run: args.dry_run,
+            },
         ),
         Some(Commands::Doctor(args)) => cmd_doctor(&db, &git, cli.porcelain, args.fix),
         Some(Commands::Unlink(args)) => {
@@ -86,7 +103,14 @@ fn run() -> Result<()> {
     }
 }
 
-fn cmd_stack(db: &Database, git: &Git, porcelain: bool, interactive: bool) -> Result<()> {
+fn cmd_stack(
+    db: &Database,
+    git: &Git,
+    porcelain: bool,
+    interactive: bool,
+    base_branch: &str,
+    base_remote: &str,
+) -> Result<()> {
     let records = db.list_branches()?;
     let branch_views = to_branch_views(git, &records)?;
 
@@ -100,15 +124,10 @@ fn cmd_stack(db: &Database, git: &Git, porcelain: bool, interactive: bool) -> Re
     }
 
     let should_color = is_tty && std::env::var_os("NO_COLOR").is_none();
-    let pr_base_url = git.origin_web_url()?;
+    let pr_base_url = git.remote_web_url(base_remote)?;
     println!(
         "{}",
-        render_tree(
-            &records,
-            should_color,
-            pr_base_url.as_deref(),
-            &db.repo_meta()?.base_branch,
-        )
+        render_tree(&records, should_color, pr_base_url.as_deref(), base_branch)
     );
     Ok(())
 }
@@ -184,17 +203,20 @@ fn cmd_create(
 
     db.set_parent(&child, Some(&parent))?;
     let child_sha = git.head_sha(&child)?;
-    let create_url = git
-        .origin_web_url()?
-        .map(|base| {
+    let create_url = if let Some(remote) = git.remote_for_branch(&parent)? {
+        if let Some(base) = git.remote_web_url(&remote)? {
             format!(
                 "{}/compare/{}...{}?expand=1",
                 base.trim_end_matches('/'),
                 parent,
                 child
             )
-        })
-        .unwrap_or_default();
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
     db.set_sync_sha(&child, &child_sha)?;
     let out = serde_json::json!({
         "created": child,
@@ -243,14 +265,13 @@ fn cmd_sync(
     git: &Git,
     provider: &dyn Provider,
     base_branch: &str,
-    porcelain: bool,
-    yes: bool,
-    dry_run: bool,
+    base_remote: &str,
+    opts: SyncRunOptions,
 ) -> Result<()> {
-    let plan = build_sync_plan(db, git, provider, base_branch)?;
+    let plan = build_sync_plan(db, git, provider, base_branch, base_remote)?;
     let plan_view = plan.to_view();
 
-    if porcelain {
+    if opts.porcelain {
         print_json(&plan_view)?;
     } else {
         println!("sync base: {}", plan.base_branch);
@@ -270,11 +291,11 @@ fn cmd_sync(
         }
     }
 
-    if dry_run {
+    if opts.dry_run {
         return Ok(());
     }
 
-    let should_apply = if yes {
+    let should_apply = if opts.yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
         prompt_or_cancel(
@@ -288,14 +309,14 @@ fn cmd_sync(
     };
 
     if !should_apply {
-        if !porcelain {
+        if !opts.porcelain {
             println!("sync plan not applied");
         }
         return Ok(());
     }
 
     core::execute_sync_plan(db, git, &plan)?;
-    if !porcelain {
+    if !opts.porcelain {
         println!("sync completed");
     }
     Ok(())
