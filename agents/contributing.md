@@ -16,6 +16,14 @@ PRs should include:
 - test evidence (command + result),
 - sample CLI output or screenshots for user-visible behavior.
 
+## Versioning (SemVer)
+When bumping `Cargo.toml` version, use Semantic Versioning:
+- `PATCH`: non-breaking fixes/improvements/docs/refactors.
+- `MINOR`: new backward-compatible features.
+- `MAJOR`: any breaking change in CLI behavior, flags, output contracts, or storage expectations.
+
+Keep version bumps task-scoped: finish the task, then bump once.
+
 ## Documentation hygiene
 Update documentation in the same PR as code changes:
 - update `AGENTS.md` when top-level navigation or contributor workflow changes,
