@@ -113,12 +113,12 @@ impl Git {
         self.run(["stash", "pop", &stash.reference])
     }
 
-    pub fn fetch_origin(&self) -> Result<()> {
-        if !self.has_remote("origin")? {
-            eprintln!("warning: no 'origin' remote configured; skipping fetch");
+    pub fn fetch_remote(&self, remote: &str) -> Result<()> {
+        if !self.has_remote(remote)? {
+            eprintln!("warning: no '{remote}' remote configured; skipping fetch");
             return Ok(());
         }
-        self.run(["fetch", "origin"])
+        self.run(["fetch", remote])
     }
 
     pub fn default_base_branch(&self) -> Result<String> {
@@ -137,12 +137,12 @@ impl Git {
         Ok("main".to_string())
     }
 
-    pub fn origin_web_url(&self) -> Result<Option<String>> {
+    pub fn remote_web_url(&self, remote: &str) -> Result<Option<String>> {
         let output = Command::new("git")
             .current_dir(&self.root)
-            .args(["remote", "get-url", "origin"])
+            .args(["remote", "get-url", remote])
             .output()
-            .context("failed to read origin remote URL")?;
+            .with_context(|| format!("failed to read {remote} remote URL"))?;
         if !output.status.success() {
             return Ok(None);
         }
@@ -150,36 +150,45 @@ impl Git {
         if raw.is_empty() {
             return Ok(None);
         }
+        Ok(parse_remote_to_web_url(&raw))
+    }
 
-        if let Some(rest) = raw.strip_prefix("git@")
-            && let Some((host, repo)) = rest.split_once(':')
+    pub fn remote_for_branch(&self, branch: &str) -> Result<Option<String>> {
+        let config_key = format!("branch.{branch}.remote");
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["config", "--get", &config_key])
+            .output()
+            .with_context(|| format!("failed to read {config_key}"))?;
+
+        if output.status.success() {
+            let remote = String::from_utf8(output.stdout)?.trim().to_string();
+            if !remote.is_empty() {
+                return Ok(Some(remote));
+            }
+        }
+
+        let upstream = self
+            .capture([
+                "for-each-ref",
+                "--format=%(upstream:short)",
+                &format!("refs/heads/{branch}"),
+            ])
+            .unwrap_or_default();
+        let upstream = upstream.trim();
+        if let Some((remote, _)) = upstream.split_once('/')
+            && !remote.is_empty()
         {
-            return Ok(Some(format!(
-                "https://{}/{}",
-                host.trim_end_matches('/'),
-                repo.trim_end_matches(".git")
-            )));
+            return Ok(Some(remote.to_string()));
         }
 
-        if let Some(rest) = raw.strip_prefix("ssh://git@")
-            && let Some((host, repo)) = rest.split_once('/')
-        {
-            return Ok(Some(format!(
-                "https://{}/{}",
-                host.trim_end_matches('/'),
-                repo.trim_end_matches(".git")
-            )));
-        }
+        Ok(Some("origin".to_string()))
+    }
 
-        if raw.starts_with("https://") || raw.starts_with("http://") {
-            return Ok(Some(
-                raw.trim_end_matches(".git")
-                    .trim_end_matches('/')
-                    .to_string(),
-            ));
-        }
-
-        Ok(None)
+    pub fn base_remote_for_stack(&self, base_branch: &str) -> Result<String> {
+        Ok(self
+            .remote_for_branch(base_branch)?
+            .unwrap_or_else(|| "origin".to_string()))
     }
 
     pub fn supports_replay(&self) -> bool {
@@ -248,4 +257,36 @@ impl Git {
         }
         Ok(())
     }
+}
+
+fn parse_remote_to_web_url(raw: &str) -> Option<String> {
+    if let Some(rest) = raw.strip_prefix("git@")
+        && let Some((host, repo)) = rest.split_once(':')
+    {
+        return Some(format!(
+            "https://{}/{}",
+            host.trim_end_matches('/'),
+            repo.trim_end_matches(".git")
+        ));
+    }
+
+    if let Some(rest) = raw.strip_prefix("ssh://git@")
+        && let Some((host, repo)) = rest.split_once('/')
+    {
+        return Some(format!(
+            "https://{}/{}",
+            host.trim_end_matches('/'),
+            repo.trim_end_matches(".git")
+        ));
+    }
+
+    if raw.starts_with("https://") || raw.starts_with("http://") {
+        return Some(
+            raw.trim_end_matches(".git")
+                .trim_end_matches('/')
+                .to_string(),
+        );
+    }
+
+    None
 }
