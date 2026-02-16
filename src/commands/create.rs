@@ -4,11 +4,11 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::style::Stylize;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
 
-use crate::ui::interaction::prompt_or_cancel;
-use crate::ui::pickers::build_branch_picker_items;
 use crate::core::rank_parent_candidates;
 use crate::db::Database;
 use crate::git::Git;
+use crate::ui::interaction::prompt_or_cancel;
+use crate::ui::pickers::build_branch_picker_items;
 use crate::util::terminal::osc8_hyperlink;
 
 pub fn run(

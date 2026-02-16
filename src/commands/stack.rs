@@ -6,8 +6,8 @@ use anyhow::Result;
 use crate::core::render_tree;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
-use crate::views::{BranchView, print_json};
 use crate::ui::tui;
+use crate::views::{BranchView, print_json};
 
 pub fn run(
     db: &Database,

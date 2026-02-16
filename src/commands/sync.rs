@@ -3,11 +3,11 @@ use std::io::{IsTerminal, stdin, stdout};
 use anyhow::Result;
 use crossterm::style::Stylize;
 
-use crate::ui::interaction::confirm_inline_yes_no;
 use crate::core::build_sync_plan;
 use crate::db::Database;
 use crate::git::Git;
 use crate::provider::Provider;
+use crate::ui::interaction::confirm_inline_yes_no;
 
 pub struct SyncRunOptions {
     pub porcelain: bool,

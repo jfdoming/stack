@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 
 use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
-use crate::views::{OperationView, SyncPlanView};
 use crate::provider::{PrState, Provider};
+use crate::views::{OperationView, SyncPlanView};
 
 #[derive(Debug, Clone)]
 pub enum SyncOp {

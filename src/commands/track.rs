@@ -5,12 +5,12 @@ use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
 
 use crate::args::TrackArgs;
-use crate::ui::interaction::{UserCancelled, confirm_inline_yes_no, prompt_or_cancel};
-use crate::ui::pickers::build_branch_picker_items;
 use crate::core::rank_parent_candidates;
 use crate::db::{BranchRecord, Database, ParentUpdate};
 use crate::git::Git;
 use crate::provider::Provider;
+use crate::ui::interaction::{UserCancelled, confirm_inline_yes_no, prompt_or_cancel};
+use crate::ui::pickers::build_branch_picker_items;
 
 #[derive(Debug, Clone)]
 pub struct TrackRunOptions {

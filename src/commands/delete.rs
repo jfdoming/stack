@@ -5,11 +5,11 @@ use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
 
 use crate::args::DeleteArgs;
-use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
-use crate::ui::pickers::build_delete_picker_items;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
+use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
+use crate::ui::pickers::build_delete_picker_items;
 
 pub fn run(
     db: &Database,
