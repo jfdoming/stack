@@ -3,6 +3,7 @@
 ## Task loop (`TASKS.md`)
 Follow this workflow exactly:
 - Work one task at a time. Do not implement multiple open tasks in one pass.
+- Treat `TASKS.md` as a queue that can change over time: after finishing a task, continue with the first unchecked item in the latest file order.
 - Re-read `TASKS.md` immediately after completing each task.
 - “Before marking an item off here, ask yourself if you have truly completed the task or if you cut corners.”
 - Commit immediately after completing each task, before starting the next one.
