@@ -967,7 +967,7 @@ fn cmd_untrack(
     if porcelain {
         print_json(&payload)?;
     } else {
-        println!("untracked '{branch}' and spliced stack children to its parent");
+        println!("removed '{branch}' from the stack and re-linked its child branches");
     }
 
     Ok(())
