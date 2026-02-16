@@ -1109,13 +1109,6 @@ fn cmd_pr(
         Some(ManagedPrSection { parent, children })
     });
 
-    if let Some(reason) = &non_stacked_reason {
-        eprintln!(
-            "warning: '{}' is not stacked ({}); using base branch '{}' for PR",
-            current, reason, base
-        );
-    }
-
     if current == base {
         let reason = format!(
             "cannot open PR from '{}' into itself; switch to a non-base branch or set a different parent/base",
@@ -1130,6 +1123,13 @@ fn cmd_pr(
             }));
         }
         return Err(anyhow!(reason));
+    }
+
+    if let Some(reason) = &non_stacked_reason {
+        eprintln!(
+            "warning: '{}' is not stacked ({}); using base branch '{}' for PR",
+            current, reason, base
+        );
     }
 
     let existing = match provider.resolve_pr_by_head(&current, cached_number) {
