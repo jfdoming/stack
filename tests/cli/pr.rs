@@ -289,6 +289,90 @@ fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
 }
 
 #[cfg(unix)]#[test]
+fn pr_uses_upstream_compare_url_when_head_branch_remote_is_upstream() {
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:alice/stack-test.git",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/upstream-head"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/upstream-head"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/upstream-head.remote", "upstream"],
+    );
+    let upstream_push = repo.path().join("upstream-push.git");
+    run_git(
+        repo.path(),
+        &[
+            "init",
+            "--bare",
+            upstream_push.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "upstream",
+            upstream_push.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(repo.path(), &["push", "upstream", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    let open_log = repo.path().join("open.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/upstream-head\"* ]]; then\n  echo '[]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
+        .args(["--yes", "pr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("opened PR URL in browser"));
+
+    let open_calls = fs::read_to_string(&open_log).expect("read open log");
+    assert!(
+        open_calls.contains(
+            "https://github.com/acme/stack-test/compare/main...feat/upstream-head?expand=1"
+        ),
+        "expected upstream compare URL, got: {open_calls}"
+    );
+}
+
+#[cfg(unix)]#[test]
 fn pr_url_includes_managed_section_links_for_stacked_branch() {
     let repo = init_repo();
     stack_cmd(repo.path())

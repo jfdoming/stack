@@ -21,9 +21,10 @@ pub fn determine_pr_link_target(git: &Git, base: &str, head: &str) -> Result<PrL
         .remote_for_branch(head)?
         .unwrap_or_else(|| "origin".to_string());
     let head_url = git.remote_web_url(&head_remote)?;
+
     let mut base_remote = git
-        .remote_for_branch(base)?
-        .or_else(|| git.remote_for_branch(head).ok().flatten())
+        .remote_for_branch(head)?
+        .or_else(|| git.remote_for_branch(base).ok().flatten())
         .unwrap_or_else(|| "origin".to_string());
 
     if let (Some(head_url), Some(upstream_url)) = (

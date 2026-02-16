@@ -49,7 +49,7 @@ pub fn run(
 fn build_branch_link_targets(
     git: &Git,
     records: &[BranchRecord],
-    base_branch: &str,
+    default_base_branch: &str,
 ) -> HashMap<String, BranchLinkTarget> {
     let by_id: HashMap<i64, String> = records.iter().map(|r| (r.id, r.name.clone())).collect();
     let mut out = HashMap::new();
@@ -57,7 +57,7 @@ fn build_branch_link_targets(
         let compare_base = rec
             .parent_branch_id
             .and_then(|id| by_id.get(&id).cloned())
-            .unwrap_or_else(|| base_branch.to_string());
+            .unwrap_or_else(|| default_base_branch.to_string());
         if compare_base == rec.name {
             continue;
         }
