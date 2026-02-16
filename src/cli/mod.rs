@@ -96,8 +96,8 @@ pub struct DoctorArgs {
 
 #[derive(Debug, Args)]
 pub struct UntrackArgs {
-    #[arg(help = "Branch to untrack")]
-    pub branch: String,
+    #[arg(help = "Branch to untrack (defaults to interactive selection)")]
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Args)]

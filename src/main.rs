@@ -161,7 +161,13 @@ fn run() -> Result<()> {
             },
         ),
         Some(Commands::Doctor(args)) => cmd_doctor(&db, &git, cli.global.porcelain, args.fix),
-        Some(Commands::Untrack(args)) => cmd_untrack(&db, &args.branch, cli.global.porcelain),
+        Some(Commands::Untrack(args)) => cmd_untrack(
+            &db,
+            &git,
+            args.branch.as_deref(),
+            cli.global.porcelain,
+            &base_branch,
+        ),
         Some(Commands::Delete(args)) => cmd_delete(
             &db,
             &git,
@@ -875,12 +881,56 @@ fn cmd_doctor(db: &Database, git: &Git, porcelain: bool, fix: bool) -> Result<()
     Ok(())
 }
 
-fn cmd_untrack(db: &Database, branch: &str, porcelain: bool) -> Result<()> {
-    if db.branch_by_name(branch)?.is_none() {
+fn cmd_untrack(
+    db: &Database,
+    git: &Git,
+    branch_arg: Option<&str>,
+    porcelain: bool,
+    base_branch: &str,
+) -> Result<()> {
+    let current = git.current_branch()?;
+    let records = db.list_branches()?;
+    let viable_names: Vec<String> = records
+        .iter()
+        .filter(|r| r.name != base_branch)
+        .map(|r| r.name.clone())
+        .collect();
+
+    let branch = if let Some(branch) = branch_arg {
+        branch.to_string()
+    } else if viable_names.is_empty() {
+        return Err(anyhow!("no tracked non-base branches available to untrack"));
+    } else if viable_names.len() == 1 {
+        let assumed = viable_names[0].clone();
+        if !porcelain {
+            println!("assuming target branch '{assumed}' (only viable branch)");
+        }
+        assumed
+    } else if stdout().is_terminal() && stdin().is_terminal() {
+        let theme = ColorfulTheme::default();
+        let picker_items = build_delete_picker_items(&viable_names, &current, &records);
+        let default_idx = viable_names.iter().position(|b| b == &current).unwrap_or(0);
+        let idx = prompt_or_cancel(
+            Select::with_theme(&theme)
+                .with_prompt(
+                    "Select branch to untrack (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)",
+                )
+                .items(&picker_items)
+                .default(default_idx)
+                .interact(),
+        )?;
+        viable_names[idx].clone()
+    } else {
+        return Err(anyhow!(
+            "branch required in non-interactive mode; pass stack untrack <branch>"
+        ));
+    };
+
+    if db.branch_by_name(&branch)?.is_none() {
         return Err(anyhow!("branch '{}' is not tracked", branch));
     }
 
-    db.splice_out_branch(branch)?;
+    db.splice_out_branch(&branch)?;
 
     let payload = serde_json::json!({
         "branch": branch,
