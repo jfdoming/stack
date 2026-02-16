@@ -733,7 +733,8 @@ fn pr_on_base_branch_fails_with_clear_message() {
         .failure()
         .stderr(predicate::str::contains(
             "cannot open PR from 'main' into itself",
-        ));
+        ))
+        .stderr(predicate::str::contains("is not stacked").not());
 }
 
 #[test]

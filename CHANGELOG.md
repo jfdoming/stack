@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.22 - 2026-02-16
+- Suppressed the redundant non-stacked warning when `stack pr` already exits for self-targeted base/head branch PRs.
+- Added integration coverage to assert this warning does not appear for the base-branch self-target case.
+
 ## 0.8.21 - 2026-02-16
 - `stack create` now checks out the newly created branch immediately after creation.
 
