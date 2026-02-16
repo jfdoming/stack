@@ -11,7 +11,7 @@ use crate::git::Git;
 use crate::provider::Provider;
 use crate::ui::interaction::confirm_inline_yes_no;
 use crate::util::pr_body::{ManagedBranchRef, managed_pr_section};
-use crate::util::terminal::{osc8_hyperlink, truncate_for_display};
+use crate::util::terminal::osc8_hyperlink;
 use crate::util::url::{github_owner_from_web_url, url_encode_component};
 
 #[derive(Debug, Clone)]
@@ -225,10 +225,23 @@ pub fn run(
         Ok(()) => println!("opened PR URL in browser"),
         Err(err) => {
             eprintln!("warning: could not auto-open PR URL ({err})");
-            println!("open PR manually: {}", truncate_for_display(&url, 88));
+            let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+            println!(
+                "open PR manually: {}",
+                format_manual_pr_link(&url, use_clickable)
+            );
         }
     }
     Ok(())
+}
+
+fn format_manual_pr_link(url: &str, use_clickable: bool) -> String {
+    if use_clickable {
+        return osc8_hyperlink(url, "open PR manually")
+            .underlined()
+            .to_string();
+    }
+    url.to_string()
 }
 
 fn format_existing_pr_ref(git: &Git, base_branch: &str, number: i64) -> Result<String> {
@@ -476,5 +489,19 @@ mod tests {
             body.contains("… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) …")
         );
         assert!(!body.contains("#this PR (this PR) →"));
+    }
+
+    #[test]
+    fn format_manual_pr_link_is_clickable_when_supported() {
+        let out = format_manual_pr_link("https://github.com/acme/repo/pull/1", true);
+        assert!(out.contains("\u{1b}]8;;https://github.com/acme/repo/pull/1\u{1b}\\"));
+        assert!(out.contains("open PR manually"));
+    }
+
+    #[test]
+    fn format_manual_pr_link_plain_keeps_full_url() {
+        let url = "https://github.com/acme/repo/compare/main...very/long/branch/name?expand=1";
+        let out = format_manual_pr_link(url, false);
+        assert_eq!(out, url);
     }
 }

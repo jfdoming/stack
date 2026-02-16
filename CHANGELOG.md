@@ -2,6 +2,12 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.2 - 2026-02-16
+- Updated `stack pr` manual-open fallback output:
+  - styled TTY mode now prints an OSC 8 clickable `open PR manually` link,
+  - plain output prints the full URL without truncation.
+- Added tests for clickable and plain fallback link formatting.
+
 ## 0.10.1 - 2026-02-16
 - Fixed stack summary compare-link body text to use Unicode arrows (`→`) instead of ASCII arrows (`->`) in generated Stack Flow descriptions.
 
