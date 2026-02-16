@@ -44,6 +44,7 @@ When changing behaviour, architecture, or workflows:
 - Rust style via `rustfmt`; use `snake_case` and `PascalCase` conventions.
 - Use Canadian English in user-facing text and documentation.
 - Keep commits incremental (`feat:`, `fix:`, `docs:`, etc.).
+- In interactive mode, missing required command args/options should be collected via prompts whenever practical.
 - Follow SemVer for version bumps, only after atomically completing a given task:
   - Pre-`1.0.0` rule: breaking changes are allowed in `MINOR` bumps.
   - Docs-only changes do not require a version bump.
