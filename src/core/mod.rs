@@ -12,8 +12,7 @@ pub enum SyncOp {
     Fetch,
     Restack {
         branch: String,
-        old_base: String,
-        new_base: String,
+        onto: String,
         reason: String,
     },
     UpdateSha {
@@ -41,14 +40,13 @@ impl SyncPlan {
                 }),
                 SyncOp::Restack {
                     branch,
-                    old_base,
-                    new_base,
+                    onto,
                     reason,
                 } => operations.push(OperationView {
                     kind: "restack".to_string(),
                     branch: branch.clone(),
-                    onto: Some(new_base.clone()),
-                    details: format!("from {old_base} to {new_base}: {reason}"),
+                    onto: Some(onto.clone()),
+                    details: format!("onto {onto}: {reason}"),
                 }),
                 SyncOp::UpdateSha { branch, sha } => operations.push(OperationView {
                     kind: "update_sha".to_string(),
@@ -110,7 +108,7 @@ pub fn build_sync_plan(
         }
     }
 
-    let mut queue: VecDeque<(String, String, String)> = VecDeque::new();
+    let mut queue: VecDeque<(String, String)> = VecDeque::new();
 
     for branch in &tracked {
         if !git.branch_exists(&branch.name)? {
@@ -133,11 +131,7 @@ pub fn build_sync_plan(
                 if let Some(children_ids) = children.get(&branch.id) {
                     for child_id in children_ids {
                         if let Some(child) = by_id.get(child_id) {
-                            queue.push_back((
-                                child.name.clone(),
-                                branch.name.clone(),
-                                new_base.clone(),
-                            ));
+                            queue.push_back((child.name.clone(), new_base.clone()));
                         }
                     }
                 }
@@ -150,11 +144,7 @@ pub fn build_sync_plan(
                 if let Some(children_ids) = children.get(&branch.id) {
                     for child_id in children_ids {
                         if let Some(child) = by_id.get(child_id) {
-                            queue.push_back((
-                                child.name.clone(),
-                                branch.name.clone(),
-                                current_sha.clone(),
-                            ));
+                            queue.push_back((child.name.clone(), branch.name.clone()));
                         }
                     }
                 }
@@ -167,16 +157,24 @@ pub fn build_sync_plan(
     }
 
     let mut seen_restack = HashSet::new();
-    while let Some((branch, old_base, new_base)) = queue.pop_front() {
+    while let Some((branch, onto)) = queue.pop_front() {
         if !seen_restack.insert(branch.clone()) {
             continue;
         }
         ops.push(SyncOp::Restack {
-            branch,
-            old_base,
-            new_base,
+            branch: branch.clone(),
+            onto: onto.clone(),
             reason: "parent updated or merged".to_string(),
         });
+        if let Some(node) = tracked.iter().find(|b| b.name == branch)
+            && let Some(children_ids) = children.get(&node.id)
+        {
+            for child_id in children_ids {
+                if let Some(child) = by_id.get(child_id) {
+                    queue.push_back((child.name.clone(), branch.clone()));
+                }
+            }
+        }
     }
 
     Ok(SyncPlan {
@@ -201,22 +199,18 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
         for op in &plan.ops {
             match op {
                 SyncOp::Fetch => git.fetch_origin()?,
-                SyncOp::Restack {
-                    branch,
-                    old_base,
-                    new_base,
-                    ..
-                } => {
+                SyncOp::Restack { branch, onto, .. } => {
+                    let old_base = git.merge_base(branch, onto)?;
                     if replay_supported {
-                        if let Err(err) = git.replay_onto(branch, old_base, new_base) {
+                        if let Err(err) = git.replay_onto(branch, &old_base, onto) {
                             eprintln!(
                                 "warning: git replay failed for {branch}: {err}; falling back to rebase"
                             );
-                            git.rebase_onto(branch, old_base, new_base)?;
+                            git.rebase_onto(branch, &old_base, onto)?;
                         }
                     } else {
                         eprintln!("warning: git replay unavailable; using rebase for {branch}");
-                        git.rebase_onto(branch, old_base, new_base)?;
+                        git.rebase_onto(branch, &old_base, onto)?;
                     }
                     let sha = git.head_sha(branch)?;
                     db.set_sync_sha(branch, &sha)?;
