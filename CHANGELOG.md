@@ -2,6 +2,11 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.0 - 2026-02-16
+- `stack sync` now refreshes managed stack-flow PR body sections for existing open PRs.
+- Sync preserves user-authored PR body content outside `<!-- stack:managed:start -->` / `<!-- stack:managed:end -->` markers while replacing or adding the managed block.
+- Added sync integration coverage to verify `gh pr edit` is called with managed marker content during sync.
+
 ## 0.9.1 - 2026-02-16
 - Added managed PR body boundary markers to generated `stack pr` descriptions:
   - `<!-- stack:managed:start -->`

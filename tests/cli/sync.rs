@@ -150,3 +150,66 @@ fn sync_plan_fetch_uses_base_branch_remote() {
     assert_eq!(fetch["kind"], "fetch");
     assert_eq!(fetch["branch"], "upstream");
 }
+
+#[cfg(unix)]
+#[test]
+fn sync_updates_existing_pr_body_with_managed_section() {
+    let repo = init_repo_without_origin();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+    run_git(repo.path(), &["config", "branch.main.remote", "no-fetch"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    let gh_log = repo.path().join("gh.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  for ((i=1; i<=$#; i++)); do\n    if [[ \"${{!i}}\" == \"--head\" ]]; then\n      next=$((i+1))\n      head=\"${{!next}}\"\n      break\n    fi\n  done\n  if [[ \"$head\" == \"feat/child\" ]]; then\n    echo '[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"mergeCommit\":null,\"body\":\"Existing reviewer notes\"}}]'\n  else\n    echo '[]'\n  fi\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            gh_log.display()
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let gh_calls = fs::read_to_string(&gh_log).expect("read gh log");
+    assert!(
+        gh_calls.contains("pr edit 42 --body"),
+        "expected pr edit call for managed body refresh, got: {gh_calls}"
+    );
+    assert!(
+        gh_calls.contains("stack:managed:start"),
+        "expected managed section start marker in edited body, got: {gh_calls}"
+    );
+    assert!(
+        gh_calls.contains("feat/parent"),
+        "expected parent reference in edited body, got: {gh_calls}"
+    );
+}
