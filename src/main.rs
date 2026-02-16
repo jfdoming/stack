@@ -1647,7 +1647,7 @@ fn github_owner_from_web_url(url: &str) -> Option<String> {
 fn compose_pr_body(
     base_url: &str,
     base_branch: &str,
-    head_branch: &str,
+    _head_branch: &str,
     managed: Option<&ManagedPrSection>,
     user_body: Option<&str>,
 ) -> Option<String> {
@@ -1660,55 +1660,24 @@ fn compose_pr_body(
     });
 
     let root = base_url.trim_end_matches('/');
-    let mut lines = vec!["### Stack Flow".to_string()];
-    lines.push(format!(
-        "[{base_branch}]({root}/tree/{base_branch}) -> [{head_branch}]({root}/tree/{head_branch})"
-    ));
-
     let parent_chain = managed
         .and_then(|m| m.parent.as_ref())
         .map(|p| format_pr_chain_node(root, p))
-        .unwrap_or_else(|| "previous".to_string());
-    let child_chain = managed
-        .map(|m| {
-            if m.children.is_empty() {
-                "next".to_string()
-            } else {
-                m.children
-                    .iter()
-                    .map(|c| format_pr_chain_node(root, c))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
-        })
-        .unwrap_or_else(|| "next".to_string());
-    lines.push(format!(
-        "PR chain: {parent_chain} -> #this PR -> {child_chain}"
-    ));
+        .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"));
+    let first_child = managed
+        .and_then(|m| m.children.first())
+        .map(|c| format_pr_chain_node(root, c));
 
-    if let Some(managed) = managed {
-        if let Some(parent) = managed.parent.as_ref() {
-            lines.push(format!(
-                "parent: [{}]({root}/tree/{})",
-                parent.branch, parent.branch
-            ));
-        }
-        if !managed.children.is_empty() {
-            let child_links = managed
-                .children
-                .iter()
-                .map(|child| format!("[{}]({root}/tree/{})", child.branch, child.branch))
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(format!("children: {child_links}"));
-        }
-    }
-
-    let managed_block = lines.join("\n");
-    Some(if let Some(user) = user_body {
-        format!("{managed_block}\n\n{user}")
+    let managed_line = if let Some(child) = first_child {
+        format!("… {parent_chain} → #this PR (this PR) → {child} …")
     } else {
-        managed_block
+        format!("… {parent_chain} → #this PR (this PR) …")
+    };
+
+    Some(if let Some(user) = user_body {
+        format!("{managed_line}\n\n{user}")
+    } else {
+        managed_line
     })
 }
 
@@ -1973,18 +1942,8 @@ mod tests {
             Some("User body text"),
         )
         .expect("body should be present");
-        assert!(body.starts_with("### Stack Flow"));
         assert!(body.contains(
-            "[feat/base](https://github.com/acme/repo/tree/feat/base) -> [feat/head](https://github.com/acme/repo/tree/feat/head)"
-        ));
-        assert!(body.contains(
-            "PR chain: [#123](https://github.com/acme/repo/pull/123) -> #this PR -> [#125](https://github.com/acme/repo/pull/125), [feat/child-b](https://github.com/acme/repo/tree/feat/child-b)"
-        ));
-        assert!(
-            body.contains("parent: [feat/parent](https://github.com/acme/repo/tree/feat/parent)")
-        );
-        assert!(body.contains(
-            "children: [feat/child-a](https://github.com/acme/repo/tree/feat/child-a), [feat/child-b](https://github.com/acme/repo/tree/feat/child-b)"
+            "… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) → [#125](https://github.com/acme/repo/pull/125) …"
         ));
         assert!(body.ends_with("User body text"));
     }
@@ -1999,11 +1958,34 @@ mod tests {
             Some("User body text"),
         )
         .expect("body should be present");
-        assert!(body.starts_with("### Stack Flow"));
-        assert!(body.contains(
-            "[main](https://github.com/acme/repo/tree/main) -> [feat/demo](https://github.com/acme/repo/tree/feat/demo)"
-        ));
-        assert!(body.contains("PR chain: previous -> #this PR -> next"));
+        assert!(
+            body.contains(
+                "… [main](https://github.com/acme/repo/tree/main) → #this PR (this PR) …"
+            )
+        );
         assert!(body.ends_with("User body text"));
+    }
+
+    #[test]
+    fn compose_pr_body_omits_trailing_arrow_when_no_child_pr() {
+        let managed = ManagedPrSection {
+            parent: Some(BranchPrRef {
+                branch: "feat/parent".to_string(),
+                pr_number: Some(123),
+            }),
+            children: Vec::new(),
+        };
+        let body = compose_pr_body(
+            "https://github.com/acme/repo",
+            "feat/base",
+            "feat/head",
+            Some(&managed),
+            None,
+        )
+        .expect("body should be present");
+        assert!(
+            body.contains("… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) …")
+        );
+        assert!(!body.contains("#this PR (this PR) →"));
     }
 }
