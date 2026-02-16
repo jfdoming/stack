@@ -28,6 +28,29 @@ pub fn managed_pr_section(
     format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n{MANAGED_BODY_MARKER_END}")
 }
 
+pub fn compose_branch_pr_body(
+    base_url: &str,
+    base_branch: &str,
+    parent: Option<&ManagedBranchRef>,
+    first_child: Option<&ManagedBranchRef>,
+    user_body: Option<&str>,
+) -> String {
+    let managed_section = managed_pr_section(base_url, base_branch, parent, first_child);
+    let user = user_body.and_then(|body| {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    if let Some(user) = user {
+        format!("{managed_section}\n\n{user}")
+    } else {
+        managed_section
+    }
+}
+
 pub fn merge_managed_pr_section(existing_body: Option<&str>, managed_section: &str) -> String {
     let existing = existing_body.and_then(|b| {
         let trimmed = b.trim();
@@ -95,6 +118,20 @@ mod tests {
         assert!(body.contains(MANAGED_BODY_MARKER_END));
         assert!(body.contains("[#12](https://github.com/acme/repo/pull/12)"));
         assert!(body.contains("[feat/child](https://github.com/acme/repo/tree/feat/child)"));
+    }
+
+    #[test]
+    fn compose_branch_pr_body_appends_user_text_after_managed_block() {
+        let body = compose_branch_pr_body(
+            "https://github.com/acme/repo",
+            "main",
+            None,
+            None,
+            Some("details"),
+        );
+        assert!(body.starts_with(MANAGED_BODY_MARKER_START));
+        assert!(body.contains(MANAGED_BODY_MARKER_END));
+        assert!(body.ends_with("details"));
     }
 
     #[test]

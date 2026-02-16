@@ -14,7 +14,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `src/provider/`: provider abstraction and GitHub implementation via `gh`.
 - `src/ui/`: interactive terminal UX helpers and the ratatui `stack` view.
 - `src/views/`: JSON-serializable views for porcelain output.
-- `src/util/`: shared URL/terminal utilities.
+- `src/util/`: shared PR body, URL, and terminal utilities.
 
 ## Persistence
 - DB location: `.git/stack.db` (repo-scoped).
