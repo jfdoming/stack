@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.2 - 2026-02-16
+- `stack pr` now supports non-stacked branches by warning and falling back to the repo base branch, while still requiring confirmation unless `--yes` is provided.
+
 ## 0.8.1 - 2026-02-16
 - Added OSC 8 clickable terminal hyperlinks for PR/compare links in coloured TTY output, replacing raw URL display in those contexts.
 

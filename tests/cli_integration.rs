@@ -230,19 +230,21 @@ fn pr_dry_run_uses_parent_branch_as_base() {
 }
 
 #[test]
-fn pr_dry_run_fails_when_current_branch_is_not_tracked() {
+fn pr_dry_run_on_untracked_branch_warns_and_uses_base() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/untracked"]);
 
-    stack_cmd(repo.path())
+    let output = stack_cmd(repo.path())
         .args(["pr", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("is not tracked"));
+        .output()
+        .expect("run stack pr --dry-run");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not stacked"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("would create PR with base="));
 }
 
 #[test]
-fn pr_dry_run_fails_when_current_branch_has_no_tracked_parent() {
+fn pr_dry_run_on_parentless_tracked_branch_warns_and_uses_base() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/orphan"]);
     stack_cmd(repo.path()).assert().success();
@@ -255,11 +257,13 @@ fn pr_dry_run_fails_when_current_branch_has_no_tracked_parent() {
     )
     .expect("insert orphan tracked branch");
 
-    stack_cmd(repo.path())
+    let output = stack_cmd(repo.path())
         .args(["pr", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("has no tracked parent"));
+        .output()
+        .expect("run stack pr --dry-run");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not stacked"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("would create PR with base="));
 }
 
 #[cfg(unix)]
@@ -407,6 +411,21 @@ fn pr_requires_yes_in_non_interactive_mode_before_create() {
         .args(["pr"])
         .assert()
         .failure()
+        .stderr(predicate::str::contains(
+            "confirmation required in non-interactive mode",
+        ));
+}
+
+#[test]
+fn pr_untracked_branch_requires_yes_in_non_interactive_mode() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/nonstacked-pr"]);
+
+    stack_cmd(repo.path())
+        .args(["pr"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not stacked"))
         .stderr(predicate::str::contains(
             "confirmation required in non-interactive mode",
         ));
