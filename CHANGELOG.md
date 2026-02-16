@@ -2,6 +2,11 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.9 - 2026-02-16
+- In sync-managed PR body generation, unresolved parent/child branches now always link to branch paths (`/tree/...`) instead of reusing stale cached PR numbers.
+- Excluded the base branch from sync PR metadata association to avoid accidental PR linkage on branch names like `main`/`master`.
+- Hardened cached PR fallback parsing when `gh pr view` unexpectedly returns list-shaped JSON.
+
 ## 0.10.8 - 2026-02-16
 - Fixed managed PR-body link targeting to prefer each detected PR’s own URL/repo, preventing cross-repo link mismatches in fork/upstream workflows.
 - Fixed batch PR metadata matching to prefer the branch’s remote owner, avoiding incorrect PR association for common branch names like `main`/`master`.
