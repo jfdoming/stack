@@ -211,7 +211,12 @@ fn format_manual_pr_link(url: &str, use_clickable: bool) -> String {
     format!("open PR manually: {url}")
 }
 
-fn format_existing_pr_ref(git: &Git, base_branch: &str, head_branch: &str, number: i64) -> Result<String> {
+fn format_existing_pr_ref(
+    git: &Git,
+    base_branch: &str,
+    head_branch: &str,
+    number: i64,
+) -> Result<String> {
     let label = format!("#{number}");
     let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     if !use_clickable {
@@ -221,7 +226,11 @@ fn format_existing_pr_ref(git: &Git, base_branch: &str, head_branch: &str, numbe
     let Ok(link_target) = determine_pr_link_target(git, base_branch, head_branch) else {
         return Ok(label);
     };
-    let url = format!("{}/pull/{}", link_target.base_url.trim_end_matches('/'), number);
+    let url = format!(
+        "{}/pull/{}",
+        link_target.base_url.trim_end_matches('/'),
+        number
+    );
     Ok(osc8_hyperlink(&url, &label).underlined().to_string())
 }
 

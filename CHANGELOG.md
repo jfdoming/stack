@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.12 - 2026-02-16
+- `stack track` now refreshes PR cache metadata for newly tracked branches after successful non-dry-run updates, so immediate `stack` output reflects current PR links/states.
+- Added integration coverage for track-time PR cache refresh.
+
 ## 0.10.11 - 2026-02-16
 - Consolidated PR link-target resolution into a shared helper (`src/util/pr_links.rs`) used by both `stack pr` and `stack` summary rendering.
 - Fixed `stack` summary PR/compare links to use per-branch repo context (including fork/upstream head refs) instead of a single global repo base.
