@@ -7,6 +7,7 @@ use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
 use crate::output::{OperationView, SyncPlanView};
 use crate::provider::{PrState, Provider};
+use crate::util::url::url_encode_component;
 
 #[derive(Debug, Clone)]
 pub enum SyncOp {
@@ -465,19 +466,6 @@ fn compose_stack_pr_body(
         lines.push(format!("children: {children}"));
     }
     lines.join("\n")
-}
-
-fn url_encode_component(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for b in value.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
-            out.push(char::from(b));
-        } else {
-            out.push('%');
-            out.push_str(&format!("{:02X}", b));
-        }
-    }
-    out
 }
 
 #[cfg(test)]

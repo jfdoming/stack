@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::git::Git;
+use crate::util::url::github_owner_from_web_url;
 
 #[derive(Debug, Clone)]
 pub enum PrState {
@@ -285,16 +286,4 @@ mod tests {
         assert_eq!(picked.number, 6693);
         assert_eq!(picked.state, "OPEN");
     }
-}
-
-fn github_owner_from_web_url(url: &str) -> Option<String> {
-    let trimmed = url.trim_end_matches('/');
-    let (_, rest) = trimmed.split_once("://")?;
-    let mut parts = rest.split('/');
-    let _host = parts.next()?;
-    let owner = parts.next()?;
-    if owner.is_empty() {
-        return None;
-    }
-    Some(owner.to_string())
 }
