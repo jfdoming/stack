@@ -3,7 +3,7 @@ use std::io;
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -63,11 +63,11 @@ pub fn run_stack_tui(branches: &[BranchView]) -> Result<()> {
                     .as_deref()
                     .unwrap_or("unknown");
                 format!(
-                    "Branch: {}\nParent: {}\nPR: #{} ({})\nLast synced SHA: {}\nExists in git: {}\n\nKeys: j/k or arrows to move, q to quit",
+                    "Branch: {}\nParent: {}\nPR: #{} ({})\nLast synced SHA: {}\nExists in git: {}\n\nKeys: j/k or arrows to move, q or Ctrl-C to quit",
                     branch.name, parent, pr_num, pr_state, synced, branch.exists_in_git
                 )
             } else {
-                "No branch selected\n\nKeys: q to quit".to_string()
+                "No branch selected\n\nKeys: q or Ctrl-C to quit".to_string()
             };
 
             let paragraph = Paragraph::new(details)
@@ -86,6 +86,7 @@ pub fn run_stack_tui(branches: &[BranchView]) -> Result<()> {
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Down | KeyCode::Char('j') => {
                         if !ordered.is_empty() {
                             selected = (selected + 1).min(ordered.len() - 1);
