@@ -41,4 +41,7 @@ When changing behavior, architecture, or workflows:
 ## Style Notes
 - Rust style via `rustfmt`; use `snake_case` and `PascalCase` conventions.
 - Keep commits incremental (`feat:`, `fix:`, `docs:`, etc.).
-- Bump the version number liberally after any significant changes, but only after atomically completing a given task.
+- Follow SemVer for version bumps, only after atomically completing a given task:
+  - `PATCH` (`x.y.Z`): bug fixes, refactors, docs, and non-breaking UX tweaks.
+  - `MINOR` (`x.Y.z`): new backward-compatible features/commands/options.
+  - `MAJOR` (`X.y.z`): breaking CLI/API/schema behavior changes.
