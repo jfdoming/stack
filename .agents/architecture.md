@@ -3,7 +3,8 @@
 This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Module map
-- `src/main.rs`: command dispatch and runtime mode selection (TTY vs non-TTY).
+- `src/main.rs`: process entrypoint and top-level cancellation handling.
+- `src/app.rs`: runtime bootstrap (CLI parse, git/db/provider init) and command dispatch.
 - `src/args/`: CLI flags/subcommands (`clap`).
 - `src/commands/`: per-command execution flows.
 - `src/core/`: stack graph logic, sync planner, sync executor, plain tree rendering.
