@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.5.0 - 2026-02-16
+- `stack track` now handles missing `--parent` like create/delete option selection: auto-assumes the only viable parent, prompts in TTY mode when multiple parents are available, and errors in non-interactive mode when parent choice is ambiguous.
+
 ## 0.4.0 - 2026-02-16
 - Renamed `stack unlink` to `stack untrack`.
 - `stack untrack` now fully removes the branch from stack metadata and splices tracked children to the removed branch's parent.
