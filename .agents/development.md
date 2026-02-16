@@ -22,6 +22,8 @@
 - GitHub Actions workflow `.github/workflows/build.yaml` runs on pull requests and pushes to `main`.
 - CI executes `cargo build --locked --verbose` and `cargo test --locked --verbose` on stable Rust.
 - GitHub Actions workflow `.github/workflows/draft-release.yaml` runs on `main` pushes and creates a draft GitHub release (and tag) only when `Cargo.toml` version changes.
+- Build workflow packages release executables for Linux (`x86_64-unknown-linux-gnu`), macOS (`x86_64-apple-darwin`, `aarch64-apple-darwin`), and Windows (`x86_64-pc-windows-msvc`) on `main` pushes.
+- Draft release workflow reuses those packaged build artifacts and attaches them to the draft release when `Cargo.toml` version changes.
 
 ## Install from source
 - `./scripts/install.sh`: build release binary and install to `~/.local/bin/stack`.
