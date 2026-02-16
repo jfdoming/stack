@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.10 - 2026-02-16
+- In `stack` view rendering, base branch entries now always show `no PR (same base/head)` and ignore stale cached PR numbers.
+- During `stack sync`, base branch PR cache is explicitly cleared to avoid lingering incorrect PR links.
+
 ## 0.10.9 - 2026-02-16
 - In sync-managed PR body generation, unresolved parent/child branches now always link to branch paths (`/tree/...`) instead of reusing stale cached PR numbers.
 - Excluded the base branch from sync PR metadata association to avoid accidental PR linkage on branch names like `main`/`master`.
