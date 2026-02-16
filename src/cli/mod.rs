@@ -3,11 +3,12 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "stack", version, about = "Manage stacked pull requests")]
 pub struct Cli {
-    #[arg(long, global = true, help = "Output machine-readable JSON")]
+    #[arg(short = 'P', long, global = true, help = "Output machine-readable JSON")]
     pub porcelain: bool,
-    #[arg(long, global = true, help = "Skip interactive confirmations")]
+    #[arg(short = 'y', long, global = true, help = "Skip interactive confirmations")]
     pub yes: bool,
     #[arg(
+        short = 'i',
         long,
         global = true,
         help = "Launch interactive fullscreen UI for `stack` (no subcommand)"
@@ -33,21 +34,21 @@ pub enum Commands {
 
 #[derive(Debug, Args)]
 pub struct CreateArgs {
-    #[arg(long, help = "Parent branch name")]
+    #[arg(short = 'p', long, help = "Parent branch name")]
     pub parent: Option<String>,
-    #[arg(long, help = "Child branch name to create")]
+    #[arg(short = 'n', long, help = "Child branch name to create")]
     pub name: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct SyncArgs {
-    #[arg(long, help = "Plan only; do not execute git operations")]
+    #[arg(short = 'n', long, help = "Plan only; do not execute git operations")]
     pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    #[arg(long, help = "Apply maintenance fixes")]
+    #[arg(short = 'f', long, help = "Apply maintenance fixes")]
     pub fix: bool,
 }
 
@@ -55,18 +56,18 @@ pub struct DoctorArgs {
 pub struct UnlinkArgs {
     #[arg(help = "Branch to unlink")]
     pub branch: String,
-    #[arg(long, help = "Remove branch record entirely")]
+    #[arg(short = 'd', long, help = "Remove branch record entirely")]
     pub drop_record: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct PrArgs {
-    #[arg(long, help = "PR title")]
+    #[arg(short = 't', long, help = "PR title")]
     pub title: Option<String>,
-    #[arg(long, help = "PR body")]
+    #[arg(short = 'b', long, help = "PR body")]
     pub body: Option<String>,
-    #[arg(long, help = "Create draft PR")]
+    #[arg(short = 'd', long, help = "Create draft PR")]
     pub draft: bool,
-    #[arg(long, help = "Preview command without calling gh")]
+    #[arg(short = 'n', long, help = "Preview command without calling gh")]
     pub dry_run: bool,
 }
