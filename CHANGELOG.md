@@ -2,6 +2,14 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.12.1 - 2026-02-16
+- Expanded `stack doctor` diagnostics to report:
+  - base branch parent-link corruption (`base_has_parent`),
+  - incomplete PR cache fields (`incomplete_pr_cache`).
+- `stack doctor --fix` now repairs detected parent-link cycles by clearing cycle-involved parent links.
+- `stack doctor --fix` now clears incomplete PR cache metadata so stale partial cache state does not persist.
+- Added integration coverage for the new doctor diagnostics and fix paths.
+
 ## 0.12.0 - 2026-02-16
 - Added `stack create --insert [child]` to insert a new branch between a tracked child branch and its current parent.
 - Insert creation now rewires stack metadata in one step (`parent -> new -> child`) and keeps checkout behaviour on the newly created branch.

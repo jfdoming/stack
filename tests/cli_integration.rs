@@ -125,5 +125,6 @@ include!("cli/sync.rs");
 include!("cli/pr.rs");
 include!("cli/completions.rs");
 include!("cli/delete.rs");
+include!("cli/doctor.rs");
 include!("cli/untrack.rs");
 include!("cli/track.rs");
