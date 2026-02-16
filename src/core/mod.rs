@@ -383,7 +383,11 @@ fn render_pr_link(
     } else {
         let compare_base = parent_branch.unwrap_or(default_base_branch);
         if compare_base == head_branch {
-            return String::new();
+            return if color {
+                format!(" {}", "no PR (same base/head)".dark_grey())
+            } else {
+                " no PR (same base/head)".to_string()
+            };
         }
         format!(
             "{}/compare/{}...{}?expand=1",
@@ -573,5 +577,26 @@ mod tests {
         assert!(!rendered.contains("[PR:none]"));
         assert!(rendered.contains("no PR"));
         assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
+    }
+
+    #[test]
+    fn render_tree_marks_same_base_head_without_broken_compare_link() {
+        let branches = vec![BranchRecord {
+            id: 1,
+            name: "main".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: Some("abc".to_string()),
+            cached_pr_number: None,
+            cached_pr_state: None,
+        }];
+
+        let rendered = render_tree(
+            &branches,
+            false,
+            Some("https://github.com/acme/repo"),
+            "main",
+        );
+        assert!(rendered.contains("no PR (same base/head)"));
+        assert!(!rendered.contains("/compare/main...main"));
     }
 }
