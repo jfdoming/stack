@@ -11,9 +11,10 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use crossterm::cursor::{MoveToColumn, MoveToNextLine, Show};
+use crossterm::execute;
 use crossterm::style::Stylize;
 use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
-use crossterm::{cursor::Show, execute};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
@@ -488,7 +489,13 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
 fn restore_terminal_state() {
     let _ = disable_raw_mode();
     let mut out = std::io::stdout();
-    let _ = execute!(out, LeaveAlternateScreen, Show);
+    let _ = execute!(
+        out,
+        LeaveAlternateScreen,
+        Show,
+        MoveToColumn(0),
+        MoveToNextLine(1)
+    );
 }
 
 fn build_branch_picker_items(
