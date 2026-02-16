@@ -27,6 +27,7 @@ Read `.agents/testing.md` before writing or modifying any tests.
 - Prompt for missing required args/options in interactive mode whenever practical.
 - Use Canadian English in user-facing text/docs.
 - Docs-only changes do not require a version bump or changelog entry.
+- SemVer preference: pre-v1 non-breaking changes should default to `PATCH`; post-v1 non-breaking feature work should default to `MINOR` (see `.agents/contributing.md`).
 - Make doc updates in the same task when behaviour, flags, workflows, architecture, or user-facing output changes.
 - Add or update tests in the same task when behaviour, control flow, output contracts, or bug fixes change runtime behaviour.
 
