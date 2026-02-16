@@ -40,3 +40,4 @@ When changing behavior, architecture, or workflows:
 ## Style Notes
 - Rust style via `rustfmt`; use `snake_case` and `PascalCase` conventions.
 - Keep commits incremental (`feat:`, `fix:`, `docs:`, etc.).
+- Bump the version number liberally after any significant changes.
