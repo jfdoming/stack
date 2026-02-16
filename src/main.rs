@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use crossterm::style::Stylize;
 use dialoguer::console::Term;
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
@@ -100,7 +100,15 @@ fn run() -> Result<()> {
             cmd_unlink(&db, &args.branch, args.drop_record, cli.porcelain)
         }
         Some(Commands::Pr(args)) => cmd_pr(&db, &git, &provider, &args, cli.porcelain),
+        Some(Commands::Completions(args)) => cmd_completions(args.shell),
     }
+}
+
+fn cmd_completions(shell: clap_complete::Shell) -> Result<()> {
+    let mut cmd = Cli::command();
+    let bin_name = cmd.get_name().to_string();
+    clap_complete::generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
+    Ok(())
 }
 
 fn cmd_stack(

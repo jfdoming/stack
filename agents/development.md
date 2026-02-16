@@ -6,6 +6,7 @@
 - `cargo fmt`: apply rustfmt formatting.
 - `cargo run -- --help`: top-level command help.
 - `cargo run -- sync --dry-run`: preview sync plan without execution.
+- `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 
 ## Install from source
 - `./scripts/install.sh`: build release binary and install to `~/.local/bin/stack`.

@@ -288,6 +288,16 @@ fn stack_default_output_includes_pr_creation_link_when_pr_missing() {
 }
 
 #[test]
+fn completions_command_generates_script() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_stack"));
+}
+
+#[test]
 fn sync_plan_fetch_uses_base_branch_remote() {
     let repo = init_repo_with_named_remote("upstream");
 
