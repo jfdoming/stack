@@ -18,6 +18,10 @@
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
 
+## CI
+- GitHub Actions workflow `.github/workflows/build.yaml` runs on pull requests and pushes to `main`.
+- CI executes `cargo build --locked --verbose` and `cargo test --locked --verbose` on stable Rust.
+
 ## Install from source
 - `./scripts/install.sh`: build release binary and install to `~/.local/bin/stack`.
 - `./scripts/install.sh --write-shell-config`: also append PATH update to shell config.
