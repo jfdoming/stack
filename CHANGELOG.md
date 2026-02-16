@@ -12,6 +12,7 @@ All notable changes to this repository are documented here. Each version in `Car
   - render child continuation as `→ …` (with an arrow before trailing ellipsis),
   - omit trailing continuation when the current branch has no child branch,
   - replace `#this PR (this PR)` with `(this PR)`.
+- Base-branch links in managed PR-body stack flow now point to the exact merge-base commit (`/commit/<sha>`) instead of the moving base branch tree ref.
 
 ## 0.10.11 - 2026-02-16
 - Consolidated PR link-target resolution into a shared helper (`src/util/pr_links.rs`) used by both `stack pr` and `stack` summary rendering.

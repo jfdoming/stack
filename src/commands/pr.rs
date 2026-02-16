@@ -246,13 +246,25 @@ fn build_pr_open_url(
     let link_target = determine_pr_link_target(git, base, head)?;
     let base_url = link_target.base_url;
     let head_ref = link_target.head_ref;
+    let base_commit_url = git
+        .merge_base(head, base)
+        .ok()
+        .map(|sha| format!("{}/commit/{sha}", base_url.trim_end_matches('/')));
     let mut params = vec!["expand=1".to_string()];
     if let Some(title) = title
         && !title.is_empty()
     {
         params.push(format!("title={}", url_encode_component(title)));
     }
-    if let Some(body) = compose_pr_body(&base_url, base, head, managed, body).as_deref()
+    if let Some(body) = compose_pr_body(
+        &base_url,
+        base,
+        head,
+        base_commit_url.as_deref(),
+        managed,
+        body,
+    )
+    .as_deref()
         && !body.is_empty()
     {
         params.push(format!("body={}", url_encode_component(body)));
@@ -309,6 +321,7 @@ fn compose_pr_body(
     base_url: &str,
     base_branch: &str,
     _head_branch: &str,
+    base_commit_url: Option<&str>,
     managed: Option<&ManagedPrSection>,
     user_body: Option<&str>,
 ) -> Option<String> {
@@ -329,6 +342,7 @@ fn compose_pr_body(
     Some(compose_branch_pr_body(
         base_url,
         base_branch,
+        base_commit_url,
         parent.as_ref(),
         first_child.as_ref(),
         user_body,
@@ -361,6 +375,7 @@ mod tests {
             "https://github.com/acme/repo",
             "feat/base",
             "feat/head",
+            None,
             Some(&managed),
             Some("User body text"),
         )
@@ -379,6 +394,7 @@ mod tests {
             "https://github.com/acme/repo",
             "main",
             "feat/demo",
+            None,
             None,
             Some("User body text"),
         )
@@ -402,6 +418,7 @@ mod tests {
             "https://github.com/acme/repo",
             "feat/base",
             "feat/head",
+            None,
             Some(&managed),
             None,
         )
