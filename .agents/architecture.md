@@ -33,6 +33,10 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack untrack` removes a tracked branch record and splices its children to the removed branch's parent.
 - When branch is omitted, target selection mirrors create/delete flows (assume single viable branch, prompt on TTY when multiple).
 
+## PR behaviour
+- `stack pr` uses the tracked parent branch as PR base.
+- PR creation is skipped when a PR already exists for the current head branch.
+
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.

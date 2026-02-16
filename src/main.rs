@@ -1036,14 +1036,16 @@ fn cmd_pr(
     let current = git.current_branch()?;
     let records = db.list_branches()?;
     let by_id: HashMap<i64, &BranchRecord> = records.iter().map(|r| (r.id, r)).collect();
-    let default_base = db.repo_meta()?.base_branch;
-
-    let base = records
+    let current_record = records
         .iter()
         .find(|r| r.name == current)
-        .and_then(|branch| branch.parent_branch_id)
+        .ok_or_else(|| anyhow!("current branch '{}' is not tracked", current))?;
+    let base = current_record
+        .parent_branch_id
         .and_then(|parent_id| by_id.get(&parent_id).map(|r| r.name.clone()))
-        .unwrap_or(default_base);
+        .ok_or_else(|| anyhow!("current branch '{}' has no tracked parent", current))?;
+
+    let existing = provider.resolve_pr_by_head(&current, current_record.cached_pr_number)?;
 
     let payload = serde_json::json!({
         "head": current,
@@ -1051,15 +1053,37 @@ fn cmd_pr(
         "title": args.title,
         "draft": args.draft,
         "dry_run": args.dry_run,
+        "existing_pr_number": existing.as_ref().map(|pr| pr.number),
+        "will_create": existing.is_none(),
     });
 
     if args.dry_run {
         if porcelain {
             return print_json(&payload);
         }
+        if let Some(number) = payload["existing_pr_number"].as_i64() {
+            println!(
+                "PR already exists for '{}': #{}",
+                payload["head"].as_str().unwrap_or_default(),
+                number
+            );
+        } else {
+            println!(
+                "would create PR with base={} head={}",
+                payload["base"], payload["head"]
+            );
+        }
+        return Ok(());
+    }
+
+    if let Some(number) = payload["existing_pr_number"].as_i64() {
+        if porcelain {
+            return print_json(&payload);
+        }
         println!(
-            "would create PR with base={} head={}",
-            payload["base"], payload["head"]
+            "PR already exists for '{}': #{}",
+            payload["head"].as_str().unwrap_or_default(),
+            number
         );
         return Ok(());
     }

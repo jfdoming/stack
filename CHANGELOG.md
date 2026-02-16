@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.7.0 - 2026-02-16
+- `stack pr` now requires the current branch to be tracked with a tracked parent, ensuring PR base selection always comes from the stack parent relationship.
+- `stack pr` now skips creating a new PR when an existing PR is already found for the branch head.
+
 ## 0.6.2 - 2026-02-16
 - Improved GitHub PR detection for fork-based branches by retrying head lookups with `owner:branch` qualifiers.
 

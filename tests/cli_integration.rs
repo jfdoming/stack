@@ -229,6 +229,51 @@ fn pr_dry_run_uses_parent_branch_as_base() {
     assert_eq!(json["base"], "feat/parent");
 }
 
+#[test]
+fn pr_dry_run_fails_when_current_branch_is_not_tracked() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/untracked"]);
+
+    stack_cmd(repo.path())
+        .args(["pr", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not tracked"));
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_does_not_create_when_existing_pr_is_found() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/existing"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/existing"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing\"* ]]; then\n  echo '[{\"number\": 77, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["pr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "PR already exists for 'feat/existing': #77",
+        ));
+}
+
 #[cfg(unix)]
 #[test]
 fn pr_create_fails_when_gh_returns_non_zero() {
