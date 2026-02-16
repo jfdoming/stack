@@ -10,6 +10,7 @@
 - `cargo run -- up`: switch to a direct child branch.
 - `cargo run -- down`: switch to the direct parent branch.
 - `cargo run -- sync --dry-run`: preview sync plan without execution.
+- `cargo run -- create --insert feat/child --name feat/mid`: insert a new branch before a tracked child.
 - `cargo run -- track feat/branch --parent main`: track an existing local branch under a parent branch.
 - `cargo run -- track --all --dry-run`: preview inferred relationships for all local non-base branches.
 - `cargo run -- untrack feat/branch`: remove a tracked branch record and splice children to its former parent.
@@ -27,6 +28,7 @@
 - `stack --interactive` opens the fullscreen TUI.
 - `stack up`/`stack top` prompt for child selection in TTY mode when the current branch has multiple tracked children; non-interactive mode returns an ambiguity error.
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.
+- `stack create --insert [child]` inserts a new branch between the child's current parent and that child, updates stack metadata links, and refreshes managed sections for affected open PR bodies.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
 - After `stack sync` applies operations, it restores the branch that was checked out before the sync run started.

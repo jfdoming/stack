@@ -44,6 +44,10 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.
 
+## Create behaviour
+- `stack create --insert [child]` inserts the new branch between the child's prior parent and the child itself.
+- Insert operations update affected open PR managed-body sections to reflect the new parent/child chain.
+
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
