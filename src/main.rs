@@ -38,7 +38,7 @@ struct SyncRunOptions {
 fn main() -> Result<()> {
     if let Err(err) = run() {
         if err.downcast_ref::<UserCancelled>().is_some() {
-            eprintln!("\ncancelled by user");
+            eprintln!("\n{}", "cancelled by user".red().bold());
             std::process::exit(130);
         }
         return Err(err);
