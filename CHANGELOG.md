@@ -9,7 +9,8 @@ All notable changes to this repository are documented here. Each version in `Car
 - Refined managed PR-body stack flow formatting:
   - omit leading ellipsis when the base branch is the direct parent,
   - insert an arrow after leading ellipsis (`… →`),
-  - omit trailing ellipsis when the current branch has no child branch,
+  - render child continuation as `→ …` (with an arrow before trailing ellipsis),
+  - omit trailing continuation when the current branch has no child branch,
   - replace `#this PR (this PR)` with `(this PR)`.
 
 ## 0.10.11 - 2026-02-16

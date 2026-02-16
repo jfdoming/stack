@@ -18,14 +18,14 @@ pub fn managed_pr_section(
     let parent_chain = parent
         .map(|p| format_pr_chain_node(root, p))
         .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"));
-    let prefix = if parent.is_some() {
+    let prefix = if parent.is_some_and(|p| p.branch != base_branch) {
         "… → ".to_string()
     } else {
         String::new()
     };
     let managed_line = if let Some(child) = first_child {
         format!(
-            "{prefix}{parent_chain} → (this PR) → {} …",
+            "{prefix}{parent_chain} → (this PR) → {} → …",
             format_pr_chain_node(root, child)
         )
     } else {
@@ -139,6 +139,32 @@ mod tests {
         let body = managed_pr_section("https://github.com/acme/repo", "main", None, None);
         assert!(body.contains("[main](https://github.com/acme/repo/tree/main) → (this PR)"));
         assert!(!body.contains("… [main]"));
+    }
+
+    #[test]
+    fn managed_pr_section_base_parent_with_child_has_no_leading_ellipsis() {
+        let base_parent = ManagedBranchRef {
+            branch: "main".to_string(),
+            pr_number: None,
+            pr_url: None,
+        };
+        let child = ManagedBranchRef {
+            branch: "feat/next".to_string(),
+            pr_number: Some(6693),
+            pr_url: None,
+        };
+        let body = managed_pr_section(
+            "https://github.com/acme/repo",
+            "main",
+            Some(&base_parent),
+            Some(&child),
+        );
+        assert!(
+            body.contains(
+                "[main](https://github.com/acme/repo/tree/main) → (this PR) → [#6693](https://github.com/acme/repo/pull/6693) → …"
+            )
+        );
+        assert!(!body.contains("… → [main]"));
     }
 
     #[test]

@@ -366,7 +366,7 @@ mod tests {
         )
         .expect("body should be present");
         assert!(body.contains(
-            "… → [#123](https://github.com/acme/repo/pull/123) → (this PR) → [#125](https://github.com/acme/repo/pull/125) …"
+            "… → [#123](https://github.com/acme/repo/pull/123) → (this PR) → [#125](https://github.com/acme/repo/pull/125) → …"
         ));
         assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_START));
         assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_END));
