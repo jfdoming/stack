@@ -7,6 +7,12 @@ pub struct Cli {
     pub porcelain: bool,
     #[arg(long, global = true, help = "Skip interactive confirmations")]
     pub yes: bool,
+    #[arg(
+        long,
+        global = true,
+        help = "Launch interactive fullscreen UI for `stack` (no subcommand)"
+    )]
+    pub interactive: bool,
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
