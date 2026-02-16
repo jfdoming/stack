@@ -12,7 +12,7 @@ use std::io::{IsTerminal, stdin, stdout};
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use crossterm::style::Stylize;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
 use tracing_subscriber::EnvFilter;
@@ -95,6 +95,8 @@ fn cmd_create(
     let tracked = db.list_branches()?;
     let local = git.local_branches()?;
     let parent_candidates = rank_parent_candidates(&current, &tracked, &local);
+    let picker_items = build_branch_picker_items(&parent_candidates, &current, &tracked);
+    let theme = ColorfulTheme::default();
 
     let parent = if let Some(parent) = parent_arg {
         parent.clone()
@@ -104,11 +106,11 @@ fn cmd_create(
             .position(|b| b == &current)
             .unwrap_or(0);
         let idx = prompt_or_cancel(
-            Select::new()
-            .with_prompt("Select parent branch")
-            .items(&parent_candidates)
-            .default(default_idx)
-            .interact(),
+            Select::with_theme(&theme)
+                .with_prompt("Select parent branch (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)")
+                .items(&picker_items)
+                .default(default_idx)
+                .interact(),
         )?;
         parent_candidates[idx].clone()
     } else {
@@ -125,7 +127,7 @@ fn cmd_create(
         name.clone()
     } else if stdout().is_terminal() && stdin().is_terminal() {
         prompt_or_cancel(
-            Input::<String>::new()
+            Input::<String>::with_theme(&theme)
             .with_prompt("Name for new child branch")
             .validate_with(|input: &String| -> Result<(), &str> {
                 if input.trim().is_empty() {
@@ -451,5 +453,53 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
             std::process::exit(130);
         }
         Err(err) => Err(err.into()),
+    }
+}
+
+fn build_branch_picker_items(
+    ordered_names: &[String],
+    current: &str,
+    tracked: &[BranchRecord],
+) -> Vec<String> {
+    let tracked_map: HashMap<&str, &BranchRecord> =
+        tracked.iter().map(|b| (b.name.as_str(), b)).collect();
+    ordered_names
+        .iter()
+        .map(|name| {
+            if name == current {
+                format!("● current  {name}")
+            } else if let Some(rec) = tracked_map.get(name.as_str()) {
+                let pr = rec.cached_pr_state.as_deref().unwrap_or("none");
+                format!("◆ tracked  {name}  (pr:{pr})")
+            } else {
+                format!("○ local    {name}")
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn branch_picker_items_include_source_labels() {
+        let tracked = vec![BranchRecord {
+            id: 1,
+            name: "feat/a".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: None,
+            cached_pr_number: Some(10),
+            cached_pr_state: Some("open".to_string()),
+        }];
+        let ordered = vec![
+            "main".to_string(),
+            "feat/a".to_string(),
+            "fix/local".to_string(),
+        ];
+        let items = build_branch_picker_items(&ordered, "main", &tracked);
+        assert!(items[0].starts_with("● current"));
+        assert!(items[1].starts_with("◆ tracked"));
+        assert!(items[2].starts_with("○ local"));
     }
 }
