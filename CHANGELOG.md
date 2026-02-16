@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.14 - 2026-02-16
+- `stack pr` now detects fork branches and builds compare links against `upstream` (when configured), using `owner:branch` head refs for cross-repo PRs.
+
 ## 0.8.13 - 2026-02-16
 - `stack pr` now blocks self-targeted PR attempts (`base == head`) with a clear user-facing message and porcelain metadata instead of generating broken links.
 - Stack tree output now explicitly marks same-base/head branches as `no PR (same base/head)` instead of rendering invalid compare links.
