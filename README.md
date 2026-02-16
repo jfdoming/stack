@@ -1,6 +1,6 @@
 # stack
 
-`stack` is a Rust CLI for managing stacked pull request workflows with a repo-local SQLite database (`.git/stack.db`).
+`stack` helps you manage stacked pull requests from the terminal.
 
 ## Install from source
 
@@ -33,12 +33,13 @@ cargo install --path .
 ```bash
 stack                 # one-shot stack visualization
 stack --interactive   # fullscreen interactive UI
-stack create
-stack track feat/child --infer
+stack create --parent main --name feat/child
+stack track feat/child
 stack track --all --dry-run
 stack untrack <branch>
 stack --yes delete <branch>
 stack pr --dry-run
+stack --yes pr
 stack sync --dry-run
 stack doctor
 stack completions zsh > ~/.zsh/completions/_stack
