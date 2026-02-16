@@ -14,6 +14,7 @@ This file is the contributor index for agent-friendly navigation. Keep it short 
 - If your change spans multiple areas (for example sync logic and CLI UX), update each affected doc.
 - Check `TASKS.md` before starting work; it is the active task queue.
 - Execute tasks sequentially (one at a time), and commit after each completed task.
+- Re-read `TASKS.md` after each completed task before starting the next one.
 
 ## Project Structure (Quick View)
 - `src/main.rs`: command entrypoint and dispatch.
@@ -44,6 +45,7 @@ When changing behaviour, architecture, or workflows:
 - Rust style via `rustfmt`; use `snake_case` and `PascalCase` conventions.
 - Use Canadian English in user-facing text and documentation.
 - Keep commits incremental (`feat:`, `fix:`, `docs:`, etc.).
+- Each commit should map to exactly one completed `TASKS.md` item; do not bundle multiple checklist items into one commit.
 - In interactive mode, missing required command args/options should be collected via prompts whenever practical.
 - Follow SemVer for version bumps, only after atomically completing a given task:
   - Pre-`1.0.0` rule: breaking changes are allowed in `MINOR` bumps.
