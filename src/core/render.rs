@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use crossterm::style::Stylize;
 
 use crate::db::BranchRecord;
-use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
 use crate::util::url::url_encode_component;
 
 #[derive(Debug, Clone)]
@@ -61,7 +60,7 @@ pub fn render_tree(
                     .unwrap_or_default();
                 let pr_link = render_pr_link(
                     ctx.pr_base_url,
-                    ctx.link_targets.and_then(|targets| targets.get(&node.name)),
+                    ctx.link_targets.and_then(|m| m.get(&node.name)),
                     node.cached_pr_number,
                     parent_name,
                     &child_names,
@@ -150,17 +149,7 @@ fn render_pr_link(
     default_base_branch: &str,
     color: bool,
 ) -> String {
-    if head_branch == default_base_branch {
-        return if color {
-            format!(" {}", "[no PR (same base/head)]".dark_grey())
-        } else {
-            " [no PR (same base/head)]".to_string()
-        };
-    }
-
-    let base = link_target
-        .map(|target| target.base_url.as_str())
-        .or(pr_base_url);
+    let base = link_target.map(|t| t.base_url.as_str()).or(pr_base_url);
     let Some(base) = base else {
         return String::new();
     };
@@ -175,29 +164,19 @@ fn render_pr_link(
                 " [no PR (same base/head)]".to_string()
             };
         }
-        let parent_ref = parent_branch.map(|branch| ManagedBranchRef {
-            branch: branch.to_string(),
-            pr_number: None,
-            pr_url: None,
-        });
-        let first_child_ref = child_branches.first().map(|branch| ManagedBranchRef {
-            branch: branch.clone(),
-            pr_number: None,
-            pr_url: None,
-        });
-        let body = compose_branch_pr_body(
+        let body = compose_stack_pr_body(
             base,
             compare_base,
-            parent_ref.as_ref(),
-            first_child_ref.as_ref(),
-            None,
+            head_branch,
+            parent_branch,
+            child_branches,
         );
         format!(
             "{}/compare/{}...{}?expand=1&body={}",
             base.trim_end_matches('/'),
             compare_base,
             link_target
-                .map(|target| target.head_ref.as_str())
+                .map(|t| t.head_ref.as_str())
                 .unwrap_or(head_branch),
             url_encode_component(&body)
         )
@@ -218,6 +197,32 @@ fn render_pr_link(
 
 fn osc8_hyperlink(url: &str, label: &str) -> String {
     format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
+}
+
+fn compose_stack_pr_body(
+    base_url: &str,
+    base_branch: &str,
+    head_branch: &str,
+    parent_branch: Option<&str>,
+    child_branches: &[String],
+) -> String {
+    let root = base_url.trim_end_matches('/');
+    let mut lines = vec!["### Stack Flow".to_string()];
+    lines.push(format!(
+        "[{base_branch}]({root}/tree/{base_branch}) -> [{head_branch}]({root}/tree/{head_branch})"
+    ));
+    if let Some(parent) = parent_branch {
+        lines.push(format!("parent: [{parent}]({root}/tree/{parent})"));
+    }
+    if !child_branches.is_empty() {
+        let children = child_branches
+            .iter()
+            .map(|child| format!("[{child}]({root}/tree/{child})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("children: {children}"));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -271,7 +276,7 @@ mod tests {
     fn render_tree_includes_pr_link_when_repo_url_known() {
         let branches = vec![BranchRecord {
             id: 1,
-            name: "feat/a".to_string(),
+            name: "main".to_string(),
             parent_branch_id: None,
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: Some(42),
@@ -286,6 +291,36 @@ mod tests {
             None,
         );
         assert!(rendered.contains("https://github.com/acme/repo/pull/42"));
+    }
+
+    #[test]
+    fn render_tree_existing_pr_prefers_branch_link_target_repo() {
+        let branches = vec![BranchRecord {
+            id: 1,
+            name: "feat/a".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: Some("abc".to_string()),
+            cached_pr_number: Some(42),
+            cached_pr_state: Some("open".to_string()),
+        }];
+        let mut link_targets = HashMap::new();
+        link_targets.insert(
+            "feat/a".to_string(),
+            BranchLinkTarget {
+                base_url: "https://github.com/upstream/repo".to_string(),
+                head_ref: "feat/a".to_string(),
+            },
+        );
+
+        let rendered = render_tree(
+            &branches,
+            false,
+            Some("https://github.com/fork/repo"),
+            "main",
+            Some(&link_targets),
+        );
+        assert!(rendered.contains("https://github.com/upstream/repo/pull/42"));
+        assert!(!rendered.contains("https://github.com/fork/repo/pull/42"));
     }
 
     #[test]
@@ -355,8 +390,7 @@ mod tests {
         assert!(!rendered.contains("[PR:none]"));
         assert!(rendered.contains("[no PR]"));
         assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
-        assert!(rendered.contains("stack%3Amanaged%3Astart"));
-        assert!(rendered.contains("%E2%86%92"));
+        assert!(rendered.contains("body=%23%23%23%20Stack%20Flow"));
     }
 
     #[test]
@@ -366,7 +400,7 @@ mod tests {
             name: "main".to_string(),
             parent_branch_id: None,
             last_synced_head_sha: Some("abc".to_string()),
-            cached_pr_number: Some(6944),
+            cached_pr_number: None,
             cached_pr_state: None,
         }];
 
@@ -379,6 +413,5 @@ mod tests {
         );
         assert!(rendered.contains("[no PR (same base/head)]"));
         assert!(!rendered.contains("/compare/main...main"));
-        assert!(!rendered.contains("/pull/6944"));
     }
 }
