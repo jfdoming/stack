@@ -7,6 +7,7 @@ This file is the high-signal contributor index. Keep it short and move detailed 
 - `.agents/development.md`: build/test/run commands and local workflow.
 - `.agents/architecture.md`: module layout, data model, and sync behaviour.
 - `.agents/docs.md`: documentation update rules, scope, and consistency checks.
+- `.agents/testing.md`: test workflow, coverage expectations, and quality bar.
 - `CHANGELOG.md`: release history (one section per version).
 
 ## Mandatory Read Order
@@ -17,6 +18,7 @@ Read these before making any code or doc change:
 4. `.agents/docs.md`
 
 Then read `.agents/architecture.md` for task-relevant codebase context.
+Read `.agents/testing.md` before writing or modifying any tests.
 
 ## Critical Global Rules
 - Execute tasks strictly in `TASKS.md` order, one at a time.
