@@ -321,7 +321,13 @@ fn pr_does_not_create_when_existing_pr_is_found() {
 fn pr_existing_lookup_handles_coloured_gh_json_output() {
     let repo = init_repo();
     stack_cmd(repo.path())
-        .args(["create", "--parent", "main", "--name", "feat/existing-colour"])
+        .args([
+            "create",
+            "--parent",
+            "main",
+            "--name",
+            "feat/existing-colour",
+        ])
         .assert()
         .success();
     run_git(repo.path(), &["checkout", "feat/existing-colour"]);
@@ -413,17 +419,84 @@ fn pr_yes_pushes_and_prints_pr_open_link() {
         .args(["--yes", "pr"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("pushed 'feat/pr-create' to 'origin'"))
+        .stdout(predicate::str::contains(
+            "pushed 'feat/pr-create' to 'origin'",
+        ))
         .stdout(predicate::str::contains(
             "open PR: https://github.com/acme/stack-test/compare/main...feat/pr-create?expand=1",
         ));
 
     let pushed = Command::new("git")
         .current_dir(&bare)
-        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/pr-create"])
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/feat/pr-create",
+        ])
         .status()
         .expect("verify pushed branch");
-    assert!(pushed.success(), "expected pushed branch to exist on bare remote");
+    assert!(
+        pushed.success(),
+        "expected pushed branch to exist on bare remote"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:alice/stack-test.git",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/fork-pr-open"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/fork-pr-open"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/fork-pr-open.remote", "origin"],
+    );
+    configure_local_push_url(repo.path());
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/fork-pr-open\"* ]]; then\n  echo '[]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "pr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "open PR: https://github.com/acme/stack-test/compare/main...alice:feat/fork-pr-open?expand=1",
+        ));
 }
 
 #[cfg(unix)]
@@ -455,7 +528,9 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
         .args(["--yes", "pr"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("open PR: https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1"))
+        .stdout(predicate::str::contains(
+            "open PR: https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1",
+        ))
         .stderr(predicate::str::contains(
             "could not determine existing PR status from gh",
         ));
@@ -573,10 +648,12 @@ fn pr_on_base_branch_porcelain_reports_blocked_state() {
     assert_eq!(json["head"], "main");
     assert_eq!(json["base"], "main");
     assert_eq!(json["can_open_link"], false);
-    assert!(json["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("cannot open PR from 'main' into itself"));
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("cannot open PR from 'main' into itself")
+    );
 }
 
 #[cfg(unix)]

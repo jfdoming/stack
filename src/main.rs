@@ -1220,7 +1220,6 @@ fn cmd_pr(
     git.push_branch(&push_remote, head)?;
     let url = build_pr_open_url(
         git,
-        &push_remote,
         base_ref,
         head,
         args.title.as_deref(),
@@ -1469,7 +1468,6 @@ fn format_existing_pr_ref(git: &Git, base_branch: &str, number: i64) -> Result<S
 
 fn build_pr_open_url(
     git: &Git,
-    remote: &str,
     base: &str,
     head: &str,
     title: Option<&str>,
@@ -1482,11 +1480,43 @@ fn build_pr_open_url(
             head
         ));
     }
-    let Some(base_url) = git.remote_web_url(remote)? else {
+    let head_remote = git
+        .remote_for_branch(head)?
+        .unwrap_or_else(|| "origin".to_string());
+    let head_url = git.remote_web_url(&head_remote)?;
+    let mut base_remote = git
+        .remote_for_branch(base)?
+        .or_else(|| git.remote_for_branch(head).ok().flatten())
+        .unwrap_or_else(|| "origin".to_string());
+    if let (Some(head_url), Some(upstream_url)) = (
+        head_url.as_deref(),
+        git.remote_web_url("upstream")?.as_deref(),
+    ) && let (Some(head_owner), Some(upstream_owner)) = (
+        github_owner_from_web_url(head_url),
+        github_owner_from_web_url(upstream_url),
+    ) && head_owner != upstream_owner
+    {
+        base_remote = "upstream".to_string();
+    }
+
+    let Some(base_url) = git.remote_web_url(&base_remote)? else {
         return Err(anyhow!(
             "unable to derive PR URL from remote '{}'; configure a GitHub-style remote URL",
-            remote
+            base_remote
         ));
+    };
+
+    let head_ref = if let (Some(head_url), Some(base_owner)) =
+        (head_url.as_deref(), github_owner_from_web_url(&base_url))
+        && let Some(head_owner) = github_owner_from_web_url(head_url)
+    {
+        if head_owner != base_owner {
+            format!("{head_owner}:{head}")
+        } else {
+            head.to_string()
+        }
+    } else {
+        head.to_string()
     };
     let mut params = vec!["expand=1".to_string()];
     if let Some(title) = title
@@ -1506,7 +1536,7 @@ fn build_pr_open_url(
         "{}/compare/{}...{}?{}",
         base_url.trim_end_matches('/'),
         base,
-        head,
+        head_ref,
         params.join("&")
     ))
 }
@@ -1530,6 +1560,18 @@ fn url_encode_component(value: &str) -> String {
         }
     }
     out
+}
+
+fn github_owner_from_web_url(url: &str) -> Option<String> {
+    let trimmed = url.trim_end_matches('/');
+    let (_, rest) = trimmed.split_once("://")?;
+    let mut parts = rest.split('/');
+    let _host = parts.next()?;
+    let owner = parts.next()?;
+    if owner.is_empty() {
+        return None;
+    }
+    Some(owner.to_string())
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
