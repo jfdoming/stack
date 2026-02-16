@@ -43,6 +43,13 @@ fn main() -> Result<()> {
 }
 
 fn run() -> Result<()> {
+    ctrlc::set_handler(|| {
+        restore_terminal_state();
+        eprintln!("cancelled by user");
+        std::process::exit(130);
+    })
+    .context("failed to install Ctrl-C handler")?;
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_target(false)
