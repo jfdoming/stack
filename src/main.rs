@@ -14,7 +14,7 @@ use clap::Parser;
 use crossterm::style::Stylize;
 use dialoguer::{Confirm, Input, Select};
 use output::{BranchView, DoctorIssueView, print_json};
-use provider::Provider;
+use provider::{CreatePrRequest, Provider};
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands};
@@ -58,6 +58,16 @@ fn main() -> Result<()> {
         Some(Commands::Unlink(args)) => {
             cmd_unlink(&db, &args.branch, args.drop_record, cli.porcelain)
         }
+        Some(Commands::Pr(args)) => cmd_pr(
+            &db,
+            &git,
+            &provider,
+            args.title.as_deref(),
+            args.body.as_deref(),
+            args.draft,
+            args.dry_run,
+            cli.porcelain,
+        ),
     }
 }
 
@@ -316,6 +326,71 @@ fn cmd_unlink(db: &Database, branch: &str, drop_record: bool, porcelain: bool) -
         println!("unlinked '{branch}' from parent");
     }
 
+    Ok(())
+}
+
+fn cmd_pr(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    title: Option<&str>,
+    body: Option<&str>,
+    draft: bool,
+    dry_run: bool,
+    porcelain: bool,
+) -> Result<()> {
+    let current = git.current_branch()?;
+    let records = db.list_branches()?;
+    let by_id: HashMap<i64, &BranchRecord> = records.iter().map(|r| (r.id, r)).collect();
+    let default_base = db.repo_meta()?.base_branch;
+
+    let base = records
+        .iter()
+        .find(|r| r.name == current)
+        .and_then(|branch| branch.parent_branch_id)
+        .and_then(|parent_id| by_id.get(&parent_id).map(|r| r.name.clone()))
+        .unwrap_or(default_base);
+
+    let payload = serde_json::json!({
+        "head": current,
+        "base": base,
+        "title": title,
+        "draft": draft,
+        "dry_run": dry_run,
+    });
+
+    if dry_run {
+        if porcelain {
+            return print_json(&payload);
+        }
+        println!(
+            "would create PR with base={} head={}",
+            payload["base"], payload["head"]
+        );
+        return Ok(());
+    }
+
+    let result = provider.create_pr(CreatePrRequest {
+        head: payload["head"].as_str().unwrap_or_default(),
+        base: payload["base"].as_str().unwrap_or_default(),
+        title,
+        body,
+        draft,
+    })?;
+
+    if porcelain {
+        return print_json(&serde_json::json!({
+            "head": payload["head"],
+            "base": payload["base"],
+            "url": result.url,
+        }));
+    }
+
+    if result.url.is_empty() {
+        println!("PR creation command executed, but no URL was returned by gh");
+    } else {
+        println!("created PR: {}", result.url);
+    }
     Ok(())
 }
 
