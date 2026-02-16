@@ -41,6 +41,7 @@ PRs should include:
 ## Versioning (SemVer)
 When bumping `Cargo.toml` version, use Semantic Versioning:
 Docs-only changes do not require a version bump.
+- Maintenance-only tasks (for example CI/workflow automation or repository housekeeping) do not require a version bump or changelog entry unless runtime user-facing behaviour changes.
 - Pre-`1.0.0`:
   - Prefer `PATCH` for non-breaking fixes/improvements/refactors.
   - Use `MINOR` for new features; breaking changes are allowed if required.

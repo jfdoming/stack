@@ -6,6 +6,7 @@ Use this file for documentation update rules and scope decisions.
 - Update docs in the same PR as behaviour, workflow, or architecture changes.
 - If user-facing output/help text changes, update relevant docs in the same task.
 - If command flags/subcommands change, update usage examples and workflow notes.
+- Maintenance-only tasks and docs-only updates do not require a version bump or changelog entry unless runtime user-facing behaviour changes.
 
 ## Where To Update
 - `AGENTS.md`: only index/navigation and global guardrails.
