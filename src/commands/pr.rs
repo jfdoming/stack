@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{IsTerminal, stdin, stdout};
+use std::io::{IsTerminal, stdout};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
@@ -9,7 +9,6 @@ use crate::args::PrArgs;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
-use crate::ui::interaction::confirm_inline_yes_no;
 use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
 use crate::util::terminal::osc8_hyperlink;
 use crate::util::url::{github_owner_from_web_url, url_encode_component};
@@ -32,7 +31,7 @@ pub fn run(
     provider: &dyn Provider,
     args: &PrArgs,
     porcelain: bool,
-    yes: bool,
+    _yes: bool,
     debug: bool,
 ) -> Result<()> {
     let current = git.current_branch()?;
@@ -161,36 +160,6 @@ pub fn run(
             payload["head"].as_str().unwrap_or_default(),
             pr_ref
         );
-        return Ok(());
-    }
-
-    let should_open = if yes {
-        true
-    } else if stdout().is_terminal() && stdin().is_terminal() {
-        let prompt = if non_stacked_reason.is_some() {
-            format!(
-                "Open PR from '{}' into '{}' even though the branch is not stacked?",
-                payload["head"].as_str().unwrap_or_default(),
-                payload["base"].as_str().unwrap_or_default()
-            )
-        } else {
-            format!(
-                "Open PR from '{}' into '{}'?",
-                payload["head"].as_str().unwrap_or_default(),
-                payload["base"].as_str().unwrap_or_default()
-            )
-        };
-        confirm_inline_yes_no(&prompt)?
-    } else {
-        return Err(anyhow!(
-            "confirmation required in non-interactive mode; rerun with --yes"
-        ));
-    };
-
-    if !should_open {
-        if !porcelain {
-            println!("PR open cancelled: confirmation declined; no changes made");
-        }
         return Ok(());
     }
 

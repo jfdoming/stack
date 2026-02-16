@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.5 - 2026-02-16
+- Removed `stack pr` confirmation prompts; PR link open flow now proceeds immediately (including in non-interactive mode).
+- Updated integration coverage to confirm `stack pr` succeeds without `--yes` for both stacked and non-stacked branches.
+
 ## 0.10.4 - 2026-02-16
 - Added a shared branch PR-body helper in `src/util/pr_body.rs` and wired both:
   - `stack pr` default body generation, and

@@ -44,7 +44,7 @@ stack track --all --dry-run
 stack untrack <branch>
 stack --yes delete <branch>
 stack pr --dry-run
-stack --yes pr
+stack pr
 stack sync --dry-run
 stack doctor
 stack completions zsh > ~/.zsh/completions/_stack

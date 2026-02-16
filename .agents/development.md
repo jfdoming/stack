@@ -42,9 +42,9 @@
 - `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
-- `stack pr` requires confirmation before pushing and auto-opening the PR URL in a browser unless `--yes` is passed.
+- `stack pr` pushes and auto-opens the PR URL immediately (no confirmation prompt).
 - If browser auto-open fails, `stack pr` prints a manual fallback link; styled TTY output uses OSC 8 clickable text instead of truncating the URL.
-- On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base; link-open flow still requires confirmation (or `--yes`).
+- On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base.
 - `stack pr` blocks self-targeted PRs (`base == head`) with a clear message instead of generating a broken compare link.
 - When `stack pr` exits early for self-targeted PRs (`base == head`), it suppresses the redundant non-stacked warning.
 - For fork branches, `stack pr` builds compare links against `upstream` (when configured) and uses `owner:branch` head refs.
