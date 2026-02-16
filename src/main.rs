@@ -20,7 +20,7 @@ use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use dialoguer::console::Term;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
-use provider::{CreatePrRequest, Provider};
+use provider::Provider;
 use thiserror::Error;
 use tracing_subscriber::EnvFilter;
 
@@ -1129,7 +1129,7 @@ fn cmd_pr(
         "draft": args.draft,
         "dry_run": args.dry_run,
         "existing_pr_number": existing.as_ref().map(|pr| pr.number),
-        "will_create": existing.is_none(),
+        "will_open_link": existing.is_none(),
     });
 
     if args.dry_run {
@@ -1145,8 +1145,8 @@ fn cmd_pr(
             );
         } else {
             println!(
-                "would create PR with base={} head={}",
-                payload["base"], payload["head"]
+                "would push '{}' and open a PR link with base={}",
+                payload["head"], payload["base"]
             );
         }
         return Ok(());
@@ -1165,7 +1165,7 @@ fn cmd_pr(
         return Ok(());
     }
 
-    let should_create = if yes {
+    let should_open = if yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
         let prompt = if non_stacked_reason.is_some() {
@@ -1188,34 +1188,41 @@ fn cmd_pr(
         ));
     };
 
-    if !should_create {
+    if !should_open {
         if !porcelain {
-            println!("PR not created: confirmation declined; no changes made");
+            println!("PR open cancelled: confirmation declined; no changes made");
         }
         return Ok(());
     }
 
-    let result = provider.create_pr(CreatePrRequest {
-        head: payload["head"].as_str().unwrap_or_default(),
-        base: payload["base"].as_str().unwrap_or_default(),
-        title: args.title.as_deref(),
-        body: args.body.as_deref(),
-        draft: args.draft,
-    })?;
+    let head = payload["head"].as_str().unwrap_or_default();
+    let base_ref = payload["base"].as_str().unwrap_or_default();
+    let push_remote = git
+        .remote_for_branch(head)?
+        .or_else(|| git.remote_for_branch(base_ref).ok().flatten())
+        .unwrap_or_else(|| "origin".to_string());
+    git.push_branch(&push_remote, head)?;
+    let url = build_pr_open_url(
+        git,
+        &push_remote,
+        base_ref,
+        head,
+        args.title.as_deref(),
+        args.body.as_deref(),
+        args.draft,
+    )?;
 
     if porcelain {
         return print_json(&serde_json::json!({
             "head": payload["head"],
             "base": payload["base"],
-            "url": result.url,
+            "push_remote": push_remote,
+            "url": url,
         }));
     }
 
-    if result.url.is_empty() {
-        println!("PR creation command executed, but no URL was returned by gh");
-    } else {
-        println!("created PR: {}", result.url);
-    }
+    println!("pushed '{head}' to '{push_remote}'");
+    println!("open PR: {}", format_pr_open_ref(&url));
     Ok(())
 }
 
@@ -1442,6 +1449,65 @@ fn format_existing_pr_ref(git: &Git, base_branch: &str, number: i64) -> Result<S
     };
     let url = format!("{}/pull/{}", base_url.trim_end_matches('/'), number);
     Ok(osc8_hyperlink(&url, &label).underlined().to_string())
+}
+
+fn build_pr_open_url(
+    git: &Git,
+    remote: &str,
+    base: &str,
+    head: &str,
+    title: Option<&str>,
+    body: Option<&str>,
+    draft: bool,
+) -> Result<String> {
+    let Some(base_url) = git.remote_web_url(remote)? else {
+        return Err(anyhow!(
+            "unable to derive PR URL from remote '{}'; configure a GitHub-style remote URL",
+            remote
+        ));
+    };
+    let mut params = vec!["expand=1".to_string()];
+    if let Some(title) = title
+        && !title.is_empty()
+    {
+        params.push(format!("title={}", url_encode_component(title)));
+    }
+    if let Some(body) = body
+        && !body.is_empty()
+    {
+        params.push(format!("body={}", url_encode_component(body)));
+    }
+    if draft {
+        params.push("draft=1".to_string());
+    }
+    Ok(format!(
+        "{}/compare/{}...{}?{}",
+        base_url.trim_end_matches('/'),
+        base,
+        head,
+        params.join("&")
+    ))
+}
+
+fn format_pr_open_ref(url: &str) -> String {
+    let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    if !use_clickable {
+        return url.to_string();
+    }
+    osc8_hyperlink(url, "open PR").underlined().to_string()
+}
+
+fn url_encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push_str(&format!("{:02X}", b));
+        }
+    }
+    out
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
