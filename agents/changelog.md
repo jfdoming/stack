@@ -3,6 +3,7 @@
 Keep entries concise (1-3 bullets each). Newest first.
 
 ## Unreleased
+- Replaced sync/delete yes-no confirms with richer select-based pickers (clear labels + context lines).
 - `stack delete` now uses an interactive tracked-branch picker by default in TTYs (current branch preselected).
 - Non-interactive `stack delete` now requires an explicit branch argument instead of assuming current branch.
 - Clarified help output by separating command options from global options.

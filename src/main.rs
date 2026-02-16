@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
 use crossterm::style::Stylize;
 use dialoguer::console::Term;
-use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
+use dialoguer::{Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
 use thiserror::Error;
@@ -315,11 +315,15 @@ fn cmd_sync(
     let should_apply = if opts.yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        prompt_or_cancel(
-            Confirm::new()
-                .with_prompt("Apply sync plan?")
-                .default(false)
-                .interact(),
+        let operation_count = plan_view.operations.len();
+        confirm_with_select(
+            "Apply sync plan?",
+            &[
+                format!("Will run {operation_count} planned operation(s)."),
+                "Enter to select, Esc/Ctrl-C to cancel.".to_string(),
+            ],
+            "Yes - apply sync updates now",
+            "No - keep plan only (no changes)",
         )?
     } else {
         false
@@ -567,14 +571,15 @@ fn cmd_delete(
     let should_apply = if yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        prompt_or_cancel(
-            Confirm::new()
-                .with_prompt(format!(
-                    "Delete '{}' and close its upstream PR?",
-                    payload["branch"]
-                ))
-                .default(false)
-                .interact(),
+        confirm_with_select(
+            &format!("Delete '{}' and close its upstream PR?", payload["branch"]),
+            &[
+                format!("Parent after splice: {}", payload["parent"]),
+                format!("PR number: {:?}", payload["pr_number"]),
+                "Enter to select, Esc/Ctrl-C to cancel.".to_string(),
+            ],
+            "Yes - delete branch, close PR, and splice stack",
+            "No - cancel delete",
         )?
     } else {
         false
@@ -688,6 +693,30 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
             }
         }
     }
+}
+
+fn confirm_with_select(
+    prompt: &str,
+    details: &[String],
+    yes_label: &str,
+    no_label: &str,
+) -> Result<bool> {
+    for line in details {
+        println!("  {}", line.as_str().dark_grey());
+    }
+    let theme = ColorfulTheme::default();
+    let options = vec![
+        format!("{} {}", "●".green().bold(), yes_label),
+        format!("{} {}", "○".yellow().bold(), no_label),
+    ];
+    let idx = prompt_or_cancel(
+        Select::with_theme(&theme)
+            .with_prompt(prompt)
+            .items(&options)
+            .default(1)
+            .interact(),
+    )?;
+    Ok(idx == 0)
 }
 
 fn build_branch_picker_items(
