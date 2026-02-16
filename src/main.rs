@@ -1444,7 +1444,7 @@ fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
                 MoveToColumn(0),
                 Clear(ClearType::FromCursorDown)
             )
-                .context("failed to clear inline confirm area")?;
+            .context("failed to clear inline confirm area")?;
             write!(out, "{prompt}  ").context("failed to write prompt")?;
 
             let yes = if yes_selected {
