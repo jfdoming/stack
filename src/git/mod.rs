@@ -150,6 +150,11 @@ impl Git {
         self.run(["rebase", "--onto", new_base, old_base, branch])
     }
 
+    pub fn merge_base(&self, branch: &str, onto: &str) -> Result<String> {
+        self.capture(["merge-base", branch, onto])
+            .map(|s| s.trim().to_string())
+    }
+
     pub fn capture<const N: usize>(&self, args: [&str; N]) -> Result<String> {
         let output = Command::new("git")
             .current_dir(&self.root)
