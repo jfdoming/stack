@@ -446,6 +446,57 @@ fn pr_url_includes_managed_section_links_for_stacked_branch() {
 }
 
 #[cfg(unix)]#[test]
+fn pr_url_uses_base_commit_link_for_base_parent() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/base-commit-link"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/base-commit-link"]);
+    configure_local_push_url(repo.path());
+
+    let base_sha = String::from_utf8(
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("read main sha")
+            .stdout,
+    )
+    .expect("main sha utf8")
+    .trim()
+    .to_string();
+
+    let fake_bin = repo.path().join("fake-bin");
+    let open_log = repo.path().join("open.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/base-commit-link\"* ]]; then\n  echo '[]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
+        .args(["--yes", "pr"])
+        .assert()
+        .success();
+
+    let open_calls = fs::read_to_string(&open_log).expect("read open log");
+    assert!(
+        open_calls.contains(&format!("%2Fcommit%2F{base_sha}")),
+        "expected base branch commit link in body, got: {open_calls}"
+    );
+}
+
+#[cfg(unix)]#[test]
 fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
     let repo = init_repo();
     stack_cmd(repo.path())

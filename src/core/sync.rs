@@ -219,9 +219,14 @@ pub fn build_sync_plan(
                 .as_deref()
                 .and_then(repo_root_from_pr_url)
                 .unwrap_or(base_url.as_str());
+            let base_commit_url = git
+                .merge_base(&branch.name, base_branch)
+                .ok()
+                .map(|sha| format!("{}/commit/{sha}", pr_root.trim_end_matches('/')));
             let managed_section = managed_pr_section(
                 pr_root,
                 base_branch,
+                base_commit_url.as_deref(),
                 parent_ref.as_ref(),
                 first_child.as_ref(),
             );

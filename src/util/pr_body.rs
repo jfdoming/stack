@@ -11,13 +11,26 @@ pub const MANAGED_BODY_MARKER_END: &str = "<!-- stack:managed:end -->";
 pub fn managed_pr_section(
     base_url: &str,
     base_branch: &str,
+    base_commit_url: Option<&str>,
     parent: Option<&ManagedBranchRef>,
     first_child: Option<&ManagedBranchRef>,
 ) -> String {
     let root = base_url.trim_end_matches('/');
     let parent_chain = parent
-        .map(|p| format_pr_chain_node(root, p))
-        .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"));
+        .map(|p| {
+            if p.branch == base_branch {
+                base_commit_url
+                    .map(|url| format!("[{base_branch}]({url})"))
+                    .unwrap_or_else(|| format_pr_chain_node(root, p))
+            } else {
+                format_pr_chain_node(root, p)
+            }
+        })
+        .unwrap_or_else(|| {
+            base_commit_url
+                .map(|url| format!("[{base_branch}]({url})"))
+                .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"))
+        });
     let prefix = if parent.is_some_and(|p| p.branch != base_branch) {
         "… → ".to_string()
     } else {
@@ -31,17 +44,19 @@ pub fn managed_pr_section(
     } else {
         format!("{prefix}{parent_chain} → (this PR)")
     };
-    format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n{MANAGED_BODY_MARKER_END}")
+    format!("{MANAGED_BODY_MARKER_START}\n{managed_line}<hr />\n{MANAGED_BODY_MARKER_END}")
 }
 
 pub fn compose_branch_pr_body(
     base_url: &str,
     base_branch: &str,
+    base_commit_url: Option<&str>,
     parent: Option<&ManagedBranchRef>,
     first_child: Option<&ManagedBranchRef>,
     user_body: Option<&str>,
 ) -> String {
-    let managed_section = managed_pr_section(base_url, base_branch, parent, first_child);
+    let managed_section =
+        managed_pr_section(base_url, base_branch, base_commit_url, parent, first_child);
     let user = user_body.and_then(|body| {
         let trimmed = body.trim();
         if trimmed.is_empty() {
@@ -123,6 +138,7 @@ mod tests {
         let body = managed_pr_section(
             "https://github.com/acme/repo",
             "main",
+            None,
             Some(&parent),
             Some(&child),
         );
@@ -136,7 +152,7 @@ mod tests {
 
     #[test]
     fn managed_pr_section_base_parent_has_no_leading_ellipsis() {
-        let body = managed_pr_section("https://github.com/acme/repo", "main", None, None);
+        let body = managed_pr_section("https://github.com/acme/repo", "main", None, None, None);
         assert!(body.contains("[main](https://github.com/acme/repo/tree/main) → (this PR)"));
         assert!(!body.contains("… [main]"));
     }
@@ -156,6 +172,7 @@ mod tests {
         let body = managed_pr_section(
             "https://github.com/acme/repo",
             "main",
+            None,
             Some(&base_parent),
             Some(&child),
         );
@@ -174,7 +191,13 @@ mod tests {
             pr_number: Some(12),
             pr_url: None,
         };
-        let body = managed_pr_section("https://github.com/acme/repo", "main", Some(&parent), None);
+        let body = managed_pr_section(
+            "https://github.com/acme/repo",
+            "main",
+            None,
+            Some(&parent),
+            None,
+        );
         assert!(body.contains("… → [#12](https://github.com/acme/repo/pull/12) → (this PR)"));
         assert!(!body.contains("(this PR) …"));
     }
@@ -184,6 +207,7 @@ mod tests {
         let body = compose_branch_pr_body(
             "https://github.com/acme/repo",
             "main",
+            None,
             None,
             None,
             Some("details"),
@@ -207,5 +231,18 @@ mod tests {
         let new_section = format!("{MANAGED_BODY_MARKER_START}\nnew\n{MANAGED_BODY_MARKER_END}");
         let merged = merge_managed_pr_section(Some("user text"), &new_section);
         assert_eq!(merged, format!("{new_section}\n\nuser text"));
+    }
+
+    #[test]
+    fn managed_pr_section_uses_base_commit_link_when_provided() {
+        let body = managed_pr_section(
+            "https://github.com/acme/repo",
+            "main",
+            Some("https://github.com/acme/repo/commit/abc123"),
+            None,
+            None,
+        );
+        assert!(body.contains("[main](https://github.com/acme/repo/commit/abc123)"));
+        assert!(!body.contains("/tree/main"));
     }
 }
