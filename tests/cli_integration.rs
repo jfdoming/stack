@@ -446,6 +446,44 @@ fn untrack_command_splices_children_and_removes_branch_record() {
 }
 
 #[test]
+fn untrack_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["untrack"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "assuming target branch 'feat/a' (only viable branch)",
+        ));
+}
+
+#[test]
+fn untrack_without_branch_in_non_interactive_mode_requires_argument_when_multiple_tracked() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/b"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["untrack"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "branch required in non-interactive mode",
+        ));
+}
+
+#[test]
 fn unlink_subcommand_is_removed() {
     let repo = init_repo();
     stack_cmd(repo.path())
