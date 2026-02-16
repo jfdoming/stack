@@ -260,6 +260,53 @@ fn pr_create_fails_when_gh_returns_non_zero() {
         .stderr(predicate::str::contains("gh command failed"));
 }
 
+#[cfg(unix)]
+#[test]
+fn track_infer_uses_fork_qualified_head_for_pr_detection() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/fork-pr"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:alice/stack-test.git",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/fork-pr.remote", "origin"],
+    );
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"--head feat/fork-pr\"* ]]; then\n  echo '[]'\n  exit 0\nfi\nif [[ \"$*\" == *\"--head alice:feat/fork-pr\"* ]]; then\n  echo '[{\"number\": 42, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["track", "feat/fork-pr", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run stack track infer dry-run");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["changes"][0]["branch"], "feat/fork-pr");
+    assert_eq!(json["changes"][0]["new_parent"], "main");
+    assert_eq!(json["changes"][0]["source"], "pr_base");
+}
+
 #[test]
 fn stack_default_output_includes_pr_hyperlink_when_cached_pr_exists() {
     let repo = init_repo();
