@@ -46,6 +46,7 @@ When changing behaviour, architecture, or workflows:
 - Keep commits incremental (`feat:`, `fix:`, `docs:`, etc.).
 - Follow SemVer for version bumps, only after atomically completing a given task:
   - Pre-`1.0.0` rule: breaking changes are allowed in `MINOR` bumps.
+  - Docs-only changes do not require a version bump.
   - `PATCH` (`x.y.Z`): bug fixes, refactors, docs, and non-breaking UX tweaks.
   - `MINOR` (`x.Y.z`): new features/commands/options; may include breaking changes while `< 1.0.0`.
   - `MAJOR` (`X.y.z`): breaking CLI/API/schema behaviour changes once `>= 1.0.0`.

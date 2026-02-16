@@ -2,9 +2,6 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
-## 0.5.1 - 2026-02-16
-- Updated agent SemVer guidance to explicitly allow breaking changes in minor versions while pre-`1.0.0`.
-
 ## 0.5.0 - 2026-02-16
 - `stack track` now handles missing `--parent` like create/delete option selection: auto-assumes the only viable parent, prompts in TTY mode when multiple parents are available, and errors in non-interactive mode when parent choice is ambiguous.
 

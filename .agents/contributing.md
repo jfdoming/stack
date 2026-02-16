@@ -28,6 +28,7 @@ PRs should include:
 ## Versioning (SemVer)
 When bumping `Cargo.toml` version, use Semantic Versioning:
 For versions below `1.0.0`, breaking changes are permitted in `MINOR` releases.
+Docs-only changes do not require a version bump.
 - `PATCH`: non-breaking fixes/improvements/docs/refactors.
 - `MINOR`: new features; may include breaking changes while `< 1.0.0`.
 - `MAJOR`: any breaking change in CLI behaviour, flags, output contracts, or storage expectations once `>= 1.0.0`.
@@ -39,5 +40,6 @@ Update documentation in the same PR as code changes:
 - update `AGENTS.md` when top-level navigation or contributor workflow changes,
 - add/update files in `.agents/` when module behaviour, architecture, or workflows change.
 - append a concise entry to `CHANGELOG.md` whenever a new version is released.
+- docs-only changes do not need a changelog entry.
 
 Prefer small, targeted updates over large rewrites.
