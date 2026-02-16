@@ -241,6 +241,27 @@ fn pr_dry_run_fails_when_current_branch_is_not_tracked() {
         .stderr(predicate::str::contains("is not tracked"));
 }
 
+#[test]
+fn pr_dry_run_fails_when_current_branch_has_no_tracked_parent() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/orphan"]);
+    stack_cmd(repo.path()).assert().success();
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(db_path).expect("open db");
+    conn.execute(
+        "INSERT INTO branches(name, parent_branch_id) VALUES ('feat/orphan', NULL)",
+        [],
+    )
+    .expect("insert orphan tracked branch");
+
+    stack_cmd(repo.path())
+        .args(["pr", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("has no tracked parent"));
+}
+
 #[cfg(unix)]
 #[test]
 fn pr_does_not_create_when_existing_pr_is_found() {
@@ -271,6 +292,74 @@ fn pr_does_not_create_when_existing_pr_is_found() {
         .success()
         .stdout(predicate::str::contains(
             "PR already exists for 'feat/existing': #77",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_porcelain_reports_existing_pr_without_create() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/existing-json"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/existing-json"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing-json\"* ]]; then\n  echo '[{\"number\": 88, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["pr", "--porcelain"])
+        .output()
+        .expect("run stack pr porcelain");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["existing_pr_number"], 88);
+    assert_eq!(json["will_create"], false);
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_yes_allows_non_interactive_creation() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/pr-create"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/pr-create"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/pr-create\"* ]]; then\n  echo '[]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'https://github.com/acme/stack-test/pull/99'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "pr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "created PR: https://github.com/acme/stack-test/pull/99",
         ));
 }
 
