@@ -3,6 +3,14 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "stack", version, about = "Manage stacked pull requests")]
 pub struct Cli {
+    #[command(flatten, next_help_heading = "Global Options")]
+    pub global: GlobalArgs,
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Debug, Args)]
+pub struct GlobalArgs {
     #[arg(
         short = 'P',
         long,
@@ -24,8 +32,6 @@ pub struct Cli {
         help = "Launch interactive fullscreen UI for `stack` (no subcommand)"
     )]
     pub interactive: bool,
-    #[command(subcommand)]
-    pub command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -95,6 +101,9 @@ pub struct PrArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    after_help = "Installation examples:\n  zsh:        stack completions zsh > ~/.zsh/completions/_stack\n  bash:       stack completions bash > ~/.local/share/bash-completion/completions/stack\n  fish:       stack completions fish > ~/.config/fish/completions/stack.fish\n  powershell: stack completions powershell > stack.ps1"
+)]
 pub struct CompletionsArgs {
     #[arg(help = "Shell to generate completions for")]
     pub shell: clap_complete::Shell,

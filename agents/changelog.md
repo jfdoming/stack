@@ -3,6 +3,8 @@
 Keep entries concise (1-3 bullets each). Newest first.
 
 ## Unreleased
+- Clarified help output by separating command options from global options.
+- Added explicit shell completion installation examples to `stack completions --help`.
 - Added `stack delete` to close/delete upstream PRs, splice stack children, and delete local branches.
 - Added shell completion generation via `stack completions <shell>`.
 - Switched stack remote behavior to derive from base branch remote instead of assuming `origin`.
