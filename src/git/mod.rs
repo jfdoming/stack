@@ -147,14 +147,14 @@ impl Git {
             return Ok(None);
         }
 
-        if let Some(rest) = raw.strip_prefix("git@") {
-            if let Some((host, repo)) = rest.split_once(':') {
-                return Ok(Some(format!(
-                    "https://{}/{}",
-                    host.trim_end_matches('/'),
-                    repo.trim_end_matches(".git")
-                )));
-            }
+        if let Some(rest) = raw.strip_prefix("git@")
+            && let Some((host, repo)) = rest.split_once(':')
+        {
+            return Ok(Some(format!(
+                "https://{}/{}",
+                host.trim_end_matches('/'),
+                repo.trim_end_matches(".git")
+            )));
         }
 
         if let Some(rest) = raw.strip_prefix("ssh://git@")

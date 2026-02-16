@@ -140,14 +140,13 @@ pub fn build_sync_plan(
         }
 
         let current_sha = git.head_sha(&branch.name)?;
-        if let Some(previous_sha) = &branch.last_synced_head_sha {
-            if previous_sha != &current_sha {
-                if let Some(children_ids) = children.get(&branch.id) {
-                    for child_id in children_ids {
-                        if let Some(child) = by_id.get(child_id) {
-                            queue.push_back((child.name.clone(), branch.name.clone()));
-                        }
-                    }
+        if let Some(previous_sha) = &branch.last_synced_head_sha
+            && previous_sha != &current_sha
+            && let Some(children_ids) = children.get(&branch.id)
+        {
+            for child_id in children_ids {
+                if let Some(child) = by_id.get(child_id) {
+                    queue.push_back((child.name.clone(), branch.name.clone()));
                 }
             }
         }
@@ -222,13 +221,13 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
         Ok(())
     })();
 
-    if let Some(stash_handle) = stash {
-        if let Err(err) = git.stash_pop(&stash_handle) {
-            eprintln!(
-                "warning: could not auto-restore stash {}: {err}",
-                stash_handle.reference
-            );
-        }
+    if let Some(stash_handle) = stash
+        && let Err(err) = git.stash_pop(&stash_handle)
+    {
+        eprintln!(
+            "warning: could not auto-restore stash {}: {err}",
+            stash_handle.reference
+        );
     }
 
     if let Err(err) = result {

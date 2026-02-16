@@ -3,9 +3,19 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "stack", version, about = "Manage stacked pull requests")]
 pub struct Cli {
-    #[arg(short = 'P', long, global = true, help = "Output machine-readable JSON")]
+    #[arg(
+        short = 'P',
+        long,
+        global = true,
+        help = "Output machine-readable JSON"
+    )]
     pub porcelain: bool,
-    #[arg(short = 'y', long, global = true, help = "Skip interactive confirmations")]
+    #[arg(
+        short = 'y',
+        long,
+        global = true,
+        help = "Skip interactive confirmations"
+    )]
     pub yes: bool,
     #[arg(
         short = 'i',
