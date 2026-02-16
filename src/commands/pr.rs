@@ -13,6 +13,9 @@ use crate::ui::interaction::confirm_inline_yes_no;
 use crate::util::terminal::{osc8_hyperlink, truncate_for_display};
 use crate::util::url::{github_owner_from_web_url, url_encode_component};
 
+const MANAGED_BODY_MARKER_START: &str = "<!-- stack:managed:start -->";
+const MANAGED_BODY_MARKER_END: &str = "<!-- stack:managed:end -->";
+
 #[derive(Debug, Clone)]
 struct ManagedPrSection {
     parent: Option<BranchPrRef>,
@@ -388,11 +391,13 @@ fn compose_pr_body(
     } else {
         format!("… {parent_chain} → #this PR (this PR) …")
     };
+    let managed_section =
+        format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n{MANAGED_BODY_MARKER_END}");
 
     Some(if let Some(user) = user_body {
-        format!("{managed_line}\n\n{user}")
+        format!("{managed_section}\n\n{user}")
     } else {
-        managed_line
+        managed_section
     })
 }
 
@@ -437,6 +442,8 @@ mod tests {
         assert!(body.contains(
             "… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) → [#125](https://github.com/acme/repo/pull/125) …"
         ));
+        assert!(body.contains(MANAGED_BODY_MARKER_START));
+        assert!(body.contains(MANAGED_BODY_MARKER_END));
         assert!(body.ends_with("User body text"));
     }
 
@@ -455,6 +462,8 @@ mod tests {
                 "… [main](https://github.com/acme/repo/tree/main) → #this PR (this PR) …"
             )
         );
+        assert!(body.contains(MANAGED_BODY_MARKER_START));
+        assert!(body.contains(MANAGED_BODY_MARKER_END));
         assert!(body.ends_with("User body text"));
     }
 

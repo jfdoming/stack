@@ -336,8 +336,16 @@ fn pr_url_includes_managed_section_links_for_stacked_branch() {
 
     let open_calls = fs::read_to_string(&open_log).expect("read open log");
     assert!(
-        open_calls.contains("body=%E2%80%A6"),
-        "expected managed body block, got: {open_calls}"
+        open_calls.contains("body=%3C%21--"),
+        "expected encoded managed body comment marker, got: {open_calls}"
+    );
+    assert!(
+        open_calls.contains("stack%3Amanaged%3Astart"),
+        "expected managed start marker in body, got: {open_calls}"
+    );
+    assert!(
+        open_calls.contains("stack%3Amanaged%3Aend"),
+        "expected managed end marker in body, got: {open_calls}"
     );
     assert!(
         open_calls.contains("%E2%86%92"),
