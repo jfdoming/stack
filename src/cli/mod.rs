@@ -38,6 +38,8 @@ pub struct GlobalArgs {
 pub enum Commands {
     /// Add a branch to the stack
     Create(CreateArgs),
+    /// Track existing branch relationships
+    Track(TrackArgs),
     /// Update stacked branches
     Sync(SyncArgs),
     /// Validate and optionally repair stack metadata
@@ -58,6 +60,26 @@ pub struct CreateArgs {
     pub parent: Option<String>,
     #[arg(short = 'n', long, help = "Child branch name to create")]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TrackArgs {
+    #[arg(help = "Existing branch to track")]
+    pub branch: Option<String>,
+    #[arg(long, help = "Track all local non-base branches")]
+    pub all: bool,
+    #[arg(short = 'p', long, help = "Parent branch name")]
+    pub parent: Option<String>,
+    #[arg(long, help = "Infer parent from PR metadata and git ancestry")]
+    pub infer: bool,
+    #[arg(short = 'n', long, help = "Preview changes without mutating DB")]
+    pub dry_run: bool,
+    #[arg(
+        short = 'f',
+        long,
+        help = "Replace existing parent links in non-interactive mode"
+    )]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]

@@ -6,6 +6,8 @@
 - `cargo fmt`: apply rustfmt formatting.
 - `cargo run -- --help`: top-level command help.
 - `cargo run -- sync --dry-run`: preview sync plan without execution.
+- `cargo run -- track feat/branch --parent main`: track an existing local branch under a parent branch.
+- `cargo run -- track --all --dry-run`: preview inferred relationships for all local non-base branches.
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 
@@ -19,6 +21,7 @@
 - `stack --interactive` opens the fullscreen TUI.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
+- `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.

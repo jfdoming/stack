@@ -454,3 +454,89 @@ fn delete_without_branch_in_non_interactive_mode_requires_argument_when_multiple
             "branch required in non-interactive mode",
         ));
 }
+
+#[test]
+fn track_command_sets_parent_for_existing_branch() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["track", "feat/a", "--parent", "main", "--porcelain"])
+        .output()
+        .expect("run stack track");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["mode"], "single");
+    assert_eq!(json["applied"], true);
+    assert_eq!(json["changes"][0]["branch"], "feat/a");
+    assert_eq!(json["changes"][0]["new_parent"], "main");
+    assert_eq!(json["changes"][0]["source"], "explicit");
+}
+
+#[test]
+fn track_infer_dry_run_reports_inferred_parent() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    fs::write(repo.path().join("a.txt"), "a\n").expect("write a");
+    run_git(repo.path(), &["add", "a.txt"]);
+    run_git(repo.path(), &["commit", "-m", "a"]);
+    run_git(repo.path(), &["checkout", "-b", "feat/b"]);
+    fs::write(repo.path().join("b.txt"), "b\n").expect("write b");
+    run_git(repo.path(), &["add", "b.txt"]);
+    run_git(repo.path(), &["commit", "-m", "b"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["track", "feat/b", "--infer", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run stack track infer dry-run");
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["applied"], false);
+    assert_eq!(json["changes"][0]["branch"], "feat/b");
+    assert_eq!(json["changes"][0]["new_parent"], "feat/a");
+}
+
+#[test]
+fn track_conflict_in_non_interactive_mode_requires_force() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["checkout", "-b", "feat/c"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["track", "feat/c", "--parent", "feat/a"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["track", "feat/c", "--parent", "main"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("use --force"));
+
+    stack_cmd(repo.path())
+        .args(["track", "feat/c", "--parent", "main", "--force"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn track_all_non_interactive_errors_when_unresolved() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["checkout", "-b", "feat/b"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["track", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "some branches could not be resolved",
+        ));
+}

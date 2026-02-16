@@ -24,9 +24,9 @@ use provider::{CreatePrRequest, Provider};
 use thiserror::Error;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, Commands, DeleteArgs, PrArgs};
+use crate::cli::{Cli, Commands, DeleteArgs, PrArgs, TrackArgs};
 use crate::core::{build_sync_plan, rank_parent_candidates, render_tree};
-use crate::db::{BranchRecord, Database};
+use crate::db::{BranchRecord, Database, ParentUpdate};
 use crate::git::Git;
 use crate::provider::GithubProvider;
 
@@ -38,6 +38,53 @@ struct SyncRunOptions {
     porcelain: bool,
     yes: bool,
     dry_run: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TrackRunOptions {
+    porcelain: bool,
+    yes: bool,
+    dry_run: bool,
+    force: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TrackSource {
+    Explicit,
+    PrBase,
+    GitAncestry,
+}
+
+impl TrackSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            TrackSource::Explicit => "explicit",
+            TrackSource::PrBase => "pr_base",
+            TrackSource::GitAncestry => "git_ancestry",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ParentInference {
+    parent: String,
+    source: TrackSource,
+    confidence: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct TrackChange {
+    branch: String,
+    old_parent: Option<String>,
+    new_parent: String,
+    source: TrackSource,
+    confidence: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct TrackSkip {
+    branch: String,
+    reason: String,
 }
 
 fn main() -> Result<()> {
@@ -88,6 +135,19 @@ fn run() -> Result<()> {
         Some(Commands::Create(args)) => {
             cmd_create(&db, &git, &args.parent, &args.name, cli.global.porcelain)
         }
+        Some(Commands::Track(args)) => cmd_track(
+            &db,
+            &git,
+            &provider,
+            &args,
+            &base_branch,
+            TrackRunOptions {
+                porcelain: cli.global.porcelain,
+                yes: cli.global.yes,
+                dry_run: args.dry_run,
+                force: args.force,
+            },
+        ),
         Some(Commands::Sync(args)) => cmd_sync(
             &db,
             &git,
@@ -286,6 +346,343 @@ fn cmd_create(
         }
     }
     Ok(())
+}
+
+fn cmd_track(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    args: &TrackArgs,
+    base_branch: &str,
+    opts: TrackRunOptions,
+) -> Result<()> {
+    if args.all && args.branch.is_some() {
+        return Err(anyhow!(
+            "cannot combine --all with a positional branch argument"
+        ));
+    }
+    if !args.all && args.branch.is_none() {
+        return Err(anyhow!("branch required unless --all is provided"));
+    }
+    if args.all && args.parent.is_some() {
+        return Err(anyhow!("cannot combine --all with --parent"));
+    }
+    if !args.all && args.parent.is_none() && !args.infer {
+        return Err(anyhow!("parent required unless --infer is provided"));
+    }
+
+    let is_tty = stdout().is_terminal() && stdin().is_terminal();
+    let tracked = db.list_branches()?;
+    let by_name: HashMap<String, BranchRecord> = tracked
+        .iter()
+        .map(|b| (b.name.clone(), b.clone()))
+        .collect();
+    let by_id: HashMap<i64, String> = tracked.iter().map(|b| (b.id, b.name.clone())).collect();
+    let local = git.local_branches()?;
+    let local_set: HashSet<String> = local.iter().cloned().collect();
+    let mut changes = Vec::new();
+    let mut skipped = Vec::new();
+    let mut unresolved = Vec::new();
+    let mut warnings = Vec::new();
+
+    let targets: Vec<String> = if args.all {
+        local
+            .iter()
+            .filter(|b| b.as_str() != base_branch)
+            .cloned()
+            .collect()
+    } else {
+        vec![args.branch.clone().unwrap_or_default()]
+    };
+
+    for target in targets {
+        if !local_set.contains(&target) {
+            return Err(anyhow!("branch '{}' does not exist in git", target));
+        }
+        if target == base_branch {
+            skipped.push(TrackSkip {
+                branch: target,
+                reason: "base branch is not eligible for tracking".to_string(),
+            });
+            continue;
+        }
+
+        let inference = if args.all {
+            infer_parent_for_branch(
+                git,
+                provider,
+                &target,
+                by_name.get(&target),
+                &local,
+                &mut warnings,
+            )?
+        } else if let Some(parent) = &args.parent {
+            if !local_set.contains(parent) {
+                return Err(anyhow!("parent branch does not exist in git: {}", parent));
+            }
+            Some(ParentInference {
+                parent: parent.clone(),
+                source: TrackSource::Explicit,
+                confidence: "high",
+            })
+        } else {
+            infer_parent_for_branch(
+                git,
+                provider,
+                &target,
+                by_name.get(&target),
+                &local,
+                &mut warnings,
+            )?
+        };
+
+        let Some(parent) = inference else {
+            unresolved.push(target);
+            continue;
+        };
+
+        if parent.parent == target {
+            unresolved.push(target);
+            continue;
+        }
+        if !local_set.contains(&parent.parent) {
+            return Err(anyhow!(
+                "inferred parent branch does not exist in git: {}",
+                parent.parent
+            ));
+        }
+
+        let old_parent = by_name
+            .get(&target)
+            .and_then(|rec| rec.parent_branch_id)
+            .and_then(|id| by_id.get(&id).cloned());
+        if old_parent.as_deref() == Some(parent.parent.as_str()) {
+            skipped.push(TrackSkip {
+                branch: target,
+                reason: "already linked to inferred parent".to_string(),
+            });
+            continue;
+        }
+
+        changes.push(TrackChange {
+            branch: target,
+            old_parent,
+            new_parent: parent.parent,
+            source: parent.source,
+            confidence: parent.confidence,
+        });
+    }
+
+    let mut apply_changes = Vec::new();
+    for change in changes {
+        if change.old_parent.is_some() && change.old_parent.as_deref() != Some(&change.new_parent) {
+            if opts.yes {
+                apply_changes.push(change);
+                continue;
+            }
+            if !is_tty {
+                if !opts.force {
+                    return Err(anyhow!(
+                        "parent conflict for '{}': existing '{}' and proposed '{}' (use --force in non-interactive mode)",
+                        change.branch,
+                        change.old_parent.as_deref().unwrap_or("<none>"),
+                        change.new_parent
+                    ));
+                }
+                apply_changes.push(change);
+                continue;
+            }
+
+            match prompt_track_conflict(&change)? {
+                TrackConflictResolution::Replace => apply_changes.push(change),
+                TrackConflictResolution::Skip => skipped.push(TrackSkip {
+                    branch: change.branch,
+                    reason: "conflict skipped by user".to_string(),
+                }),
+                TrackConflictResolution::Abort => return Err(UserCancelled.into()),
+            }
+        } else {
+            apply_changes.push(change);
+        }
+    }
+
+    let applied = !opts.dry_run && !apply_changes.is_empty();
+    if applied {
+        let updates: Vec<ParentUpdate> = apply_changes
+            .iter()
+            .map(|c| ParentUpdate {
+                child_name: c.branch.clone(),
+                parent_name: Some(c.new_parent.clone()),
+            })
+            .collect();
+        db.set_parents_batch(&updates)?;
+    }
+
+    let changes_payload: Vec<serde_json::Value> = apply_changes
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "branch": c.branch,
+                "old_parent": c.old_parent,
+                "new_parent": c.new_parent,
+                "source": c.source.as_str(),
+                "confidence": c.confidence,
+            })
+        })
+        .collect();
+    let skipped_payload: Vec<serde_json::Value> = skipped
+        .iter()
+        .map(|s| serde_json::json!({"branch": s.branch, "reason": s.reason}))
+        .collect();
+
+    let payload = serde_json::json!({
+        "mode": if args.all { "all" } else { "single" },
+        "dry_run": opts.dry_run,
+        "applied": applied,
+        "changes": changes_payload,
+        "skipped": skipped_payload,
+        "unresolved": unresolved,
+        "warnings": warnings,
+    });
+
+    if opts.porcelain {
+        print_json(&payload)?;
+        if args.all && !opts.dry_run && !is_tty && !unresolved.is_empty() {
+            return Err(anyhow!("some branches could not be resolved"));
+        }
+        return Ok(());
+    }
+
+    for change in apply_changes.iter() {
+        println!(
+            "track {}: '{}' -> '{}' (source: {}, confidence: {})",
+            if opts.dry_run { "preview" } else { "plan" },
+            change.branch,
+            change.new_parent,
+            change.source.as_str(),
+            change.confidence
+        );
+    }
+    for skip in skipped {
+        println!("track skipped '{}': {}", skip.branch, skip.reason);
+    }
+    for branch in &unresolved {
+        println!("track unresolved '{}': no confident parent found", branch);
+    }
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+
+    if opts.dry_run {
+        println!("track dry run complete");
+    } else if applied {
+        println!("track applied");
+    } else {
+        println!("track not applied: no relationship changes");
+    }
+
+    if args.all && !opts.dry_run && !is_tty && !unresolved.is_empty() {
+        return Err(anyhow!("some branches could not be resolved"));
+    }
+    Ok(())
+}
+
+fn infer_parent_for_branch(
+    git: &Git,
+    provider: &dyn Provider,
+    branch: &str,
+    tracked: Option<&BranchRecord>,
+    local: &[String],
+    warnings: &mut Vec<String>,
+) -> Result<Option<ParentInference>> {
+    let cached_number = tracked.and_then(|r| r.cached_pr_number);
+    match provider.resolve_pr_by_head(branch, cached_number) {
+        Ok(Some(pr)) => {
+            if let Some(base) = pr.base_ref_name
+                && base != branch
+                && git.branch_exists(&base)?
+            {
+                return Ok(Some(ParentInference {
+                    parent: base,
+                    source: TrackSource::PrBase,
+                    confidence: "high",
+                }));
+            }
+        }
+        Ok(None) => {}
+        Err(err) => warnings.push(format!(
+            "could not inspect PR metadata for '{}': {}",
+            branch, err
+        )),
+    }
+
+    infer_parent_from_git(git, branch, local)
+}
+
+fn infer_parent_from_git(
+    git: &Git,
+    branch: &str,
+    local: &[String],
+) -> Result<Option<ParentInference>> {
+    let mut best_parent: Option<String> = None;
+    let mut best_distance = u32::MAX;
+    let mut tied = false;
+    for candidate in local {
+        if candidate == branch {
+            continue;
+        }
+        if !git.is_ancestor(candidate, branch)? {
+            continue;
+        }
+        let distance = git.commit_distance(candidate, branch)?;
+        if distance < best_distance {
+            best_parent = Some(candidate.clone());
+            best_distance = distance;
+            tied = false;
+        } else if distance == best_distance {
+            tied = true;
+        }
+    }
+
+    if tied {
+        return Ok(None);
+    }
+    Ok(best_parent.map(|parent| ParentInference {
+        parent,
+        source: TrackSource::GitAncestry,
+        confidence: "medium",
+    }))
+}
+
+enum TrackConflictResolution {
+    Replace,
+    Skip,
+    Abort,
+}
+
+fn prompt_track_conflict(change: &TrackChange) -> Result<TrackConflictResolution> {
+    let theme = ColorfulTheme::default();
+    let items = vec![
+        "Replace parent".to_string(),
+        "Skip branch".to_string(),
+        "Abort".to_string(),
+    ];
+    let old = change.old_parent.as_deref().unwrap_or("<none>");
+    let idx = prompt_or_cancel(
+        Select::with_theme(&theme)
+            .with_prompt(format!(
+                "Parent conflict for '{}' (existing: '{}', proposed: '{}')",
+                change.branch, old, change.new_parent
+            ))
+            .items(&items)
+            .default(0)
+            .interact(),
+    )?;
+    Ok(match idx {
+        0 => TrackConflictResolution::Replace,
+        1 => TrackConflictResolution::Skip,
+        _ => TrackConflictResolution::Abort,
+    })
 }
 
 fn cmd_sync(

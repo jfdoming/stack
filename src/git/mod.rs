@@ -234,6 +234,24 @@ impl Git {
             .map(|s| s.trim().to_string())
     }
 
+    pub fn is_ancestor(&self, ancestor: &str, branch: &str) -> Result<bool> {
+        let status = Command::new("git")
+            .current_dir(&self.root)
+            .args(["merge-base", "--is-ancestor", ancestor, branch])
+            .status()
+            .with_context(|| format!("failed to compare ancestry {ancestor} -> {branch}"))?;
+        Ok(status.success())
+    }
+
+    pub fn commit_distance(&self, base: &str, head: &str) -> Result<u32> {
+        let out = self.capture(["rev-list", "--count", &format!("{base}..{head}")])?;
+        let count = out
+            .trim()
+            .parse::<u32>()
+            .with_context(|| format!("invalid commit distance output for {base}..{head}"))?;
+        Ok(count)
+    }
+
     pub fn capture<const N: usize>(&self, args: [&str; N]) -> Result<String> {
         let output = Command::new("git")
             .current_dir(&self.root)
