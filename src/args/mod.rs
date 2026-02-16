@@ -52,6 +52,14 @@ pub enum Commands {
     Delete(DeleteArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
+    /// Switch to the highest descendant in the current stack path
+    Top,
+    /// Switch to the stack root ancestor for the current branch
+    Bottom,
+    /// Switch to a direct child branch
+    Up,
+    /// Switch to the direct parent branch
+    Down,
     /// Generate shell completion scripts
     Completions(CompletionsArgs),
 }
