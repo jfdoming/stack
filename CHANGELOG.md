@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.7 - 2026-02-16
+- Fixed GitHub PR detection for fork/upstream workflows by expanding metadata lookups across explicit remote repo scopes (including `upstream`) instead of relying only on default GH repo context.
+
 ## 0.10.6 - 2026-02-16
 - Updated `stack track` git-ancestry inference to recurse toward the configured base branch when possible, instead of only selecting the nearest local ancestor.
 - Added integration coverage to verify recursive inference picks the base branch for deep ancestry chains.

@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::git::Git;
-use crate::util::url::github_owner_from_web_url;
+use crate::util::url::{github_owner_from_web_url, github_repo_slug_from_web_url};
 
 #[derive(Debug, Clone)]
 pub enum PrState {
@@ -93,6 +93,91 @@ impl GithubProvider {
         }
         Ok(Some(String::from_utf8(output.stdout)?))
     }
+
+    fn repo_slug_for_remote(&self, remote: &str) -> Result<Option<String>> {
+        Ok(self
+            .git
+            .remote_web_url(remote)?
+            .and_then(|url| github_repo_slug_from_web_url(&url)))
+    }
+
+    fn repo_scope_candidates_for_branch(&self, branch: &str) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+
+        if let Some(remote) = self.git.remote_for_branch(branch)?
+            && let Some(slug) = self.repo_slug_for_remote(&remote)?
+            && seen.insert(slug.clone())
+        {
+            out.push(slug);
+        }
+        for remote in ["upstream", "origin"] {
+            if let Some(slug) = self.repo_slug_for_remote(remote)?
+                && seen.insert(slug.clone())
+            {
+                out.push(slug);
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn repo_scope_candidates_for_branches(
+        &self,
+        branches: &[(&str, Option<i64>)],
+    ) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+
+        for remote in ["upstream", "origin"] {
+            if let Some(slug) = self.repo_slug_for_remote(remote)?
+                && seen.insert(slug.clone())
+            {
+                out.push(slug);
+            }
+        }
+
+        for (branch, _) in branches {
+            if let Some(remote) = self.git.remote_for_branch(branch)?
+                && let Some(slug) = self.repo_slug_for_remote(&remote)?
+                && seen.insert(slug.clone())
+            {
+                out.push(slug);
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn parse_gh_pr_list(&self, raw: &str, context: &str) -> Result<Vec<GhPr>> {
+        let cleaned = clean_gh_json_output(raw);
+        serde_json::from_str::<Vec<GhPr>>(&cleaned).map_err(|err| {
+            if self.debug {
+                anyhow::anyhow!(
+                    "failed to parse gh PR list JSON for {}: {err}; gh output: {}",
+                    context,
+                    raw.trim()
+                )
+            } else {
+                err.into()
+            }
+        })
+    }
+
+    fn parse_gh_pr_view(&self, raw: &str, context: &str) -> Result<GhPr> {
+        let cleaned = clean_gh_json_output(raw);
+        serde_json::from_str(&cleaned).map_err(|err| {
+            if self.debug {
+                anyhow::anyhow!(
+                    "failed to parse gh PR metadata JSON for {}: {err}; gh output: {}",
+                    context,
+                    raw.trim()
+                )
+            } else {
+                err.into()
+            }
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -123,47 +208,41 @@ impl Provider for GithubProvider {
             return Ok(out);
         }
 
-        let args = [
-            "pr",
-            "list",
-            "--state",
-            "all",
-            "--limit",
-            "200",
-            "--json",
-            "number,state,mergeCommit,baseRefName,headRefName,body",
-        ];
-        let batch = self
-            .run_gh_optional(&args)?
-            .and_then(|raw| {
-                if raw.trim().is_empty() {
-                    None
-                } else {
-                    Some(raw)
-                }
-            })
-            .map(|raw| {
-                let cleaned = clean_gh_json_output(&raw);
-                serde_json::from_str::<Vec<GhPr>>(&cleaned).map_err(|err| {
-                    if self.debug {
-                        anyhow::anyhow!(
-                            "failed to parse gh PR list JSON: {err}; gh output: {}",
-                            raw.trim()
-                        )
-                    } else {
-                        err.into()
-                    }
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
-
         let mut by_head: HashMap<String, Vec<GhPr>> = HashMap::new();
-        for pr in batch {
-            if let Some(head) = pr.head_ref_name.as_deref()
-                && !head.is_empty()
-            {
-                by_head.entry(head.to_string()).or_default().push(pr);
+        let mut repo_scopes: Vec<Option<String>> = vec![None];
+        for scope in self.repo_scope_candidates_for_branches(branches)? {
+            repo_scopes.push(Some(scope));
+        }
+        for scope in repo_scopes {
+            let mut args = vec![
+                "pr".to_string(),
+                "list".to_string(),
+                "--state".to_string(),
+                "all".to_string(),
+                "--limit".to_string(),
+                "200".to_string(),
+                "--json".to_string(),
+                "number,state,mergeCommit,baseRefName,headRefName,body".to_string(),
+            ];
+            if let Some(scope) = scope.as_deref() {
+                args.push("--repo".to_string());
+                args.push(scope.to_string());
+            }
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let Some(raw) = self.run_gh_optional(&arg_refs)? else {
+                continue;
+            };
+            if raw.trim().is_empty() {
+                continue;
+            }
+            let context = scope.as_deref().unwrap_or("default");
+            let prs = self.parse_gh_pr_list(&raw, context)?;
+            for pr in prs {
+                if let Some(head) = pr.head_ref_name.as_deref()
+                    && !head.is_empty()
+                {
+                    by_head.entry(head.to_string()).or_default().push(pr);
+                }
             }
         }
 
@@ -193,38 +272,35 @@ impl Provider for GithubProvider {
         branch: &str,
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>> {
-        let args: Vec<String> = if let Some(num) = cached_number {
-            vec![
-                "pr".to_string(),
-                "view".to_string(),
-                num.to_string(),
-                "--json".to_string(),
-                "number,state,mergeCommit,baseRefName,body".to_string(),
-            ]
-        } else {
-            Vec::new()
-        };
-
-        if cached_number.is_some() {
-            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let Some(out) = self.run_gh_optional(&arg_refs)? else {
-                return Ok(None);
-            };
-            if out.trim().is_empty() {
-                return Ok(None);
+        if let Some(num) = cached_number {
+            let mut scopes: Vec<Option<String>> = vec![None];
+            for scope in self.repo_scope_candidates_for_branch(branch)? {
+                scopes.push(Some(scope));
             }
-            let cleaned = clean_gh_json_output(&out);
-            let pr: GhPr = serde_json::from_str(&cleaned).map_err(|err| {
-                if self.debug {
-                    anyhow::anyhow!(
-                        "failed to parse gh PR metadata JSON: {err}; gh output: {}",
-                        out.trim()
-                    )
-                } else {
-                    err.into()
+            for scope in scopes {
+                let mut args = vec![
+                    "pr".to_string(),
+                    "view".to_string(),
+                    num.to_string(),
+                    "--json".to_string(),
+                    "number,state,mergeCommit,baseRefName,body".to_string(),
+                ];
+                if let Some(scope) = scope.as_deref() {
+                    args.push("--repo".to_string());
+                    args.push(scope.to_string());
                 }
-            })?;
-            return Ok(Some(convert_pr(pr)));
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                let Some(out) = self.run_gh_optional(&arg_refs)? else {
+                    continue;
+                };
+                if out.trim().is_empty() {
+                    continue;
+                }
+                let context = scope.as_deref().unwrap_or("default");
+                let pr = self.parse_gh_pr_view(&out, context)?;
+                return Ok(Some(convert_pr(pr)));
+            }
+            return Ok(None);
         }
 
         let mut head_filters = vec![branch.to_string()];
@@ -238,38 +314,45 @@ impl Provider for GithubProvider {
             }
         }
 
-        for head_filter in head_filters {
-            let args = [
-                "pr".to_string(),
-                "list".to_string(),
-                "--head".to_string(),
-                head_filter,
-                "--state".to_string(),
-                "all".to_string(),
-                "--json".to_string(),
-                "number,state,mergeCommit,baseRefName,body".to_string(),
-            ];
-            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let Some(out) = self.run_gh_optional(&arg_refs)? else {
-                continue;
-            };
-            if out.trim().is_empty() {
-                continue;
-            }
-            let cleaned = clean_gh_json_output(&out);
-            let prs: Vec<GhPr> = serde_json::from_str(&cleaned).map_err(|err| {
-                if self.debug {
-                    anyhow::anyhow!(
-                        "failed to parse gh PR list JSON for --head {}: {err}; gh output: {}",
-                        args[3],
-                        out.trim()
-                    )
-                } else {
-                    err.into()
+        let mut scopes: Vec<Option<String>> = vec![None];
+        for scope in self.repo_scope_candidates_for_branch(branch)? {
+            scopes.push(Some(scope));
+        }
+        for scope in scopes {
+            for head_filter in &head_filters {
+                let mut args = vec![
+                    "pr".to_string(),
+                    "list".to_string(),
+                    "--head".to_string(),
+                    head_filter.to_string(),
+                    "--state".to_string(),
+                    "all".to_string(),
+                    "--json".to_string(),
+                    "number,state,mergeCommit,baseRefName,body".to_string(),
+                ];
+                if let Some(scope) = scope.as_deref() {
+                    args.push("--repo".to_string());
+                    args.push(scope.to_string());
                 }
-            })?;
-            if let Some(pr) = select_preferred_pr(prs) {
-                return Ok(Some(convert_pr(pr)));
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                let Some(out) = self.run_gh_optional(&arg_refs)? else {
+                    continue;
+                };
+                if out.trim().is_empty() {
+                    continue;
+                }
+                let context = format!(
+                    "--head {} {}",
+                    head_filter,
+                    scope
+                        .as_deref()
+                        .map(|s| format!("--repo {s}"))
+                        .unwrap_or_default()
+                );
+                let prs = self.parse_gh_pr_list(&out, &context)?;
+                if let Some(pr) = select_preferred_pr(prs) {
+                    return Ok(Some(convert_pr(pr)));
+                }
             }
         }
         Ok(None)
