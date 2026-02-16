@@ -131,7 +131,8 @@ impl Provider for GithubProvider {
             if out.trim().is_empty() {
                 return Ok(None);
             }
-            let pr: GhPr = serde_json::from_str(&out).map_err(|err| {
+            let cleaned = clean_gh_json_output(&out);
+            let pr: GhPr = serde_json::from_str(&cleaned).map_err(|err| {
                 if self.debug {
                     anyhow::anyhow!(
                         "failed to parse gh PR metadata JSON: {err}; gh output: {}",
@@ -173,7 +174,8 @@ impl Provider for GithubProvider {
             if out.trim().is_empty() {
                 continue;
             }
-            let mut prs: Vec<GhPr> = serde_json::from_str(&out).map_err(|err| {
+            let cleaned = clean_gh_json_output(&out);
+            let prs: Vec<GhPr> = serde_json::from_str(&cleaned).map_err(|err| {
                 if self.debug {
                     anyhow::anyhow!(
                         "failed to parse gh PR list JSON for --head {}: {err}; gh output: {}",
@@ -184,8 +186,7 @@ impl Provider for GithubProvider {
                     err.into()
                 }
             })?;
-            prs.sort_by_key(|p| p.number);
-            if let Some(pr) = prs.pop() {
+            if let Some(pr) = select_preferred_pr(prs) {
                 return Ok(Some(convert_pr(pr)));
             }
         }
@@ -248,6 +249,87 @@ fn convert_pr(pr: GhPr) -> PrInfo {
         state,
         merge_commit_oid: pr.merge_commit.map(|m| m.oid),
         base_ref_name: pr.base_ref_name,
+    }
+}
+
+fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
+    let mut best_open: Option<GhPr> = None;
+    let mut best_any: Option<GhPr> = None;
+
+    for pr in prs {
+        if best_any.as_ref().is_none_or(|b| pr.number > b.number) {
+            best_any = Some(GhPr {
+                number: pr.number,
+                state: pr.state.clone(),
+                base_ref_name: pr.base_ref_name.clone(),
+                merge_commit: pr.merge_commit.as_ref().map(|m| GhMergeCommit {
+                    oid: m.oid.clone(),
+                }),
+            });
+        }
+
+        if pr.state == "OPEN" && best_open.as_ref().is_none_or(|b| pr.number > b.number) {
+            best_open = Some(pr);
+        }
+    }
+
+    best_open.or(best_any)
+}
+
+fn clean_gh_json_output(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                let _ = chars.next();
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t' {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_gh_json_output_strips_ansi_and_controls() {
+        let raw = "\u{1b}[32m[\n{\"number\":1,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"mergeCommit\":null}\n]\u{1b}[0m";
+        let cleaned = clean_gh_json_output(raw);
+        assert!(cleaned.starts_with("["));
+        assert!(cleaned.contains("\"number\":1"));
+    }
+
+    #[test]
+    fn select_preferred_pr_prefers_open_over_higher_closed_number() {
+        let prs = vec![
+            GhPr {
+                number: 6995,
+                state: "CLOSED".to_string(),
+                base_ref_name: Some("master".to_string()),
+                merge_commit: None,
+            },
+            GhPr {
+                number: 6693,
+                state: "OPEN".to_string(),
+                base_ref_name: Some("feature/base".to_string()),
+                merge_commit: None,
+            },
+        ];
+        let picked = select_preferred_pr(prs).expect("selected pr");
+        assert_eq!(picked.number, 6693);
+        assert_eq!(picked.state, "OPEN");
     }
 }
 
