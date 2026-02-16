@@ -8,7 +8,7 @@ use crate::args::TrackArgs;
 use crate::core::rank_parent_candidates;
 use crate::db::{BranchRecord, Database, ParentUpdate};
 use crate::git::Git;
-use crate::provider::Provider;
+use crate::provider::{PrState, Provider};
 use crate::ui::interaction::{UserCancelled, confirm_inline_yes_no, prompt_or_cancel};
 use crate::ui::pickers::build_branch_picker_items;
 
@@ -348,6 +348,7 @@ pub fn run(
             })
             .collect();
         db.set_parents_batch(&updates)?;
+        refresh_pr_cache_for_tracked_branches(db, provider, &apply_changes)?;
     }
 
     let changes_payload: Vec<serde_json::Value> = apply_changes
@@ -565,6 +566,48 @@ fn infer_parent_chain_for_branch(
     }
 
     Ok(out)
+}
+
+fn refresh_pr_cache_for_tracked_branches(
+    db: &Database,
+    provider: &dyn Provider,
+    apply_changes: &[TrackChange],
+) -> Result<()> {
+    if apply_changes.is_empty() {
+        return Ok(());
+    }
+
+    let changed: HashSet<&str> = apply_changes.iter().map(|c| c.branch.as_str()).collect();
+    let records = db.list_branches()?;
+    let mut query_rows: Vec<(String, Option<i64>)> = records
+        .iter()
+        .filter(|r| changed.contains(r.name.as_str()))
+        .map(|r| (r.name.clone(), r.cached_pr_number))
+        .collect();
+    query_rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let query_refs: Vec<(&str, Option<i64>)> = query_rows
+        .iter()
+        .map(|(name, cached)| (name.as_str(), *cached))
+        .collect();
+
+    let resolved = provider.resolve_prs_by_head(&query_refs)?;
+    for (name, _) in query_rows {
+        if let Some(pr) = resolved.get(&name) {
+            db.set_pr_cache(
+                &name,
+                Some(pr.number),
+                Some(match pr.state {
+                    PrState::Open => "open",
+                    PrState::Merged => "merged",
+                    PrState::Closed => "closed",
+                    PrState::Unknown => "unknown",
+                }),
+            )?;
+        } else {
+            db.set_pr_cache(&name, None, None)?;
+        }
+    }
+    Ok(())
 }
 
 enum TrackConflictResolution {

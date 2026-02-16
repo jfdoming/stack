@@ -34,6 +34,7 @@
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
+- After non-dry-run `stack track`, PR cache metadata is refreshed for newly tracked branches so `stack` view immediately reflects current PR links/states.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.
 - Git-ancestry inference now recursively walks parent candidates until the configured base branch when possible.
 - Omitting `stack track <branch>` follows create/delete selection behaviour: assume when only one viable branch exists, otherwise prompt in TTY mode.

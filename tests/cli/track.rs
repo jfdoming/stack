@@ -63,6 +63,41 @@ fn track_command_sets_parent_for_existing_branch() {
     assert_eq!(json["changes"][0]["new_parent"], "main");
     assert_eq!(json["changes"][0]["source"], "explicit");
 }
+
+#[cfg(unix)]
+#[test]
+fn track_refreshes_pr_cache_for_tracked_branch() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{\"number\":77,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/a\",\"headRepositoryOwner\":{\"login\":\"acme\"},\"url\":\"https://github.com/acme/stack-test/pull/77\",\"body\":\"\"}]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path.clone())
+        .args(["track", "feat/a", "--parent", "main"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "https://github.com/acme/stack-test/pull/77",
+        ));
+}
 #[test]
 fn track_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();
