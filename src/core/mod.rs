@@ -244,36 +244,54 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
     Ok(())
 }
 
-pub fn render_tree(branches: &[BranchRecord], color: bool, pr_base_url: Option<&str>) -> String {
+pub fn render_tree(
+    branches: &[BranchRecord],
+    color: bool,
+    pr_base_url: Option<&str>,
+    default_base_branch: &str,
+) -> String {
     let mut out = String::new();
     let mut children: HashMap<Option<i64>, Vec<&BranchRecord>> = HashMap::new();
+    let mut by_id: HashMap<i64, &BranchRecord> = HashMap::new();
     for b in branches {
         children.entry(b.parent_branch_id).or_default().push(b);
+        by_id.insert(b.id, b);
     }
     for vals in children.values_mut() {
         vals.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    fn walk(
-        out: &mut String,
-        children: &HashMap<Option<i64>, Vec<&BranchRecord>>,
-        parent: Option<i64>,
-        prefix: &str,
+    struct RenderCtx<'a> {
+        children: &'a HashMap<Option<i64>, Vec<&'a BranchRecord>>,
+        by_id: &'a HashMap<i64, &'a BranchRecord>,
         color: bool,
-        pr_base_url: Option<&str>,
-    ) {
-        if let Some(nodes) = children.get(&parent) {
+        pr_base_url: Option<&'a str>,
+        default_base_branch: &'a str,
+    }
+
+    fn walk(out: &mut String, parent: Option<i64>, prefix: &str, ctx: &RenderCtx<'_>) {
+        if let Some(nodes) = ctx.children.get(&parent) {
             for (idx, node) in nodes.iter().enumerate() {
                 let is_last = idx + 1 == nodes.len();
                 let connector = if is_last { "└──" } else { "├──" };
-                let branch_name = if color {
+                let branch_name = if ctx.color {
                     node.name.as_str().green().bold().to_string()
                 } else {
                     node.name.clone()
                 };
-                let pr = render_pr_state(node.cached_pr_state.as_deref(), color);
-                let sync = render_sync_state(node.last_synced_head_sha.is_some(), color);
-                let pr_link = render_pr_link(pr_base_url, node.cached_pr_number, color);
+                let pr = render_pr_state(node.cached_pr_state.as_deref(), ctx.color);
+                let sync = render_sync_state(node.last_synced_head_sha.is_some(), ctx.color);
+                let parent_name = node
+                    .parent_branch_id
+                    .and_then(|id| ctx.by_id.get(&id).map(|b| b.name.as_str()));
+                let pr_link = render_pr_link(
+                    ctx.pr_base_url,
+                    node.cached_pr_number,
+                    parent_name,
+                    &node.name,
+                    ctx.default_base_branch,
+                    ctx.color,
+                );
                 out.push_str(&format!(
                     "{prefix}{connector} {branch_name} {pr} {sync}{pr_link}"
                 ));
@@ -283,19 +301,19 @@ pub fn render_tree(branches: &[BranchRecord], color: bool, pr_base_url: Option<&
                 } else {
                     format!("{prefix}│   ")
                 };
-                walk(
-                    out,
-                    children,
-                    Some(node.id),
-                    &next_prefix,
-                    color,
-                    pr_base_url,
-                );
+                walk(out, Some(node.id), &next_prefix, ctx);
             }
         }
     }
 
-    walk(&mut out, &children, None, "", color, pr_base_url);
+    let ctx = RenderCtx {
+        children: &children,
+        by_id: &by_id,
+        color,
+        pr_base_url,
+        default_base_branch,
+    };
+    walk(&mut out, None, "", &ctx);
     if out.is_empty() {
         out.push_str("(no stack branches tracked)\n");
     }
@@ -338,14 +356,31 @@ fn render_sync_state(has_sha: bool, color: bool) -> String {
     }
 }
 
-fn render_pr_link(pr_base_url: Option<&str>, pr_number: Option<i64>, color: bool) -> String {
-    let Some(number) = pr_number else {
-        return String::new();
-    };
+fn render_pr_link(
+    pr_base_url: Option<&str>,
+    pr_number: Option<i64>,
+    parent_branch: Option<&str>,
+    head_branch: &str,
+    default_base_branch: &str,
+    color: bool,
+) -> String {
     let Some(base) = pr_base_url else {
         return String::new();
     };
-    let url = format!("{}/pull/{}", base.trim_end_matches('/'), number);
+    let url = if let Some(number) = pr_number {
+        format!("{}/pull/{}", base.trim_end_matches('/'), number)
+    } else {
+        let compare_base = parent_branch.unwrap_or(default_base_branch);
+        if compare_base == head_branch {
+            return String::new();
+        }
+        format!(
+            "{}/compare/{}...{}?expand=1",
+            base.trim_end_matches('/'),
+            compare_base,
+            head_branch
+        )
+    };
     if color {
         format!(" {}", url.dark_grey().underlined())
     } else {
@@ -411,7 +446,7 @@ mod tests {
             },
         ];
 
-        let rendered = render_tree(&branches, false, None);
+        let rendered = render_tree(&branches, false, None, "main");
         assert!(rendered.contains("└── feat/a"));
         assert!(rendered.contains("[PR:open]"));
         assert!(rendered.contains("[SYNC:unsynced]"));
@@ -428,7 +463,7 @@ mod tests {
             cached_pr_state: Some("open".to_string()),
         }];
 
-        let rendered = render_tree(&branches, true, None);
+        let rendered = render_tree(&branches, true, None, "main");
         assert!(rendered.contains("\u{1b}["));
     }
 
@@ -443,7 +478,32 @@ mod tests {
             cached_pr_state: Some("open".to_string()),
         }];
 
-        let rendered = render_tree(&branches, false, Some("https://github.com/acme/repo"));
+        let rendered = render_tree(
+            &branches,
+            false,
+            Some("https://github.com/acme/repo"),
+            "main",
+        );
         assert!(rendered.contains("https://github.com/acme/repo/pull/42"));
+    }
+
+    #[test]
+    fn render_tree_includes_compare_link_when_pr_missing() {
+        let branches = vec![BranchRecord {
+            id: 1,
+            name: "feat/a".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: Some("abc".to_string()),
+            cached_pr_number: None,
+            cached_pr_state: None,
+        }];
+
+        let rendered = render_tree(
+            &branches,
+            false,
+            Some("https://github.com/acme/repo"),
+            "main",
+        );
+        assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
     }
 }
