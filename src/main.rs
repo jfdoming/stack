@@ -362,9 +362,6 @@ fn cmd_track(
     if args.all && args.parent.is_some() {
         return Err(anyhow!("cannot combine --all with --parent"));
     }
-    if !args.all && args.parent.is_none() && !args.infer {
-        return Err(anyhow!("parent required unless --infer is provided"));
-    }
 
     let is_tty = stdout().is_terminal() && stdin().is_terminal();
     let current = git.current_branch()?;
@@ -452,6 +449,52 @@ fn cmd_track(
             }
             Some(ParentInference {
                 parent: parent.clone(),
+                source: TrackSource::Explicit,
+                confidence: "high",
+            })
+        } else if !args.infer {
+            let parent_candidates: Vec<String> = rank_parent_candidates(&target, &tracked, &local)
+                .into_iter()
+                .filter(|candidate| candidate != &target)
+                .collect();
+            if parent_candidates.is_empty() {
+                return Err(anyhow!(
+                    "no viable parent branches available for '{}'",
+                    target
+                ));
+            }
+            let parent = if parent_candidates.len() == 1 {
+                let assumed = parent_candidates[0].clone();
+                if !opts.porcelain {
+                    println!("assuming parent branch '{assumed}' (only viable branch)");
+                }
+                assumed
+            } else if is_tty {
+                let theme = ColorfulTheme::default();
+                let picker_items =
+                    build_branch_picker_items(&parent_candidates, &current, &tracked);
+                let default_idx = parent_candidates
+                    .iter()
+                    .position(|b| b == &current)
+                    .unwrap_or(0);
+                let idx = prompt_or_cancel(
+                    Select::with_theme(&theme)
+                        .with_prompt(format!(
+                            "Select parent branch for '{}' (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)",
+                            target
+                        ))
+                        .items(&picker_items)
+                        .default(default_idx)
+                        .interact(),
+                )?;
+                parent_candidates[idx].clone()
+            } else {
+                return Err(anyhow!(
+                    "parent required in non-interactive mode; pass --parent <branch> or --infer"
+                ));
+            };
+            Some(ParentInference {
+                parent,
                 source: TrackSource::Explicit,
                 confidence: "high",
             })
