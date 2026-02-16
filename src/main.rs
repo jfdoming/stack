@@ -12,7 +12,7 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
-use crossterm::cursor::{Hide, MoveToColumn, Show};
+use crossterm::cursor::{Hide, MoveToColumn, RestorePosition, SavePosition, Show};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
 use crossterm::style::Stylize;
@@ -1429,11 +1429,17 @@ fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
     let mut out = std::io::stdout();
     enable_raw_mode().context("failed to enable raw mode for inline confirm")?;
     execute!(out, Hide).context("failed to hide cursor for inline confirm")?;
+    execute!(out, SavePosition).context("failed to save cursor for inline confirm")?;
 
     let result = (|| -> Result<bool> {
         let mut yes_selected = true;
         loop {
-            execute!(out, MoveToColumn(0), Clear(ClearType::FromCursorDown))
+            execute!(
+                out,
+                RestorePosition,
+                MoveToColumn(0),
+                Clear(ClearType::FromCursorDown)
+            )
                 .context("failed to clear inline confirm area")?;
             write!(out, "{prompt}  ").context("failed to write prompt")?;
 
@@ -1468,7 +1474,7 @@ fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
         }
     })();
 
-    let _ = execute!(out, Show, Clear(ClearType::CurrentLine));
+    let _ = execute!(out, RestorePosition, Show, Clear(ClearType::FromCursorDown));
     let _ = disable_raw_mode();
     let _ = writeln!(out);
     result
