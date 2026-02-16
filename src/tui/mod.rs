@@ -35,7 +35,7 @@ pub fn run_stack_tui(branches: &[BranchView]) -> Result<()> {
                 .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
                 .split(f.area());
 
-            let items: Vec<ListItem> = if ordered.is_empty() {
+            let items: Vec<ListItem<'_>> = if ordered.is_empty() {
                 vec![ListItem::new(Line::from("(no stack branches tracked)"))]
             } else {
                 ordered.iter().map(to_list_item).collect()
@@ -82,21 +82,21 @@ pub fn run_stack_tui(branches: &[BranchView]) -> Result<()> {
             f.render_widget(paragraph, chunks[1]);
         })?;
 
-        if event::poll(std::time::Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if !ordered.is_empty() {
-                            selected = (selected + 1).min(ordered.len() - 1);
-                        }
+        if event::poll(std::time::Duration::from_millis(250))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('q') => break,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if !ordered.is_empty() {
+                        selected = (selected + 1).min(ordered.len() - 1);
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        selected = selected.saturating_sub(1);
-                    }
-                    _ => {}
                 }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    selected = selected.saturating_sub(1);
+                }
+                _ => {}
             }
         }
     }
