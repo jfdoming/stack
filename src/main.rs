@@ -11,10 +11,8 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use crossterm::cursor::Show;
-use crossterm::execute;
 use crossterm::style::Stylize;
-use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
+use dialoguer::console::Term;
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
@@ -34,7 +32,6 @@ struct UserCancelled;
 fn main() -> Result<()> {
     if let Err(err) = run() {
         if err.downcast_ref::<UserCancelled>().is_some() {
-            restore_terminal_state();
             eprintln!("\ncancelled by user");
             std::process::exit(130);
         }
@@ -45,9 +42,7 @@ fn main() -> Result<()> {
 
 fn run() -> Result<()> {
     ctrlc::set_handler(|| {
-        restore_terminal_state();
-        eprintln!("\ncancelled by user");
-        std::process::exit(130);
+        // Intentionally no-op: let dialoguer return an interrupted error.
     })
     .context("failed to install Ctrl-C handler")?;
 
@@ -479,17 +474,19 @@ fn cycle_issues(records: &[BranchRecord]) -> Vec<DoctorIssueView> {
 fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
     match result {
         Ok(value) => Ok(value),
-        Err(dialoguer::Error::IO(err)) if err.kind() == std::io::ErrorKind::Interrupted => {
-            Err(UserCancelled.into())
+        Err(err) => {
+            let _ = Term::stdout().show_cursor();
+            let _ = Term::stderr().show_cursor();
+            match err {
+                dialoguer::Error::IO(io_err)
+                    if io_err.kind() == std::io::ErrorKind::Interrupted =>
+                {
+                    Err(UserCancelled.into())
+                }
+                other => Err(other.into()),
+            }
         }
-        Err(err) => Err(err.into()),
     }
-}
-
-fn restore_terminal_state() {
-    let _ = disable_raw_mode();
-    let mut out = std::io::stdout();
-    let _ = execute!(out, LeaveAlternateScreen, Show);
 }
 
 fn build_branch_picker_items(
