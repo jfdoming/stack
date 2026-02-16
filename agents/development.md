@@ -17,6 +17,10 @@
 - `stack --interactive` opens the fullscreen TUI.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
+- Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
+  - install a no-op `ctrlc` handler at startup,
+  - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.
+  Keep this behavior unless prompts are migrated off Dialoguer.
 
 ## Testing focus
 When adding features, prefer tests in the same module (`mod tests`).
