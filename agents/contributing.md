@@ -2,8 +2,9 @@
 
 ## Task loop (`TASKS.md`)
 Follow this workflow exactly:
+- Work one task at a time. Do not implement multiple open tasks in one pass.
 - “Before marking an item off here, ask yourself if you have truly completed the task or if you cut corners.”
-- “Be sure to commit your changes before starting a new task.”
+- Commit immediately after completing each task, before starting the next one.
 - “Never commit changes to this file but do update the checkbox once done.”
 - Apply version bumps when appropriate per SemVer guidance.
 
@@ -22,20 +23,20 @@ Use Canadian English in user-facing text and docs.
 PRs should include:
 - what changed and why,
 - test evidence (command + result),
-- sample CLI output or screenshots for user-visible behavior.
+- sample CLI output or screenshots for user-visible behaviour.
 
 ## Versioning (SemVer)
 When bumping `Cargo.toml` version, use Semantic Versioning:
 - `PATCH`: non-breaking fixes/improvements/docs/refactors.
 - `MINOR`: new backward-compatible features.
-- `MAJOR`: any breaking change in CLI behavior, flags, output contracts, or storage expectations.
+- `MAJOR`: any breaking change in CLI behaviour, flags, output contracts, or storage expectations.
 
 Keep version bumps task-scoped: finish the task, then bump once.
 
 ## Documentation hygiene
 Update documentation in the same PR as code changes:
 - update `AGENTS.md` when top-level navigation or contributor workflow changes,
-- add/update files in `agents/` when module behavior, architecture, or workflows change.
+- add/update files in `agents/` when module behaviour, architecture, or workflows change.
 - append a concise entry to `CHANGELOG.md` whenever a new version is released.
 
 Prefer small, targeted updates over large rewrites.
