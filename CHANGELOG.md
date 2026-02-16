@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.7 - 2026-02-16
+- Fixed inline yes/no redraw anchoring by restoring the original cursor position each toggle, preventing repeated wrapped prompt lines.
+
 ## 0.8.6 - 2026-02-16
 - Fixed inline yes/no prompt redraw so toggling no longer leaves repeated wrapped lines when prompts exceed terminal width.
 
