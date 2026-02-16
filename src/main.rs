@@ -9,6 +9,7 @@ mod tui;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::io::{IsTerminal, stdin, stdout};
+use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
@@ -1237,7 +1238,13 @@ fn cmd_pr(
     }
 
     println!("pushed '{head}' to '{push_remote}'");
-    println!("open PR: {}", format_pr_open_ref(&url));
+    match open_url_in_browser(&url) {
+        Ok(()) => println!("opened PR URL in browser: {url}"),
+        Err(err) => {
+            eprintln!("warning: could not auto-open PR URL ({err})");
+            println!("open PR manually: {url}");
+        }
+    }
     Ok(())
 }
 
@@ -1541,14 +1548,6 @@ fn build_pr_open_url(
     ))
 }
 
-fn format_pr_open_ref(url: &str) -> String {
-    let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    if !use_clickable {
-        return url.to_string();
-    }
-    osc8_hyperlink(url, "open PR").underlined().to_string()
-}
-
 fn url_encode_component(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for b in value.bytes() {
@@ -1560,6 +1559,38 @@ fn url_encode_component(value: &str) -> String {
         }
     }
     out
+}
+
+fn open_url_in_browser(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        c.arg(url);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", "", url]);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("failed to launch browser opener for URL '{}'", url))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "browser opener exited non-zero: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
 }
 
 fn github_owner_from_web_url(url: &str) -> Option<String> {
