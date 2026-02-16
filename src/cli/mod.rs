@@ -32,6 +32,8 @@ pub struct GlobalArgs {
         help = "Launch interactive fullscreen UI for `stack` (no subcommand)"
     )]
     pub interactive: bool,
+    #[arg(long, global = true, help = "Print detailed provider/debug errors")]
+    pub debug: bool,
 }
 
 #[derive(Debug, Subcommand)]

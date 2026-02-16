@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.5 - 2026-02-16
+- Added global `--debug` mode to surface full gh parse/error details; default mode keeps user-facing warnings concise.
+
 ## 0.8.4 - 2026-02-16
 - `stack pr` now handles existing-PR lookup parse failures gracefully with a user-friendly warning instead of surfacing raw JSON parse errors.
 

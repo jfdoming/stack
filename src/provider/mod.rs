@@ -48,11 +48,12 @@ pub trait Provider {
 #[derive(Debug, Clone)]
 pub struct GithubProvider {
     git: Git,
+    debug: bool,
 }
 
 impl GithubProvider {
-    pub fn new(git: Git) -> Self {
-        Self { git }
+    pub fn new(git: Git, debug: bool) -> Self {
+        Self { git, debug }
     }
 
     fn run_gh_required(&self, args: &[&str]) -> Result<String> {
@@ -130,7 +131,16 @@ impl Provider for GithubProvider {
             if out.trim().is_empty() {
                 return Ok(None);
             }
-            let pr: GhPr = serde_json::from_str(&out)?;
+            let pr: GhPr = serde_json::from_str(&out).map_err(|err| {
+                if self.debug {
+                    anyhow::anyhow!(
+                        "failed to parse gh PR metadata JSON: {err}; gh output: {}",
+                        out.trim()
+                    )
+                } else {
+                    err.into()
+                }
+            })?;
             return Ok(Some(convert_pr(pr)));
         }
 
@@ -163,7 +173,17 @@ impl Provider for GithubProvider {
             if out.trim().is_empty() {
                 continue;
             }
-            let mut prs: Vec<GhPr> = serde_json::from_str(&out)?;
+            let mut prs: Vec<GhPr> = serde_json::from_str(&out).map_err(|err| {
+                if self.debug {
+                    anyhow::anyhow!(
+                        "failed to parse gh PR list JSON for --head {}: {err}; gh output: {}",
+                        args[3],
+                        out.trim()
+                    )
+                } else {
+                    err.into()
+                }
+            })?;
             prs.sort_by_key(|p| p.number);
             if let Some(pr) = prs.pop() {
                 return Ok(Some(convert_pr(pr)));
