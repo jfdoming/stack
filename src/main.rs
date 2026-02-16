@@ -7,13 +7,18 @@ mod provider;
 mod tui;
 
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
+use crossterm::cursor::{Hide, Show};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::execute;
 use crossterm::style::Stylize;
+use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use dialoguer::console::Term;
-use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
+use dialoguer::{Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
 use thiserror::Error;
@@ -568,15 +573,10 @@ fn cmd_delete(
     let should_apply = if yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        prompt_or_cancel(
-            Confirm::new()
-                .with_prompt(format!(
-                    "Delete '{}' and close its upstream PR? [y/N]",
-                    payload["branch"]
-                ))
-                .default(false)
-                .interact(),
-        )?
+        confirm_inline_yes_no(&format!(
+            "Delete '{}' and close its upstream PR?",
+            payload["branch"]
+        ))?
     } else {
         false
     };
@@ -713,6 +713,54 @@ fn confirm_with_select(
             .interact(),
     )?;
     Ok(idx == 0)
+}
+
+fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
+    let mut out = std::io::stdout();
+    enable_raw_mode().context("failed to enable raw mode for inline confirm")?;
+    execute!(out, Hide).context("failed to hide cursor for inline confirm")?;
+
+    let result = (|| -> Result<bool> {
+        let mut yes_selected = false;
+        loop {
+            execute!(out, Clear(ClearType::CurrentLine)).context("failed to clear line")?;
+            write!(out, "\r{prompt}  ").context("failed to write prompt")?;
+
+            let yes = if yes_selected {
+                format!("{} {}", "●".green().bold(), "Yes".green().bold())
+            } else {
+                format!("{} {}", "○".dark_grey(), "Yes")
+            };
+            let no = if yes_selected {
+                format!("{} {}", "○".dark_grey(), "No")
+            } else {
+                format!("{} {}", "●".yellow().bold(), "No".yellow().bold())
+            };
+            write!(out, "{yes}   {no}").context("failed to write options")?;
+            out.flush().context("failed to flush inline confirm")?;
+
+            if let Event::Key(key) =
+                event::read().context("failed to read key for inline confirm")?
+            {
+                match key.code {
+                    KeyCode::Left | KeyCode::Up => yes_selected = true,
+                    KeyCode::Right | KeyCode::Down => yes_selected = false,
+                    KeyCode::Tab => yes_selected = !yes_selected,
+                    KeyCode::Enter => return Ok(yes_selected),
+                    KeyCode::Esc => return Err(UserCancelled.into()),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        return Err(UserCancelled.into());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    })();
+
+    let _ = execute!(out, Show, Clear(ClearType::CurrentLine));
+    let _ = disable_raw_mode();
+    let _ = writeln!(out);
+    result
 }
 
 fn build_branch_picker_items(
