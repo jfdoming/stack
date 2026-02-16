@@ -576,7 +576,7 @@ fn pr_url_includes_managed_section_links_for_stacked_branch() {
 
     let open_calls = fs::read_to_string(&open_log).expect("read open log");
     assert!(
-        open_calls.contains("body=%23%23%23%20Managed%20by%20stack"),
+        open_calls.contains("body=%23%23%23%20Stack%20Flow"),
         "expected managed body block, got: {open_calls}"
     );
     assert!(

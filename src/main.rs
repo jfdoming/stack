@@ -1644,29 +1644,24 @@ fn compose_pr_body(
     });
 
     let root = base_url.trim_end_matches('/');
-    let mut lines = vec!["### Managed by stack".to_string()];
+    let mut lines = vec!["### Stack Flow".to_string()];
     lines.push(format!(
-        "- Base: [{base_branch}]({root}/tree/{base_branch})"
-    ));
-    lines.push(format!(
-        "- Head: [{head_branch}]({root}/tree/{head_branch})"
+        "[{base_branch}]({root}/tree/{base_branch}) -> [{head_branch}]({root}/tree/{head_branch})"
     ));
 
     if let Some(managed) = managed {
         if let Some(parent) = managed.parent.as_deref() {
-            lines.push(format!("- Parent: [{parent}]({root}/tree/{parent})"));
+            lines.push(format!("parent: [{parent}]({root}/tree/{parent})"));
         }
-        if managed.children.is_empty() {
-            lines.push("- Children: none".to_string());
-        } else {
-            lines.push("- Children:".to_string());
-            for child in &managed.children {
-                lines.push(format!("  - [{child}]({root}/tree/{child})"));
-            }
+        if !managed.children.is_empty() {
+            let child_links = managed
+                .children
+                .iter()
+                .map(|child| format!("[{child}]({root}/tree/{child})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("children: {child_links}"));
         }
-    } else {
-        lines.push("- Parent: none".to_string());
-        lines.push("- Children: none".to_string());
     }
 
     let managed_block = lines.join("\n");
@@ -1918,10 +1913,16 @@ mod tests {
             Some("User body text"),
         )
         .expect("body should be present");
-        assert!(body.starts_with("### Managed by stack"));
-        assert!(body.contains("[feat/parent](https://github.com/acme/repo/tree/feat/parent)"));
-        assert!(body.contains("[feat/child-a](https://github.com/acme/repo/tree/feat/child-a)"));
-        assert!(body.contains("[feat/child-b](https://github.com/acme/repo/tree/feat/child-b)"));
+        assert!(body.starts_with("### Stack Flow"));
+        assert!(body.contains(
+            "[feat/base](https://github.com/acme/repo/tree/feat/base) -> [feat/head](https://github.com/acme/repo/tree/feat/head)"
+        ));
+        assert!(
+            body.contains("parent: [feat/parent](https://github.com/acme/repo/tree/feat/parent)")
+        );
+        assert!(body.contains(
+            "children: [feat/child-a](https://github.com/acme/repo/tree/feat/child-a), [feat/child-b](https://github.com/acme/repo/tree/feat/child-b)"
+        ));
         assert!(body.ends_with("User body text"));
     }
 
@@ -1935,9 +1936,10 @@ mod tests {
             Some("User body text"),
         )
         .expect("body should be present");
-        assert!(body.starts_with("### Managed by stack"));
-        assert!(body.contains("[main](https://github.com/acme/repo/tree/main)"));
-        assert!(body.contains("[feat/demo](https://github.com/acme/repo/tree/feat/demo)"));
+        assert!(body.starts_with("### Stack Flow"));
+        assert!(body.contains(
+            "[main](https://github.com/acme/repo/tree/main) -> [feat/demo](https://github.com/acme/repo/tree/feat/demo)"
+        ));
         assert!(body.ends_with("User body text"));
     }
 }
