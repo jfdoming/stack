@@ -297,9 +297,15 @@ pub fn render_tree(
                     ctx.default_base_branch,
                     ctx.color,
                 );
-                out.push_str(&format!(
-                    "{prefix}{connector} {branch_name} {pr} {sync}{pr_link}"
-                ));
+                let mut line = format!("{prefix}{connector} {branch_name}");
+                if let Some(pr) = pr {
+                    line.push(' ');
+                    line.push_str(&pr);
+                }
+                line.push(' ');
+                line.push_str(&sync);
+                line.push_str(&pr_link);
+                out.push_str(&line);
                 out.push('\n');
                 let next_prefix = if is_last {
                     format!("{prefix}    ")
@@ -325,24 +331,24 @@ pub fn render_tree(
     out
 }
 
-fn render_pr_state(pr: Option<&str>, color: bool) -> String {
+fn render_pr_state(pr: Option<&str>, color: bool) -> Option<String> {
     let badge = match pr.unwrap_or("none") {
         "open" => "PR:open",
         "merged" => "PR:merged",
         "closed" => "PR:closed",
         "unknown" => "PR:unknown",
-        _ => "PR:none",
+        _ => return None,
     };
     if !color {
-        return format!("[{badge}]");
+        return Some(format!("[{badge}]"));
     }
-    match badge {
+    Some(match badge {
         "PR:open" => format!("[{}]", badge.yellow().bold()),
         "PR:merged" => format!("[{}]", badge.green().bold()),
         "PR:closed" => format!("[{}]", badge.red().bold()),
         "PR:unknown" => format!("[{}]", badge.dark_grey()),
         _ => format!("[{}]", badge.dark_grey()),
-    }
+    })
 }
 
 fn render_sync_state(has_sha: bool, color: bool) -> String {
@@ -393,8 +399,10 @@ fn render_pr_link(
             "no PR".to_string()
         };
         format!(" {}", osc8_hyperlink(&url, &label).dark_grey().underlined())
-    } else {
+    } else if pr_number.is_some() {
         format!(" {url}")
+    } else {
+        format!(" no PR {url}")
     }
 }
 
@@ -562,6 +570,8 @@ mod tests {
             Some("https://github.com/acme/repo"),
             "main",
         );
+        assert!(!rendered.contains("[PR:none]"));
+        assert!(rendered.contains("no PR"));
         assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
     }
 }

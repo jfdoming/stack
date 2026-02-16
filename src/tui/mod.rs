@@ -224,12 +224,14 @@ fn to_list_item(row: &TreeRow<'_>) -> ListItem<'static> {
         "open" => (" PR:open", Color::Yellow),
         "merged" => (" PR:merged", Color::Green),
         "closed" => (" PR:closed", Color::Red),
-        _ => (" PR:none", Color::DarkGray),
+        _ => ("", Color::DarkGray),
     };
-    spans.push(Span::styled(
-        pr_label,
-        Style::default().fg(pr_color).add_modifier(Modifier::BOLD),
-    ));
+    if !pr_label.is_empty() {
+        spans.push(Span::styled(
+            pr_label,
+            Style::default().fg(pr_color).add_modifier(Modifier::BOLD),
+        ));
+    }
 
     let sync = if row.branch.last_synced_head_sha.is_some() {
         (" SYNC:tracked", Color::Cyan)

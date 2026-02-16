@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.12 - 2026-02-16
+- Removed redundant `PR:none` badges from stack output; branches without PRs now use the `no PR` compare link as the sole indicator.
+
 ## 0.8.11 - 2026-02-16
 - Renamed the stack sync status badge from `SYNC:unsynced` to `SYNC:never` to clarify that no prior `stack sync` SHA has been recorded.
 
