@@ -349,7 +349,7 @@ fn render_sync_state(has_sha: bool, color: bool) -> String {
     let badge = if has_sha {
         "SYNC:tracked"
     } else {
-        "SYNC:unsynced"
+        "SYNC:never"
     };
     if !color {
         return format!("[{badge}]");
@@ -463,7 +463,7 @@ mod tests {
         let rendered = render_tree(&branches, false, None, "main");
         assert!(rendered.contains("└── feat/a"));
         assert!(rendered.contains("[PR:open]"));
-        assert!(rendered.contains("[SYNC:unsynced]"));
+        assert!(rendered.contains("[SYNC:never]"));
     }
 
     #[test]

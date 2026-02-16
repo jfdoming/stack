@@ -234,7 +234,7 @@ fn to_list_item(row: &TreeRow<'_>) -> ListItem<'static> {
     let sync = if row.branch.last_synced_head_sha.is_some() {
         (" SYNC:tracked", Color::Cyan)
     } else {
-        (" SYNC:unsynced", Color::Magenta)
+        (" SYNC:never", Color::Magenta)
     };
     spans.push(Span::styled(sync.0, Style::default().fg(sync.1)));
 
