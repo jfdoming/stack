@@ -208,8 +208,9 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
                     let old_base = git.merge_base(branch, onto)?;
                     if replay_supported {
                         if let Err(err) = git.replay_onto(branch, &old_base, onto) {
+                            let reason = summarize_replay_error(&err);
                             eprintln!(
-                                "warning: git replay failed for {branch}: {err}; falling back to rebase"
+                                "warning: git replay is unavailable for '{branch}' ({reason}); falling back to rebase"
                             );
                             git.rebase_onto(branch, &old_base, onto)?;
                         }
@@ -247,6 +248,17 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
 
     db.record_sync_finish(run_id, status, summary.as_deref())?;
     Ok(())
+}
+
+fn summarize_replay_error(err: &anyhow::Error) -> String {
+    let msg = err.to_string();
+    if msg.contains("replaying down to root commit is not supported yet") {
+        return "cannot replay down to the root commit".to_string();
+    }
+    if msg.contains("git command failed") {
+        return "git replay command failed".to_string();
+    }
+    msg
 }
 
 pub fn render_tree(
@@ -653,5 +665,21 @@ mod tests {
         );
         assert!(rendered.contains("[no PR (same base/head)]"));
         assert!(!rendered.contains("/compare/main...main"));
+    }
+
+    #[test]
+    fn summarize_replay_error_root_commit_case_is_human_readable() {
+        let err = anyhow!(
+            "git command failed [\"replay\", \"--onto\", \"main\", \"abc\", \"feat\"]: fatal: replaying down to root commit is not supported yet!"
+        );
+        let got = summarize_replay_error(&err);
+        assert_eq!(got, "cannot replay down to the root commit");
+    }
+
+    #[test]
+    fn summarize_replay_error_generic_git_failure_is_simplified() {
+        let err = anyhow!("git command failed [\"replay\"]: fatal: something broke");
+        let got = summarize_replay_error(&err);
+        assert_eq!(got, "git replay command failed");
     }
 }
