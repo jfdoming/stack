@@ -24,6 +24,7 @@
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
+- After `stack sync` applies operations, it restores the branch that was checked out before the sync run started.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.
 - Omitting `stack track <branch>` follows create/delete selection behaviour: assume when only one viable branch exists, otherwise prompt in TTY mode.

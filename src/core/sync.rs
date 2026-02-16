@@ -161,6 +161,7 @@ pub fn build_sync_plan(
 }
 
 pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()> {
+    let starting_branch = git.current_branch()?;
     let mut stash: Option<StashHandle> = None;
     if git.is_worktree_dirty()? {
         eprintln!("warning: worktree is dirty; auto-stashing local changes");
@@ -172,7 +173,7 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
     let mut summary = None;
     let replay_supported = git.supports_replay();
 
-    let result: Result<()> = (|| {
+    let op_result: Result<()> = (|| {
         for op in &plan.ops {
             match op {
                 SyncOp::Fetch { remote } => git.fetch_remote(remote)?,
@@ -199,6 +200,8 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
         Ok(())
     })();
 
+    let restore_branch_result = restore_starting_branch(git, &starting_branch);
+
     if let Some(stash_handle) = stash
         && let Err(err) = git.stash_pop(&stash_handle)
     {
@@ -207,6 +210,19 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
             stash_handle.reference
         );
     }
+
+    let result = match (op_result, restore_branch_result) {
+        (Err(op_err), Err(restore_err)) => Err(anyhow!(
+            "{op_err}; additionally failed to restore prior branch '{}': {restore_err}",
+            starting_branch
+        )),
+        (Err(op_err), Ok(())) => Err(op_err),
+        (Ok(()), Err(restore_err)) => Err(anyhow!(
+            "failed to restore prior branch '{}': {restore_err}",
+            starting_branch
+        )),
+        (Ok(()), Ok(())) => Ok(()),
+    };
 
     if let Err(err) = result {
         status = "failed";
@@ -220,6 +236,17 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
 
     db.record_sync_finish(run_id, status, summary.as_deref())?;
     Ok(())
+}
+
+fn restore_starting_branch(git: &Git, starting_branch: &str) -> Result<()> {
+    if starting_branch.is_empty() {
+        return Ok(());
+    }
+    let current_branch = git.current_branch()?;
+    if current_branch == starting_branch {
+        return Ok(());
+    }
+    git.checkout_branch(starting_branch)
 }
 
 fn summarize_replay_error(err: &anyhow::Error) -> String {

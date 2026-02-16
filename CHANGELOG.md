@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.25 - 2026-02-16
+- `stack sync` now restores the branch that was checked out before the sync run, even when restack operations switch branch context.
+- Added integration coverage to ensure post-sync branch context returns to the original branch.
+
 ## 0.8.24 - 2026-02-16
 - Refactored CLI execution into focused command modules and reduced `src/main.rs` to bootstrap/dispatch orchestration.
 - Split core behaviour into dedicated `parents`, `render`, and `sync` modules while preserving existing runtime behaviour.
