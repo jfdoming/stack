@@ -167,6 +167,7 @@ fn run() -> Result<()> {
             args.branch.as_deref(),
             cli.global.porcelain,
             &base_branch,
+            cli.global.yes,
         ),
         Some(Commands::Delete(args)) => cmd_delete(
             &db,
@@ -410,6 +411,7 @@ fn cmd_track(
     let mut unresolved = Vec::new();
     let mut warnings = Vec::new();
 
+    let mut assumed_target: Option<String> = None;
     let targets: Vec<String> = if args.all {
         local
             .iter()
@@ -432,6 +434,7 @@ fn cmd_track(
             if !opts.porcelain {
                 println!("assuming target branch '{assumed}' (only viable branch)");
             }
+            assumed_target = Some(assumed.clone());
             vec![assumed]
         } else if is_tty {
             let theme = ColorfulTheme::default();
@@ -453,6 +456,27 @@ fn cmd_track(
             ));
         }
     };
+
+    if let Some(assumed) = &assumed_target
+        && !opts.yes
+        && !opts.dry_run
+    {
+        if is_tty {
+            let confirmed =
+                confirm_inline_yes_no(&format!("Track assumed target branch '{assumed}'?"))?;
+            if !confirmed {
+                if !opts.porcelain {
+                    println!("track not applied: confirmation declined; no changes made");
+                }
+                return Ok(());
+            }
+        } else {
+            return Err(anyhow!(
+                "target branch was auto-selected as '{}'; rerun with an explicit branch or pass --yes",
+                assumed
+            ));
+        }
+    }
 
     for target in targets {
         if !local_set.contains(&target) {
@@ -921,6 +945,7 @@ fn cmd_untrack(
     branch_arg: Option<&str>,
     porcelain: bool,
     base_branch: &str,
+    yes: bool,
 ) -> Result<()> {
     let current = git.current_branch()?;
     let records = db.list_branches()?;
@@ -930,6 +955,7 @@ fn cmd_untrack(
         .map(|r| r.name.clone())
         .collect();
 
+    let mut assumed_target = false;
     let branch = if let Some(branch) = branch_arg {
         branch.to_string()
     } else if viable_names.is_empty() {
@@ -939,6 +965,7 @@ fn cmd_untrack(
         if !porcelain {
             println!("assuming target branch '{assumed}' (only viable branch)");
         }
+        assumed_target = true;
         assumed
     } else if stdout().is_terminal() && stdin().is_terminal() {
         let theme = ColorfulTheme::default();
@@ -959,6 +986,24 @@ fn cmd_untrack(
             "branch required in non-interactive mode; pass stack untrack <branch>"
         ));
     };
+
+    if assumed_target && !yes {
+        if stdout().is_terminal() && stdin().is_terminal() {
+            let confirmed =
+                confirm_inline_yes_no(&format!("Untrack assumed target branch '{branch}'?"))?;
+            if !confirmed {
+                if !porcelain {
+                    println!("untrack not applied: confirmation declined; no changes made");
+                }
+                return Ok(());
+            }
+        } else {
+            return Err(anyhow!(
+                "target branch was auto-selected as '{}'; rerun with an explicit branch or pass --yes",
+                branch
+            ));
+        }
+    }
 
     if db.branch_by_name(&branch)?.is_none() {
         return Err(anyhow!("branch '{}' is not tracked", branch));

@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.6.1 - 2026-02-16
+- When a command auto-assumes a single viable target branch, non-interactive mutating operations now require `--yes` (or an explicit branch) instead of proceeding silently.
+
 ## 0.6.0 - 2026-02-16
 - `stack track` now treats inference as the default when `--parent` is omitted in single-branch mode, with interactive parent-selection fallback when inference cannot resolve.
 

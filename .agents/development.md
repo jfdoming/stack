@@ -25,8 +25,10 @@
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.
 - Omitting `stack track <branch>` follows create/delete selection behaviour: assume when only one viable branch exists, otherwise prompt in TTY mode.
+- In non-interactive mode, if track auto-assumes a single viable target branch and would mutate state, pass `--yes` or an explicit target branch.
 - If default inference cannot resolve a parent, single-branch track falls back to the same assumption/prompt flow for parent selection.
 - Omitting `stack untrack <branch>` follows the same assumption/prompt flow as delete.
+- In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
