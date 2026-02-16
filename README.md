@@ -37,4 +37,5 @@ stack create
 stack pr --dry-run
 stack sync --dry-run
 stack doctor
+stack completions zsh > ~/.zsh/completions/_stack
 ```

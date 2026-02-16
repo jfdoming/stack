@@ -40,6 +40,8 @@ pub enum Commands {
     Unlink(UnlinkArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
+    /// Generate shell completion scripts
+    Completions(CompletionsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -80,4 +82,10 @@ pub struct PrArgs {
     pub draft: bool,
     #[arg(short = 'n', long, help = "Preview command without calling gh")]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    #[arg(help = "Shell to generate completions for")]
+    pub shell: clap_complete::Shell,
 }
