@@ -18,6 +18,15 @@ fn init_repo() -> TempDir {
     fs::write(dir.path().join("README.md"), "init\n").expect("write readme");
     run_git(dir.path(), &["add", "README.md"]);
     run_git(dir.path(), &["commit", "-m", "initial"]);
+    run_git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
 
     dir
 }
@@ -181,4 +190,29 @@ fn pr_dry_run_uses_parent_branch_as_base() {
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     assert_eq!(json["head"], "feat/child");
     assert_eq!(json["base"], "feat/parent");
+}
+
+#[test]
+fn stack_default_output_includes_pr_hyperlink_when_cached_pr_exists() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/link"])
+        .assert()
+        .success();
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET cached_pr_number = 123, cached_pr_state = 'open' WHERE name = 'feat/link'",
+        [],
+    )
+    .expect("seed pr number");
+
+    stack_cmd(repo.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "https://github.com/acme/stack-test/pull/123",
+        ));
 }

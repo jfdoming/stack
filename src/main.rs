@@ -85,7 +85,11 @@ fn cmd_stack(db: &Database, git: &Git, porcelain: bool, interactive: bool) -> Re
     }
 
     let should_color = is_tty && std::env::var_os("NO_COLOR").is_none();
-    println!("{}", render_tree(&records, should_color));
+    let pr_base_url = git.origin_web_url()?;
+    println!(
+        "{}",
+        render_tree(&records, should_color, pr_base_url.as_deref())
+    );
     Ok(())
 }
 
