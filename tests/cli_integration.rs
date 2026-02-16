@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+#[cfg(unix)]
+use std::{env, os::unix::fs::PermissionsExt};
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
@@ -225,6 +227,37 @@ fn pr_dry_run_uses_parent_branch_as_base() {
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     assert_eq!(json["head"], "feat/child");
     assert_eq!(json["base"], "feat/parent");
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_create_fails_when_gh_returns_non_zero() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/pr-fail"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/pr-fail"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\necho 'auth failed' >&2\nexit 1\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["pr"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("gh command failed"));
 }
 
 #[test]

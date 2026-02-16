@@ -21,3 +21,8 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Builds a plan (`fetch`, `restack`, metadata updates).
 - Prefers `git replay`; falls back to `git rebase --onto` with warning.
 - Stops on conflict and warns on stash restore failures.
+
+## Security-relevant behaviour
+- Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
+- Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
+- Remote URLs derived from git config are sanitized before display to avoid terminal control-character injection.
