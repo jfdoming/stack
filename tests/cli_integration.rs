@@ -438,9 +438,7 @@ fn pr_yes_pushes_and_prints_pr_open_link() {
         .stdout(predicate::str::contains(
             "pushed 'feat/pr-create' to 'origin'",
         ))
-        .stdout(predicate::str::contains(
-            "opened PR URL in browser: https://github.com/acme/stack-test/compare/main...feat/pr-create?expand=1",
-        ));
+        .stdout(predicate::str::contains("opened PR URL in browser"));
 
     let open_calls = fs::read_to_string(&open_log).expect("read open log");
     assert!(
@@ -519,9 +517,7 @@ fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
         .args(["--yes", "pr"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "opened PR URL in browser: https://github.com/acme/stack-test/compare/main...alice:feat/fork-pr-open?expand=1",
-        ));
+        .stdout(predicate::str::contains("opened PR URL in browser"));
 
     let open_calls = fs::read_to_string(&open_log).expect("read open log");
     assert!(
@@ -529,6 +525,67 @@ fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
             "https://github.com/acme/stack-test/compare/main...alice:feat/fork-pr-open?expand=1"
         ),
         "expected browser opener call, got: {open_calls}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_url_includes_managed_section_links_for_stacked_branch() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/child",
+            "--name",
+            "feat/grandchild",
+        ])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/child"]);
+    configure_local_push_url(repo.path());
+
+    let fake_bin = repo.path().join("fake-bin");
+    let open_log = repo.path().join("open.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/child\"* ]]; then\n  echo '[]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "pr"])
+        .assert()
+        .success();
+
+    let open_calls = fs::read_to_string(&open_log).expect("read open log");
+    assert!(
+        open_calls.contains("body=%23%23%23%20Managed%20by%20stack"),
+        "expected managed body block, got: {open_calls}"
+    );
+    assert!(
+        open_calls.contains("feat%2Fparent"),
+        "expected parent branch link in body, got: {open_calls}"
+    );
+    assert!(
+        open_calls.contains("feat%2Fgrandchild"),
+        "expected child branch link in body, got: {open_calls}"
     );
 }
 
@@ -563,9 +620,7 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
         .args(["--yes", "pr"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "opened PR URL in browser: https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1",
-        ))
+        .stdout(predicate::str::contains("opened PR URL in browser"))
         .stderr(predicate::str::contains(
             "could not determine existing PR status from gh",
         ));

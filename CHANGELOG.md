@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.16 - 2026-02-16
+- Stacked-branch PR URLs now include a `Managed by stack` body section with parent/child branch links, prepended ahead of any user-provided PR body text.
+
 ## 0.8.15 - 2026-02-16
 - `stack pr` now auto-opens the generated PR URL in a browser after push, with a manual URL fallback message when opener launch fails.
 
