@@ -2,6 +2,11 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.3 - 2026-02-16
+- Optimized `stack sync` PR metadata refresh by batching GitHub PR list lookups instead of running one `gh` metadata query per branch.
+- Added sync integration coverage to assert batched PR metadata lookup usage.
+- Refined manual PR fallback link rendering so output now reads `open PR manually: <url>` (clickable in styled TTY mode) without duplicated label text.
+
 ## 0.10.2 - 2026-02-16
 - Updated `stack pr` manual-open fallback output:
   - styled TTY mode now prints an OSC 8 clickable `open PR manually` link,

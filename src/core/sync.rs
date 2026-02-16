@@ -87,13 +87,22 @@ pub fn build_sync_plan(
     base_remote: &str,
 ) -> Result<SyncPlan> {
     let tracked = db.list_branches()?;
+    let mut branch_exists: HashMap<String, bool> = HashMap::new();
+    for branch in &tracked {
+        branch_exists.insert(branch.name.clone(), git.branch_exists(&branch.name)?);
+    }
+    let metadata_targets: Vec<(&str, Option<i64>)> = tracked
+        .iter()
+        .filter(|branch| branch_exists.get(&branch.name).copied().unwrap_or(false))
+        .map(|branch| (branch.name.as_str(), branch.cached_pr_number))
+        .collect();
+    let pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
+
     let mut ops = vec![SyncOp::Fetch {
         remote: base_remote.to_string(),
     }];
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
-
-    let mut pr_by_branch: HashMap<String, crate::provider::PrInfo> = HashMap::new();
 
     for b in &tracked {
         by_id.insert(b.id, b.clone());
@@ -105,11 +114,11 @@ pub fn build_sync_plan(
     let mut queue: VecDeque<(String, String)> = VecDeque::new();
 
     for branch in &tracked {
-        if !git.branch_exists(&branch.name)? {
+        if !branch_exists.get(&branch.name).copied().unwrap_or(false) {
             continue;
         }
 
-        if let Some(pr) = provider.resolve_pr_by_head(&branch.name, branch.cached_pr_number)? {
+        if let Some(pr) = pr_by_branch.get(&branch.name).cloned() {
             let state = match pr.state {
                 PrState::Open => "open",
                 PrState::Merged => "merged",
@@ -117,7 +126,6 @@ pub fn build_sync_plan(
                 PrState::Unknown => "unknown",
             };
             db.set_pr_cache(&branch.name, Some(pr.number), Some(state))?;
-            pr_by_branch.insert(branch.name.clone(), pr.clone());
 
             if matches!(pr.state, PrState::Merged) {
                 let new_base = pr
