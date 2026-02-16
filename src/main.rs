@@ -1601,6 +1601,10 @@ fn url_encode_component(value: &str) -> String {
 }
 
 fn open_url_in_browser(url: &str) -> Result<()> {
+    if std::env::var("STACK_MOCK_BROWSER_OPEN").ok().as_deref() == Some("1") {
+        return Ok(());
+    }
+
     #[cfg(target_os = "macos")]
     let mut cmd = {
         let mut c = Command::new("open");

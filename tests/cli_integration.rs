@@ -113,6 +113,9 @@ fn run_git(repo: &Path, args: &[&str]) {
 fn stack_cmd(repo: &Path) -> Command {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("stack"));
     cmd.current_dir(repo);
+    cmd.env("NO_COLOR", "1");
+    cmd.env("CLICOLOR", "0");
+    cmd.env("STACK_MOCK_BROWSER_OPEN", "1");
     cmd
 }
 
@@ -367,6 +370,7 @@ fn pr_existing_lookup_handles_coloured_gh_json_output() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
         .args(["--yes", "pr"])
         .assert()
         .success()
@@ -438,6 +442,7 @@ fn pr_yes_pushes_and_prints_pr_open_link() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
         .args(["--yes", "pr"])
         .assert()
         .success()
@@ -520,6 +525,7 @@ fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
         .args(["--yes", "pr"])
         .assert()
         .success()
@@ -576,6 +582,7 @@ fn pr_url_includes_managed_section_links_for_stacked_branch() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
         .args(["--yes", "pr"])
         .assert()
         .success();
@@ -627,6 +634,7 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
         .args(["--yes", "pr"])
         .assert()
         .success()
