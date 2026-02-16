@@ -582,8 +582,12 @@ fn pr_url_includes_managed_section_links_for_stacked_branch() {
 
     let open_calls = fs::read_to_string(&open_log).expect("read open log");
     assert!(
-        open_calls.contains("body=%23%23%23%20Stack%20Flow"),
+        open_calls.contains("body=%E2%80%A6"),
         "expected managed body block, got: {open_calls}"
+    );
+    assert!(
+        open_calls.contains("%E2%86%92"),
+        "expected unicode arrow in managed body, got: {open_calls}"
     );
     assert!(
         open_calls.contains("feat%2Fparent"),
