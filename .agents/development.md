@@ -19,8 +19,9 @@
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
 
 ## CI
-- GitHub Actions workflow `.github/workflows/build.yaml` runs build/test on pull requests.
-- On `main` pushes, `build.yaml` skips non-release build/test and only packages release binaries for artifact publishing.
+- GitHub Actions workflow `.github/workflows/build.yaml` runs tests unconditionally (pull requests and `main` pushes).
+- In `build.yaml`, non-release compile (`cargo build --locked --verbose`) runs on pull requests.
+- On `main` pushes, `build.yaml` skips non-release compile and only packages release binaries for artifact publishing.
 - GitHub Actions workflow `.github/workflows/draft-release.yaml` runs after successful `CI Build` on `main` and creates a draft GitHub release/tag only when a release does not already exist for the current `Cargo.toml` version.
 - Build workflow packages release executables for Linux (`x86_64-unknown-linux-gnu`), macOS (`x86_64-apple-darwin`, `aarch64-apple-darwin`), and Windows (`x86_64-pc-windows-msvc`) on `main` pushes.
 - Draft release workflow reuses those packaged build artifacts and attaches them to the draft release for the current version tag when no release exists yet.
