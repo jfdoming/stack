@@ -466,7 +466,7 @@ fn untrack_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
         .success();
 
     stack_cmd(repo.path())
-        .args(["untrack"])
+        .args(["--yes", "untrack"])
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -594,6 +594,43 @@ fn track_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
 }
 
 #[test]
+fn track_without_branch_in_non_interactive_mode_requires_yes_before_actioning_assumed_target() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["track", "--parent", "main"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "target branch was auto-selected as 'feat/a'",
+        ));
+
+    stack_cmd(repo.path())
+        .args(["--yes", "track", "--parent", "main"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn untrack_without_branch_in_non_interactive_mode_requires_yes_before_actioning_assumed_target() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["untrack"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "target branch was auto-selected as 'feat/a'",
+        ));
+}
+
+#[test]
 fn track_without_branch_in_non_interactive_mode_requires_argument_when_multiple_branches() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/a"]);
@@ -620,7 +657,9 @@ fn track_without_parent_in_non_interactive_mode_infers_parent_by_default() {
         .args(["track", "feat/a", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("would track 'feat/a' under 'main'"));
+        .stdout(predicate::str::contains(
+            "would track 'feat/a' under 'main'",
+        ));
 }
 
 #[test]
