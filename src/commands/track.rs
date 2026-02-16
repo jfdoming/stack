@@ -526,3 +526,18 @@ fn prompt_track_conflict(change: &TrackChange) -> Result<TrackConflictResolution
         _ => TrackConflictResolution::Abort,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+
+    use super::format_pr_metadata_warning;
+
+    #[test]
+    fn pr_metadata_parse_error_warning_is_user_friendly() {
+        let err = anyhow!("expected value at line 1 column 1");
+        let msg = format_pr_metadata_warning("feat/a", &err, false);
+        assert!(msg.contains("gh returned an unexpected response"));
+        assert!(!msg.contains("line 1 column 1"));
+    }
+}
