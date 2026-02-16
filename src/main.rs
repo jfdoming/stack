@@ -75,13 +75,13 @@ fn run() -> Result<()> {
         None => cmd_stack(
             &db,
             &git,
-            cli.porcelain,
-            cli.interactive,
+            cli.global.porcelain,
+            cli.global.interactive,
             &base_branch,
             &base_remote,
         ),
         Some(Commands::Create(args)) => {
-            cmd_create(&db, &git, &args.parent, &args.name, cli.porcelain)
+            cmd_create(&db, &git, &args.parent, &args.name, cli.global.porcelain)
         }
         Some(Commands::Sync(args)) => cmd_sync(
             &db,
@@ -90,25 +90,25 @@ fn run() -> Result<()> {
             &base_branch,
             &base_remote,
             SyncRunOptions {
-                porcelain: cli.porcelain,
-                yes: cli.yes,
+                porcelain: cli.global.porcelain,
+                yes: cli.global.yes,
                 dry_run: args.dry_run,
             },
         ),
-        Some(Commands::Doctor(args)) => cmd_doctor(&db, &git, cli.porcelain, args.fix),
+        Some(Commands::Doctor(args)) => cmd_doctor(&db, &git, cli.global.porcelain, args.fix),
         Some(Commands::Unlink(args)) => {
-            cmd_unlink(&db, &args.branch, args.drop_record, cli.porcelain)
+            cmd_unlink(&db, &args.branch, args.drop_record, cli.global.porcelain)
         }
         Some(Commands::Delete(args)) => cmd_delete(
             &db,
             &git,
             &provider,
             &args,
-            cli.porcelain,
-            cli.yes,
+            cli.global.porcelain,
+            cli.global.yes,
             &base_branch,
         ),
-        Some(Commands::Pr(args)) => cmd_pr(&db, &git, &provider, &args, cli.porcelain),
+        Some(Commands::Pr(args)) => cmd_pr(&db, &git, &provider, &args, cli.global.porcelain),
         Some(Commands::Completions(args)) => cmd_completions(args.shell),
     }
 }
