@@ -12,6 +12,8 @@ use std::io::{IsTerminal, stdin, stdout};
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use crossterm::style::Stylize;
+use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
+use crossterm::{cursor::Show, execute};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
@@ -31,6 +33,7 @@ struct UserCancelled;
 fn main() -> Result<()> {
     if let Err(err) = run() {
         if err.downcast_ref::<UserCancelled>().is_some() {
+            restore_terminal_state();
             eprintln!("cancelled by user");
             std::process::exit(130);
         }
@@ -473,6 +476,12 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
         }
         Err(err) => Err(err.into()),
     }
+}
+
+fn restore_terminal_state() {
+    let _ = disable_raw_mode();
+    let mut out = std::io::stdout();
+    let _ = execute!(out, LeaveAlternateScreen, Show);
 }
 
 fn build_branch_picker_items(
