@@ -6,6 +6,7 @@ This file is the contributor index for agent-friendly navigation. Keep it short 
 - `agents/architecture.md`: module layout, data model, and sync behavior.
 - `agents/development.md`: build/test/run commands and local workflow.
 - `agents/contributing.md`: commit/PR conventions and doc hygiene.
+- `agents/changelog.md`: concise chronological change log.
 
 ## How To Use This Index
 - Start here for repository orientation.
