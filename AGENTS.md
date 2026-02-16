@@ -6,6 +6,7 @@ This file is the high-signal contributor index. Keep it short and move detailed 
 - `.agents/contributing.md`: task loop, commit rules, SemVer, PR/doc hygiene.
 - `.agents/development.md`: build/test/run commands and local workflow.
 - `.agents/architecture.md`: module layout, data model, and sync behaviour.
+- `.agents/docs.md`: documentation update rules, scope, and consistency checks.
 - `CHANGELOG.md`: release history (one section per version).
 
 ## Mandatory Read Order
@@ -13,6 +14,7 @@ Read these before making any code or doc change:
 1. `TASKS.md`
 2. `.agents/contributing.md`
 3. `.agents/development.md`
+4. `.agents/docs.md`
 
 Then read `.agents/architecture.md` for task-relevant codebase context.
 
