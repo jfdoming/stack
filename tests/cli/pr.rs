@@ -453,35 +453,35 @@ fn pr_open_fails_when_push_remote_is_missing() {
         .stderr(predicate::str::contains("git command failed"));
 }
 #[test]
-fn pr_requires_yes_in_non_interactive_mode_before_open() {
+fn pr_opens_in_non_interactive_mode_without_yes() {
     let repo = init_repo();
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/pr-confirm"])
         .assert()
         .success();
     run_git(repo.path(), &["checkout", "feat/pr-confirm"]);
+    configure_local_push_url(repo.path());
 
     stack_cmd(repo.path())
         .args(["pr"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "confirmation required in non-interactive mode",
-        ));
+        .success()
+        .stdout(predicate::str::contains("pushed 'feat/pr-confirm'"))
+        .stdout(predicate::str::contains("opened PR URL in browser"));
 }
 #[test]
-fn pr_untracked_branch_requires_yes_in_non_interactive_mode() {
+fn pr_untracked_branch_opens_in_non_interactive_mode_without_yes() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/nonstacked-pr"]);
+    configure_local_push_url(repo.path());
 
     stack_cmd(repo.path())
         .args(["pr"])
         .assert()
-        .failure()
+        .success()
         .stderr(predicate::str::contains("is not stacked"))
-        .stderr(predicate::str::contains(
-            "confirmation required in non-interactive mode",
-        ));
+        .stdout(predicate::str::contains("pushed 'feat/nonstacked-pr'"))
+        .stdout(predicate::str::contains("opened PR URL in browser"));
 }
 #[test]
 fn pr_on_base_branch_fails_with_clear_message() {
