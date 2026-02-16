@@ -4,6 +4,7 @@ pub mod delete;
 pub mod doctor;
 pub mod pr;
 pub mod shared;
+pub mod stack;
 pub mod sync;
 pub mod track;
 pub mod untrack;

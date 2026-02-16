@@ -157,3 +157,75 @@ pub fn build_delete_picker_items(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn branch_picker_items_include_source_labels() {
+        let tracked = vec![BranchRecord {
+            id: 1,
+            name: "feat/a".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: None,
+            cached_pr_number: Some(10),
+            cached_pr_state: Some("open".to_string()),
+        }];
+        let ordered = vec![
+            "main".to_string(),
+            "feat/a".to_string(),
+            "fix/local".to_string(),
+        ];
+        let items = build_branch_picker_items(&ordered, "main", &tracked);
+        assert!(items[0].starts_with("● current"));
+        assert!(items[1].starts_with("◆ tracked"));
+        assert!(items[2].starts_with("○ local"));
+    }
+
+    #[test]
+    fn delete_picker_items_highlight_current() {
+        let tracked = vec![
+            BranchRecord {
+                id: 1,
+                name: "feat/a".to_string(),
+                parent_branch_id: None,
+                last_synced_head_sha: None,
+                cached_pr_number: Some(10),
+                cached_pr_state: Some("open".to_string()),
+            },
+            BranchRecord {
+                id: 2,
+                name: "feat/b".to_string(),
+                parent_branch_id: None,
+                last_synced_head_sha: None,
+                cached_pr_number: None,
+                cached_pr_state: None,
+            },
+        ];
+        let names = vec!["feat/a".to_string(), "feat/b".to_string()];
+        let items = build_delete_picker_items(&names, "feat/b", &tracked);
+        assert!(items[0].starts_with("◆ tracked"));
+        assert!(items[1].starts_with("● current"));
+    }
+
+    #[test]
+    fn prompt_interrupt_maps_to_user_cancelled_error() {
+        let err = dialoguer::Error::IO(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "ctrl-c",
+        ));
+        let result = prompt_or_cancel::<()>(Err(err));
+        assert!(result.is_err());
+        let got = result.unwrap_err();
+        assert!(got.downcast_ref::<UserCancelled>().is_some());
+    }
+
+    #[test]
+    fn long_prompt_exceeds_example_width_budget() {
+        let prompt = "Open PR from 'main' into 'main' even though the branch is not stacked?";
+        let prompt_len = prompt.chars().count();
+        let min_options_len = "  ○ Yes   ○ No".chars().count();
+        assert!(prompt_len + min_options_len > 74);
+    }
+}

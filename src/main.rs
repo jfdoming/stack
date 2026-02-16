@@ -8,19 +8,14 @@ mod provider;
 mod tui;
 mod util;
 
-use std::collections::HashMap;
-use std::io::{IsTerminal, stdin, stdout};
-
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::style::Stylize;
-use output::{BranchView, print_json};
 use provider::Provider;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands, DeleteArgs, PrArgs, TrackArgs};
-use crate::core::render_tree;
-use crate::db::{BranchRecord, Database};
+use crate::db::Database;
 use crate::git::Git;
 use crate::provider::GithubProvider;
 
@@ -144,25 +139,7 @@ fn cmd_stack(
     base_branch: &str,
     base_remote: &str,
 ) -> Result<()> {
-    let records = db.list_branches()?;
-    let branch_views = to_branch_views(git, &records)?;
-
-    if porcelain {
-        return print_json(&branch_views);
-    }
-
-    let is_tty = stdout().is_terminal() && stdin().is_terminal();
-    if interactive && is_tty {
-        return tui::run_stack_tui(&branch_views);
-    }
-
-    let should_color = is_tty && std::env::var_os("NO_COLOR").is_none();
-    let pr_base_url = git.remote_web_url(base_remote)?;
-    println!(
-        "{}",
-        render_tree(&records, should_color, pr_base_url.as_deref(), base_branch)
-    );
-    Ok(())
+    commands::stack::run(db, git, porcelain, interactive, base_branch, base_remote)
 }
 
 fn cmd_create(
@@ -234,146 +211,4 @@ fn cmd_delete(
     base_branch: &str,
 ) -> Result<()> {
     commands::delete::run(db, git, provider, args, porcelain, yes, base_branch)
-}
-
-fn to_branch_views(git: &Git, records: &[BranchRecord]) -> Result<Vec<BranchView>> {
-    let mut id_map: HashMap<i64, String> = HashMap::new();
-    for rec in records {
-        id_map.insert(rec.id, rec.name.clone());
-    }
-
-    records
-        .iter()
-        .map(|rec| {
-            let exists_in_git = git.branch_exists(&rec.name)?;
-            Ok(BranchView {
-                name: rec.name.clone(),
-                parent: rec.parent_branch_id.and_then(|id| id_map.get(&id).cloned()),
-                last_synced_head_sha: rec.last_synced_head_sha.clone(),
-                cached_pr_number: rec.cached_pr_number,
-                cached_pr_state: rec.cached_pr_state.clone(),
-                exists_in_git,
-            })
-        })
-        .collect()
-}
-
-#[cfg(test)]
-fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
-    commands::shared::prompt_or_cancel(result)
-}
-
-#[cfg(test)]
-fn truncate_for_display(value: &str, max_chars: usize) -> String {
-    util::terminal::truncate_for_display(value, max_chars)
-}
-
-#[cfg(test)]
-fn build_branch_picker_items(
-    ordered_names: &[String],
-    current: &str,
-    tracked: &[BranchRecord],
-) -> Vec<String> {
-    commands::shared::build_branch_picker_items(ordered_names, current, tracked)
-}
-
-#[cfg(test)]
-fn build_delete_picker_items(
-    tracked_names: &[String],
-    current: &str,
-    tracked: &[BranchRecord],
-) -> Vec<String> {
-    commands::shared::build_delete_picker_items(tracked_names, current, tracked)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn branch_picker_items_include_source_labels() {
-        let tracked = vec![BranchRecord {
-            id: 1,
-            name: "feat/a".to_string(),
-            parent_branch_id: None,
-            last_synced_head_sha: None,
-            cached_pr_number: Some(10),
-            cached_pr_state: Some("open".to_string()),
-        }];
-        let ordered = vec![
-            "main".to_string(),
-            "feat/a".to_string(),
-            "fix/local".to_string(),
-        ];
-        let items = build_branch_picker_items(&ordered, "main", &tracked);
-        assert!(items[0].starts_with("● current"));
-        assert!(items[1].starts_with("◆ tracked"));
-        assert!(items[2].starts_with("○ local"));
-    }
-
-    #[test]
-    fn delete_picker_items_highlight_current() {
-        let tracked = vec![
-            BranchRecord {
-                id: 1,
-                name: "feat/a".to_string(),
-                parent_branch_id: None,
-                last_synced_head_sha: None,
-                cached_pr_number: Some(10),
-                cached_pr_state: Some("open".to_string()),
-            },
-            BranchRecord {
-                id: 2,
-                name: "feat/b".to_string(),
-                parent_branch_id: None,
-                last_synced_head_sha: None,
-                cached_pr_number: None,
-                cached_pr_state: None,
-            },
-        ];
-        let names = vec!["feat/a".to_string(), "feat/b".to_string()];
-        let items = build_delete_picker_items(&names, "feat/b", &tracked);
-        assert!(items[0].starts_with("◆ tracked"));
-        assert!(items[1].starts_with("● current"));
-    }
-
-    #[test]
-    fn prompt_interrupt_maps_to_user_cancelled_error() {
-        let err = dialoguer::Error::IO(std::io::Error::new(
-            std::io::ErrorKind::Interrupted,
-            "ctrl-c",
-        ));
-        let result = prompt_or_cancel::<()>(Err(err));
-        assert!(result.is_err());
-        let got = result.unwrap_err();
-        assert!(
-            got.downcast_ref::<crate::commands::shared::UserCancelled>()
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn long_prompt_exceeds_example_width_budget() {
-        let prompt = "Open PR from 'main' into 'main' even though the branch is not stacked?";
-        let prompt_len = prompt.chars().count();
-        let min_options_len = "  ○ Yes   ○ No".chars().count();
-        assert!(prompt_len + min_options_len > 74);
-    }
-
-    #[test]
-    fn truncate_for_display_keeps_short_text() {
-        assert_eq!(
-            truncate_for_display("https://example.com/pr/1", 40),
-            "https://example.com/pr/1"
-        );
-    }
-
-    #[test]
-    fn truncate_for_display_adds_ellipsis_for_long_text() {
-        let value =
-            "https://github.com/acme/repo/compare/main...very/long/branch/name/with/extra/segments";
-        let out = truncate_for_display(value, 32);
-        assert!(out.ends_with('…'));
-        assert!(out.chars().count() <= 32);
-    }
 }
