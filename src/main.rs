@@ -15,6 +15,7 @@ use crossterm::style::Stylize;
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::{CreatePrRequest, Provider};
+use thiserror::Error;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands, PrArgs};
@@ -23,7 +24,22 @@ use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::GithubProvider;
 
+#[derive(Debug, Error)]
+#[error("cancelled by user")]
+struct UserCancelled;
+
 fn main() -> Result<()> {
+    if let Err(err) = run() {
+        if err.downcast_ref::<UserCancelled>().is_some() {
+            eprintln!("cancelled by user");
+            std::process::exit(130);
+        }
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_target(false)
@@ -107,7 +123,9 @@ fn cmd_create(
             .unwrap_or(0);
         let idx = prompt_or_cancel(
             Select::with_theme(&theme)
-                .with_prompt("Select parent branch (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)")
+                .with_prompt(
+                    "Select parent branch (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)",
+                )
                 .items(&picker_items)
                 .default(default_idx)
                 .interact(),
@@ -128,15 +146,15 @@ fn cmd_create(
     } else if stdout().is_terminal() && stdin().is_terminal() {
         prompt_or_cancel(
             Input::<String>::with_theme(&theme)
-            .with_prompt("Name for new child branch")
-            .validate_with(|input: &String| -> Result<(), &str> {
-                if input.trim().is_empty() {
-                    Err("branch name cannot be empty")
-                } else {
-                    Ok(())
-                }
-            })
-            .interact_text(),
+                .with_prompt("Name for new child branch")
+                .validate_with(|input: &String| -> Result<(), &str> {
+                    if input.trim().is_empty() {
+                        Err("branch name cannot be empty")
+                    } else {
+                        Ok(())
+                    }
+                })
+                .interact_text(),
         )?
     } else {
         return Err(anyhow!(
@@ -220,10 +238,12 @@ fn cmd_sync(
     let should_apply = if yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        Confirm::new()
-            .with_prompt("Apply sync plan?")
-            .default(false)
-            .interact()?
+        prompt_or_cancel(
+            Confirm::new()
+                .with_prompt("Apply sync plan?")
+                .default(false)
+                .interact(),
+        )?
     } else {
         false
     };
@@ -449,8 +469,7 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
     match result {
         Ok(value) => Ok(value),
         Err(dialoguer::Error::IO(err)) if err.kind() == std::io::ErrorKind::Interrupted => {
-            eprintln!("cancelled by user");
-            std::process::exit(130);
+            Err(UserCancelled.into())
         }
         Err(err) => Err(err.into()),
     }
@@ -501,5 +520,17 @@ mod tests {
         assert!(items[0].starts_with("● current"));
         assert!(items[1].starts_with("◆ tracked"));
         assert!(items[2].starts_with("○ local"));
+    }
+
+    #[test]
+    fn prompt_interrupt_maps_to_user_cancelled_error() {
+        let err = dialoguer::Error::IO(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "ctrl-c",
+        ));
+        let result = prompt_or_cancel::<()>(Err(err));
+        assert!(result.is_err());
+        let got = result.unwrap_err();
+        assert!(got.downcast_ref::<UserCancelled>().is_some());
     }
 }
