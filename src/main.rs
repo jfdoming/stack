@@ -361,9 +361,6 @@ fn cmd_track(
             "cannot combine --all with a positional branch argument"
         ));
     }
-    if !args.all && args.branch.is_none() {
-        return Err(anyhow!("branch required unless --all is provided"));
-    }
     if args.all && args.parent.is_some() {
         return Err(anyhow!("cannot combine --all with --parent"));
     }
@@ -372,6 +369,7 @@ fn cmd_track(
     }
 
     let is_tty = stdout().is_terminal() && stdin().is_terminal();
+    let current = git.current_branch()?;
     let tracked = db.list_branches()?;
     let by_name: HashMap<String, BranchRecord> = tracked
         .iter()
@@ -391,8 +389,42 @@ fn cmd_track(
             .filter(|b| b.as_str() != base_branch)
             .cloned()
             .collect()
+    } else if let Some(branch) = &args.branch {
+        vec![branch.clone()]
     } else {
-        vec![args.branch.clone().unwrap_or_default()]
+        let viable_names: Vec<String> = local
+            .iter()
+            .filter(|b| b.as_str() != base_branch)
+            .cloned()
+            .collect();
+        if viable_names.is_empty() {
+            return Err(anyhow!("no local non-base branches available to track"));
+        }
+        if viable_names.len() == 1 {
+            let assumed = viable_names[0].clone();
+            if !opts.porcelain {
+                println!("assuming target branch '{assumed}' (only viable branch)");
+            }
+            vec![assumed]
+        } else if is_tty {
+            let theme = ColorfulTheme::default();
+            let picker_items = build_branch_picker_items(&viable_names, &current, &tracked);
+            let default_idx = viable_names.iter().position(|b| b == &current).unwrap_or(0);
+            let idx = prompt_or_cancel(
+                Select::with_theme(&theme)
+                    .with_prompt(
+                        "Select branch to track (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)",
+                    )
+                    .items(&picker_items)
+                    .default(default_idx)
+                    .interact(),
+            )?;
+            vec![viable_names[idx].clone()]
+        } else {
+            return Err(anyhow!(
+                "branch required in non-interactive mode; pass stack track <branch>"
+            ));
+        }
     };
 
     for target in targets {

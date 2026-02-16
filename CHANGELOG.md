@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.3.1 - 2026-02-16
+- `stack track` now mirrors create/delete target selection when branch is omitted: auto-selects the only viable branch, prompts in TTY mode, and errors in non-interactive mode when multiple branches are viable.
+
 ## 0.3.0 - 2026-02-16
 - Added `stack track` to register relationships for existing local branches.
 - Added single-branch and `--all` tracking modes with dry-run and porcelain output.
