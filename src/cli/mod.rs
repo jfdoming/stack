@@ -70,7 +70,10 @@ pub struct TrackArgs {
     pub all: bool,
     #[arg(short = 'p', long, help = "Parent branch name")]
     pub parent: Option<String>,
-    #[arg(long, help = "Infer parent from PR metadata and git ancestry")]
+    #[arg(
+        long,
+        help = "Infer parent only (skip interactive parent selection fallback)"
+    )]
     pub infer: bool,
     #[arg(short = 'n', long, help = "Preview changes without mutating DB")]
     pub dry_run: bool,

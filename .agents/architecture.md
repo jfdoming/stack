@@ -25,7 +25,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 ## Track behaviour
 - `stack track` links existing local branches into stack parent relationships.
 - When target branch is omitted, selection mirrors create/delete flows (assume single viable branch, prompt on TTY when multiple).
-- In single-branch mode without `--infer`, missing `--parent` follows the same assumption/prompt pattern.
+- In single-branch mode, missing `--parent` first tries inference (PR base, then git ancestry), then falls back to the same assumption/prompt pattern when unresolved.
 - Parent inference uses PR base metadata first, then git ancestry heuristics.
 - Batch parent updates are validated for cycles and applied atomically.
 

@@ -611,7 +611,7 @@ fn track_without_branch_in_non_interactive_mode_requires_argument_when_multiple_
 }
 
 #[test]
-fn track_without_parent_in_non_interactive_mode_assumes_only_viable_parent() {
+fn track_without_parent_in_non_interactive_mode_infers_parent_by_default() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/a"]);
     run_git(repo.path(), &["checkout", "main"]);
@@ -620,25 +620,25 @@ fn track_without_parent_in_non_interactive_mode_assumes_only_viable_parent() {
         .args(["track", "feat/a", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "assuming parent branch 'main' (only viable branch)",
-        ));
+        .stdout(predicate::str::contains("would track 'feat/a' under 'main'"));
 }
 
 #[test]
-fn track_without_parent_in_non_interactive_mode_requires_option_when_multiple_candidates() {
+fn track_without_parent_in_non_interactive_mode_uses_inference_when_possible() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/a"]);
-    run_git(repo.path(), &["checkout", "main"]);
+    fs::write(repo.path().join("a.txt"), "a\n").expect("write a");
+    run_git(repo.path(), &["add", "a.txt"]);
+    run_git(repo.path(), &["commit", "-m", "a"]);
     run_git(repo.path(), &["checkout", "-b", "feat/b"]);
     run_git(repo.path(), &["checkout", "main"]);
 
     stack_cmd(repo.path())
         .args(["track", "feat/b", "--dry-run"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "parent required in non-interactive mode",
+        .success()
+        .stdout(predicate::str::contains(
+            "would track 'feat/b' under 'feat/a'",
         ));
 }
 
