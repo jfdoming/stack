@@ -44,8 +44,8 @@ pub enum Commands {
     Sync(SyncArgs),
     /// Validate and optionally repair stack metadata
     Doctor(DoctorArgs),
-    /// Remove a branch from stack relationships
-    Unlink(UnlinkArgs),
+    /// Fully untrack a branch from stack relationships
+    Untrack(UntrackArgs),
     /// Delete a branch and splice it out of the stack
     Delete(DeleteArgs),
     /// Create a pull request for the current branch
@@ -95,11 +95,9 @@ pub struct DoctorArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct UnlinkArgs {
-    #[arg(help = "Branch to unlink")]
+pub struct UntrackArgs {
+    #[arg(help = "Branch to untrack")]
     pub branch: String,
-    #[arg(short = 'd', long, help = "Remove branch record entirely")]
-    pub drop_record: bool,
 }
 
 #[derive(Debug, Args)]
