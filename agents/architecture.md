@@ -17,7 +17,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Key table: `branches` (single parent relationship, cached PR metadata, sync SHA).
 - Integrity: cycle prevention is validated before parent updates.
 
-## Sync behavior
+## Sync behaviour
 - Builds a plan (`fetch`, `restack`, metadata updates).
 - Prefers `git replay`; falls back to `git rebase --onto` with warning.
 - Stops on conflict and warns on stash restore failures.

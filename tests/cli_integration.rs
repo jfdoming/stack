@@ -370,11 +370,46 @@ fn delete_command_splices_children_and_deletes_local_branch() {
 }
 
 #[test]
-fn delete_without_branch_in_non_interactive_mode_requires_argument() {
+fn create_without_parent_in_non_interactive_mode_assumes_only_viable_branch() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--name", "feat/a"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "assuming parent branch 'main' (only viable branch)",
+        ));
+}
+
+#[test]
+fn delete_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();
 
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["delete", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "assuming target branch 'feat/a' (only viable branch)",
+        ));
+}
+
+#[test]
+fn delete_without_branch_in_non_interactive_mode_requires_argument_when_multiple_tracked() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/b"])
         .assert()
         .success();
 

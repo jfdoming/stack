@@ -14,7 +14,7 @@
 - `./scripts/install.sh --write-shell-config`: also append PATH update to shell config.
 - `STACK_INSTALL_PREFIX=/custom/prefix ./scripts/install.sh`: install under a custom prefix.
 
-## Local behavior notes
+## Local behaviour notes
 - `stack` without args prints a one-shot tree visualization by default.
 - `stack --interactive` opens the fullscreen TUI.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
@@ -22,11 +22,11 @@
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.
-  Keep this behavior unless prompts are migrated off Dialoguer.
+  Keep this behaviour unless prompts are migrated off Dialoguer.
 
 ## Testing focus
 When adding features, prefer tests in the same module (`mod tests`).
 Prioritize:
 - stack graph invariants,
 - sync planning and replay fallback paths,
-- non-interactive CLI behavior.
+- non-interactive CLI behaviour.
