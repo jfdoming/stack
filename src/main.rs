@@ -11,13 +11,14 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use crossterm::style::Stylize;
 use dialoguer::{Confirm, Input, Select};
 use output::{BranchView, DoctorIssueView, print_json};
 use provider::Provider;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands};
-use crate::core::{build_sync_plan, rank_parent_candidates, render_plain_tree};
+use crate::core::{build_sync_plan, rank_parent_candidates, render_tree};
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::GithubProvider;
@@ -40,7 +41,7 @@ fn main() -> Result<()> {
     let provider = GithubProvider::new(git.clone());
 
     match cli.command {
-        None => cmd_stack(&db, &git, cli.porcelain),
+        None => cmd_stack(&db, &git, cli.porcelain, cli.interactive),
         Some(Commands::Create(args)) => {
             cmd_create(&db, &git, &args.parent, &args.name, cli.porcelain)
         }
@@ -60,7 +61,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn cmd_stack(db: &Database, git: &Git, porcelain: bool) -> Result<()> {
+fn cmd_stack(db: &Database, git: &Git, porcelain: bool, interactive: bool) -> Result<()> {
     let records = db.list_branches()?;
     let branch_views = to_branch_views(git, &records)?;
 
@@ -68,11 +69,13 @@ fn cmd_stack(db: &Database, git: &Git, porcelain: bool) -> Result<()> {
         return print_json(&branch_views);
     }
 
-    if stdout().is_terminal() && stdin().is_terminal() {
+    let is_tty = stdout().is_terminal() && stdin().is_terminal();
+    if interactive && is_tty {
         return tui::run_stack_tui(&branch_views);
     }
 
-    println!("{}", render_plain_tree(&records));
+    let should_color = is_tty && std::env::var_os("NO_COLOR").is_none();
+    println!("{}", render_tree(&records, should_color));
     Ok(())
 }
 
@@ -150,10 +153,19 @@ fn cmd_create(
     if porcelain {
         print_json(&out)?;
     } else {
-        println!(
-            "created stack branch: {} -> {}",
-            out["parent"], out["created"]
-        );
+        let use_color = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        if use_color {
+            println!(
+                "created stack branch: {} -> {}",
+                out["parent"].as_str().unwrap_or("<unknown>").green().bold(),
+                out["created"].as_str().unwrap_or("<unknown>").cyan().bold()
+            );
+        } else {
+            println!(
+                "created stack branch: {} -> {}",
+                out["parent"], out["created"]
+            );
+        }
     }
     Ok(())
 }
@@ -174,8 +186,19 @@ fn cmd_sync(
         print_json(&plan_view)?;
     } else {
         println!("sync base: {}", plan.base_branch);
+        let use_color = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         for op in &plan_view.operations {
-            println!("- {}: {} {}", op.kind, op.branch, op.details);
+            if use_color {
+                let kind = match op.kind.as_str() {
+                    "fetch" => op.kind.as_str().blue().bold().to_string(),
+                    "restack" => op.kind.as_str().yellow().bold().to_string(),
+                    "update_sha" => op.kind.as_str().cyan().to_string(),
+                    _ => op.kind.clone(),
+                };
+                println!("- {}: {} {}", kind, op.branch.as_str().green(), op.details);
+            } else {
+                println!("- {}: {} {}", op.kind, op.branch, op.details);
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::{Result, anyhow};
+use crossterm::style::Stylize;
 
 use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
@@ -244,7 +245,7 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
     Ok(())
 }
 
-pub fn render_plain_tree(branches: &[BranchRecord]) -> String {
+pub fn render_tree(branches: &[BranchRecord], color: bool) -> String {
     let mut out = String::new();
     let mut children: HashMap<Option<i64>, Vec<&BranchRecord>> = HashMap::new();
     for b in branches {
@@ -259,31 +260,72 @@ pub fn render_plain_tree(branches: &[BranchRecord]) -> String {
         children: &HashMap<Option<i64>, Vec<&BranchRecord>>,
         parent: Option<i64>,
         prefix: &str,
+        color: bool,
     ) {
         if let Some(nodes) = children.get(&parent) {
             for (idx, node) in nodes.iter().enumerate() {
                 let is_last = idx + 1 == nodes.len();
-                let branch_prefix = if is_last { "└──" } else { "├──" };
-                out.push_str(&format!("{prefix}{branch_prefix} {}", node.name));
-                if let Some(state) = &node.cached_pr_state {
-                    out.push_str(&format!(" [pr:{state}]"));
-                }
+                let connector = if is_last { "└──" } else { "├──" };
+                let branch_name = if color {
+                    node.name.as_str().green().bold().to_string()
+                } else {
+                    node.name.clone()
+                };
+                let pr = render_pr_state(node.cached_pr_state.as_deref(), color);
+                let sync = render_sync_state(node.last_synced_head_sha.is_some(), color);
+                out.push_str(&format!("{prefix}{connector} {branch_name} {pr} {sync}"));
                 out.push('\n');
                 let next_prefix = if is_last {
                     format!("{prefix}    ")
                 } else {
                     format!("{prefix}│   ")
                 };
-                walk(out, children, Some(node.id), &next_prefix);
+                walk(out, children, Some(node.id), &next_prefix, color);
             }
         }
     }
 
-    walk(&mut out, &children, None, "");
+    walk(&mut out, &children, None, "", color);
     if out.is_empty() {
         out.push_str("(no stack branches tracked)\n");
     }
     out
+}
+
+fn render_pr_state(pr: Option<&str>, color: bool) -> String {
+    let badge = match pr.unwrap_or("none") {
+        "open" => "PR:open",
+        "merged" => "PR:merged",
+        "closed" => "PR:closed",
+        "unknown" => "PR:unknown",
+        _ => "PR:none",
+    };
+    if !color {
+        return format!("[{badge}]");
+    }
+    match badge {
+        "PR:open" => format!("[{}]", badge.yellow().bold()),
+        "PR:merged" => format!("[{}]", badge.green().bold()),
+        "PR:closed" => format!("[{}]", badge.red().bold()),
+        "PR:unknown" => format!("[{}]", badge.dark_grey()),
+        _ => format!("[{}]", badge.dark_grey()),
+    }
+}
+
+fn render_sync_state(has_sha: bool, color: bool) -> String {
+    let badge = if has_sha {
+        "SYNC:tracked"
+    } else {
+        "SYNC:unsynced"
+    };
+    if !color {
+        return format!("[{badge}]");
+    }
+    if has_sha {
+        format!("[{}]", badge.cyan())
+    } else {
+        format!("[{}]", badge.magenta())
+    }
 }
 
 #[cfg(test)]
