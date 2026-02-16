@@ -299,10 +299,28 @@ fn pr_create_fails_when_gh_returns_non_zero() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
-        .args(["pr"])
+        .args(["--yes", "pr"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("gh command failed"));
+}
+
+#[test]
+fn pr_requires_yes_in_non_interactive_mode_before_create() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/pr-confirm"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/pr-confirm"]);
+
+    stack_cmd(repo.path())
+        .args(["pr"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "confirmation required in non-interactive mode",
+        ));
 }
 
 #[cfg(unix)]
