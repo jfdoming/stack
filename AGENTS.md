@@ -1,16 +1,16 @@
 # Repository Guidelines
 
-This file is the contributor index for agent-friendly navigation. Keep it short and move detail into `agents/` markdown files.
+This file is the contributor index for agent-friendly navigation. Keep it short and move detail into `.agents/` markdown files.
 
 ## Fast Index
-- `agents/architecture.md`: module layout, data model, and sync behaviour.
-- `agents/development.md`: build/test/run commands and local workflow.
-- `agents/contributing.md`: commit/PR conventions and doc hygiene.
+- `.agents/architecture.md`: module layout, data model, and sync behaviour.
+- `.agents/development.md`: build/test/run commands and local workflow.
+- `.agents/contributing.md`: commit/PR conventions and doc hygiene.
 - `CHANGELOG.md`: repository release history (one section per version).
 
 ## How To Use This Index
 - Start here for repository orientation.
-- Open only the `agents/*.md` file relevant to your change area.
+- Open only the `.agents/*.md` file relevant to your change area.
 - If your change spans multiple areas (for example sync logic and CLI UX), update each affected doc.
 - Check `TASKS.md` before starting work; it is the active task queue.
 - Execute tasks sequentially (one at a time), and commit after each completed task.
@@ -36,9 +36,9 @@ This file is the contributor index for agent-friendly navigation. Keep it short 
 Agents should update docs liberally as code evolves.
 
 When changing behaviour, architecture, or workflows:
-1. Update the relevant `agents/*.md` file in the same PR.
+1. Update the relevant `.agents/*.md` file in the same PR.
 2. Update this `AGENTS.md` index if files are added, removed, or repurposed.
-3. Prefer concise summaries here; keep detailed rationale and procedures in `agents/`.
+3. Prefer concise summaries here; keep detailed rationale and procedures in `.agents/`.
 
 ## Style Notes
 - Rust style via `rustfmt`; use `snake_case` and `PascalCase` conventions.
