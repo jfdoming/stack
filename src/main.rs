@@ -103,11 +103,13 @@ fn cmd_create(
             .iter()
             .position(|b| b == &current)
             .unwrap_or(0);
-        let idx = Select::new()
+        let idx = prompt_or_cancel(
+            Select::new()
             .with_prompt("Select parent branch")
             .items(&parent_candidates)
             .default(default_idx)
-            .interact()?;
+            .interact(),
+        )?;
         parent_candidates[idx].clone()
     } else {
         return Err(anyhow!(
@@ -122,7 +124,8 @@ fn cmd_create(
     let child = if let Some(name) = name_arg {
         name.clone()
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        Input::<String>::new()
+        prompt_or_cancel(
+            Input::<String>::new()
             .with_prompt("Name for new child branch")
             .validate_with(|input: &String| -> Result<(), &str> {
                 if input.trim().is_empty() {
@@ -131,7 +134,8 @@ fn cmd_create(
                     Ok(())
                 }
             })
-            .interact_text()?
+            .interact_text(),
+        )?
     } else {
         return Err(anyhow!(
             "branch name required in non-interactive mode; pass --name <branch>"
@@ -437,4 +441,15 @@ fn cycle_issues(records: &[BranchRecord]) -> Vec<DoctorIssueView> {
     }
 
     issues
+}
+
+fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(dialoguer::Error::IO(err)) if err.kind() == std::io::ErrorKind::Interrupted => {
+            eprintln!("cancelled by user");
+            std::process::exit(130);
+        }
+        Err(err) => Err(err.into()),
+    }
 }
