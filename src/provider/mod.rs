@@ -20,12 +20,27 @@ pub struct PrInfo {
     pub merge_commit_oid: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreatePrRequest<'a> {
+    pub head: &'a str,
+    pub base: &'a str,
+    pub title: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub draft: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreatePrResult {
+    pub url: String,
+}
+
 pub trait Provider {
     fn resolve_pr_by_head(
         &self,
         branch: &str,
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>>;
+    fn create_pr(&self, req: CreatePrRequest<'_>) -> Result<CreatePrResult>;
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +119,42 @@ impl Provider for GithubProvider {
         let mut prs: Vec<GhPr> = serde_json::from_str(&out)?;
         prs.sort_by_key(|p| p.number);
         Ok(prs.pop().map(convert_pr))
+    }
+
+    fn create_pr(&self, req: CreatePrRequest<'_>) -> Result<CreatePrResult> {
+        let mut args = vec![
+            "pr".to_string(),
+            "create".to_string(),
+            "--head".to_string(),
+            req.head.to_string(),
+            "--base".to_string(),
+            req.base.to_string(),
+        ];
+
+        if req.draft {
+            args.push("--draft".to_string());
+        }
+
+        match (req.title, req.body) {
+            (Some(title), Some(body)) => {
+                args.push("--title".to_string());
+                args.push(title.to_string());
+                args.push("--body".to_string());
+                args.push(body.to_string());
+            }
+            (Some(title), None) => {
+                args.push("--title".to_string());
+                args.push(title.to_string());
+                args.push("--fill".to_string());
+            }
+            _ => args.push("--fill".to_string()),
+        }
+
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = self.run_gh(&arg_refs)?;
+        Ok(CreatePrResult {
+            url: out.lines().last().unwrap_or_default().trim().to_string(),
+        })
     }
 }
 

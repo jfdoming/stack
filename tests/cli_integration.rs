@@ -156,3 +156,29 @@ fn sync_dry_run_porcelain_reports_restack_operation() {
     });
     assert!(found, "expected restack op for feat/child onto feat/parent");
 }
+
+#[test]
+fn pr_dry_run_uses_parent_branch_as_base() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/child"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["pr", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run stack pr --dry-run");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["head"], "feat/child");
+    assert_eq!(json["base"], "feat/parent");
+}

@@ -27,6 +27,8 @@ pub enum Commands {
     Doctor(DoctorArgs),
     /// Remove a branch from stack relationships
     Unlink(UnlinkArgs),
+    /// Create a pull request for the current branch
+    Pr(PrArgs),
 }
 
 #[derive(Debug, Args)]
@@ -55,4 +57,16 @@ pub struct UnlinkArgs {
     pub branch: String,
     #[arg(long, help = "Remove branch record entirely")]
     pub drop_record: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PrArgs {
+    #[arg(long, help = "PR title")]
+    pub title: Option<String>,
+    #[arg(long, help = "PR body")]
+    pub body: Option<String>,
+    #[arg(long, help = "Create draft PR")]
+    pub draft: bool,
+    #[arg(long, help = "Preview command without calling gh")]
+    pub dry_run: bool,
 }
