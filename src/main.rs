@@ -320,13 +320,7 @@ fn cmd_sync(
     let should_apply = if opts.yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        let operation_count = plan_view.operations.len();
-        confirm_with_select(
-            "Apply sync plan?",
-            Some(&format!("{operation_count} operation(s) pending")),
-            "Yes - apply sync updates now",
-            "No - keep plan only (no changes)",
-        )?
+        confirm_inline_yes_no("Apply sync plan?")?
     } else {
         false
     };
@@ -689,30 +683,6 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
             }
         }
     }
-}
-
-fn confirm_with_select(
-    prompt: &str,
-    summary: Option<&str>,
-    yes_label: &str,
-    no_label: &str,
-) -> Result<bool> {
-    if let Some(line) = summary {
-        println!("  {}", line.dark_grey());
-    }
-    let theme = ColorfulTheme::default();
-    let options = vec![
-        format!("{} {}", "●".green().bold(), yes_label),
-        format!("{} {}", "○".yellow().bold(), no_label),
-    ];
-    let idx = prompt_or_cancel(
-        Select::with_theme(&theme)
-            .with_prompt(prompt)
-            .items(&options)
-            .default(1)
-            .interact(),
-    )?;
-    Ok(idx == 0)
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
