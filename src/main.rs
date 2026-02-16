@@ -1426,6 +1426,10 @@ fn osc8_hyperlink(url: &str, label: &str) -> String {
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
+    if !should_use_inline_confirm(prompt)? {
+        return confirm_select_yes_no(prompt);
+    }
+
     let mut out = std::io::stdout();
     enable_raw_mode().context("failed to enable raw mode for inline confirm")?;
     execute!(out, Hide).context("failed to hide cursor for inline confirm")?;
@@ -1478,6 +1482,26 @@ fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
     let _ = disable_raw_mode();
     let _ = writeln!(out);
     result
+}
+
+fn should_use_inline_confirm(prompt: &str) -> Result<bool> {
+    let (width, _) = crossterm::terminal::size().context("failed to read terminal size")?;
+    let prompt_len = prompt.chars().count();
+    let min_options_len = "  ○ Yes   ○ No".chars().count();
+    Ok(prompt_len + min_options_len < width as usize)
+}
+
+fn confirm_select_yes_no(prompt: &str) -> Result<bool> {
+    let theme = ColorfulTheme::default();
+    let options = ["Yes", "No"];
+    let idx = prompt_or_cancel(
+        Select::with_theme(&theme)
+            .with_prompt(prompt)
+            .items(&options)
+            .default(0)
+            .interact(),
+    )?;
+    Ok(idx == 0)
 }
 
 fn build_branch_picker_items(
@@ -1593,5 +1617,13 @@ mod tests {
         let msg = format_pr_metadata_warning("feat/a", &err, false);
         assert!(msg.contains("gh returned an unexpected response"));
         assert!(!msg.contains("line 1 column 1"));
+    }
+
+    #[test]
+    fn long_prompt_exceeds_example_width_budget() {
+        let prompt = "Open PR from 'main' into 'main' even though the branch is not stacked?";
+        let prompt_len = prompt.chars().count();
+        let min_options_len = "  ○ Yes   ○ No".chars().count();
+        assert!(prompt_len + min_options_len > 74);
     }
 }
