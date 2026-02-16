@@ -271,30 +271,51 @@ fn parse_remote_to_web_url(raw: &str) -> Option<String> {
     if let Some(rest) = raw.strip_prefix("git@")
         && let Some((host, repo)) = rest.split_once(':')
     {
-        return Some(format!(
+        return Some(sanitize_terminal_text(&format!(
             "https://{}/{}",
             host.trim_end_matches('/'),
             repo.trim_end_matches(".git")
-        ));
+        )));
     }
 
     if let Some(rest) = raw.strip_prefix("ssh://git@")
         && let Some((host, repo)) = rest.split_once('/')
     {
-        return Some(format!(
+        return Some(sanitize_terminal_text(&format!(
             "https://{}/{}",
             host.trim_end_matches('/'),
             repo.trim_end_matches(".git")
-        ));
+        )));
     }
 
     if raw.starts_with("https://") || raw.starts_with("http://") {
-        return Some(
-            raw.trim_end_matches(".git")
-                .trim_end_matches('/')
-                .to_string(),
-        );
+        return Some(sanitize_terminal_text(
+            raw.trim_end_matches(".git").trim_end_matches('/').trim(),
+        ));
     }
 
     None
+}
+
+fn sanitize_terminal_text(value: &str) -> String {
+    value.chars().filter(|c| !c.is_control()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_remote_to_web_url_strips_control_characters() {
+        let parsed = parse_remote_to_web_url("https://github.com/acme/repo\u{1b}[31m")
+            .expect("url should parse");
+        assert_eq!(parsed, "https://github.com/acme/repo[31m");
+    }
+
+    #[test]
+    fn parse_remote_to_web_url_normalizes_git_ssh_remote() {
+        let parsed =
+            parse_remote_to_web_url("git@github.com:acme/repo.git").expect("url should parse");
+        assert_eq!(parsed, "https://github.com/acme/repo");
+    }
 }

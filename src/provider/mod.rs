@@ -54,19 +54,7 @@ impl GithubProvider {
         Self { git }
     }
 
-    fn run_gh(&self, args: &[&str]) -> Result<String> {
-        let output = Command::new("gh")
-            .current_dir(self.git.root())
-            .args(args)
-            .output()
-            .with_context(|| format!("failed to run gh {args:?}"))?;
-        if !output.status.success() {
-            return Ok(String::new());
-        }
-        Ok(String::from_utf8(output.stdout)?)
-    }
-
-    fn run_gh_strict(&self, args: &[&str]) -> Result<String> {
+    fn run_gh_required(&self, args: &[&str]) -> Result<String> {
         let output = Command::new("gh")
             .current_dir(self.git.root())
             .args(args)
@@ -80,6 +68,23 @@ impl GithubProvider {
             ));
         }
         Ok(String::from_utf8(output.stdout)?)
+    }
+
+    fn run_gh_optional(&self, args: &[&str]) -> Result<Option<String>> {
+        let output = Command::new("gh")
+            .current_dir(self.git.root())
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to run gh {args:?}"))?;
+        if !output.status.success() {
+            eprintln!(
+                "warning: gh command failed {:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(None);
+        }
+        Ok(Some(String::from_utf8(output.stdout)?))
     }
 }
 
@@ -123,7 +128,9 @@ impl Provider for GithubProvider {
             ]
         };
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let out = self.run_gh(&arg_refs)?;
+        let Some(out) = self.run_gh_optional(&arg_refs)? else {
+            return Ok(None);
+        };
         if out.trim().is_empty() {
             return Ok(None);
         }
@@ -168,7 +175,7 @@ impl Provider for GithubProvider {
         }
 
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let out = self.run_gh(&arg_refs)?;
+        let out = self.run_gh_required(&arg_refs)?;
         Ok(CreatePrResult {
             url: out.lines().last().unwrap_or_default().trim().to_string(),
         })
@@ -177,7 +184,7 @@ impl Provider for GithubProvider {
     fn delete_pr(&self, pr_number: i64) -> Result<()> {
         let num = pr_number.to_string();
         let args = ["pr", "close", &num, "--delete-branch"];
-        let _ = self.run_gh_strict(&args)?;
+        let _ = self.run_gh_required(&args)?;
         Ok(())
     }
 }
