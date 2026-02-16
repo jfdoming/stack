@@ -19,6 +19,39 @@ use crate::db::Database;
 use crate::git::Git;
 use crate::provider::GithubProvider;
 
+struct AppContext {
+    cli: Cli,
+    git: Git,
+    db: Database,
+    base_branch: String,
+    base_remote: String,
+    provider: GithubProvider,
+}
+
+impl AppContext {
+    fn build() -> Result<Self> {
+        let cli = Cli::parse();
+        let git = Git::discover()?;
+        let git_dir = git.git_dir()?;
+        let db_path = git_dir.join("stack.db");
+        let db = Database::open(&db_path)?;
+        let default_base = git.default_base_branch()?;
+        db.set_base_branch_if_missing(&default_base)?;
+        let base_branch = db.repo_meta()?.base_branch;
+        let base_remote = git.base_remote_for_stack(&base_branch)?;
+        let provider = GithubProvider::new(git.clone(), cli.global.debug);
+
+        Ok(Self {
+            cli,
+            git,
+            db,
+            base_branch,
+            base_remote,
+            provider,
+        })
+    }
+}
+
 fn main() -> Result<()> {
     if let Err(err) = run() {
         if err
@@ -47,83 +80,83 @@ fn run() -> Result<()> {
         .compact()
         .init();
 
-    let cli = Cli::parse();
-    let git = Git::discover()?;
-    let git_dir = git.git_dir()?;
-    let db_path = git_dir.join("stack.db");
-    let db = Database::open(&db_path)?;
-    let default_base = git.default_base_branch()?;
-    db.set_base_branch_if_missing(&default_base)?;
-    let base_branch = db.repo_meta()?.base_branch;
-    let base_remote = git.base_remote_for_stack(&base_branch)?;
-    let provider = GithubProvider::new(git.clone(), cli.global.debug);
+    let ctx = AppContext::build()?;
+    dispatch(&ctx)
+}
 
-    match cli.command {
+fn dispatch(ctx: &AppContext) -> Result<()> {
+    match &ctx.cli.command {
         None => commands::stack::run(
-            &db,
-            &git,
-            cli.global.porcelain,
-            cli.global.interactive,
-            &base_branch,
-            &base_remote,
+            &ctx.db,
+            &ctx.git,
+            ctx.cli.global.porcelain,
+            ctx.cli.global.interactive,
+            &ctx.base_branch,
+            &ctx.base_remote,
         ),
         Some(Commands::Create(args)) => {
-            commands::create::run(&db, &git, &args.parent, &args.name, cli.global.porcelain)
+            commands::create::run(
+                &ctx.db,
+                &ctx.git,
+                &args.parent,
+                &args.name,
+                ctx.cli.global.porcelain,
+            )
         }
         Some(Commands::Track(args)) => commands::track::run(
-            &db,
-            &git,
-            &provider,
-            &args,
-            &base_branch,
+            &ctx.db,
+            &ctx.git,
+            &ctx.provider,
+            args,
+            &ctx.base_branch,
             commands::track::TrackRunOptions {
-                porcelain: cli.global.porcelain,
-                yes: cli.global.yes,
+                porcelain: ctx.cli.global.porcelain,
+                yes: ctx.cli.global.yes,
                 dry_run: args.dry_run,
                 force: args.force,
-                debug: cli.global.debug,
+                debug: ctx.cli.global.debug,
             },
         ),
         Some(Commands::Sync(args)) => commands::sync::run(
-            &db,
-            &git,
-            &provider,
-            &base_branch,
-            &base_remote,
+            &ctx.db,
+            &ctx.git,
+            &ctx.provider,
+            &ctx.base_branch,
+            &ctx.base_remote,
             commands::sync::SyncRunOptions {
-                porcelain: cli.global.porcelain,
-                yes: cli.global.yes,
+                porcelain: ctx.cli.global.porcelain,
+                yes: ctx.cli.global.yes,
                 dry_run: args.dry_run,
             },
         ),
         Some(Commands::Doctor(args)) => {
-            commands::doctor::run(&db, &git, cli.global.porcelain, args.fix)
+            commands::doctor::run(&ctx.db, &ctx.git, ctx.cli.global.porcelain, args.fix)
         }
         Some(Commands::Untrack(args)) => commands::untrack::run(
-            &db,
-            &git,
+            &ctx.db,
+            &ctx.git,
             args.branch.as_deref(),
-            cli.global.porcelain,
-            &base_branch,
-            cli.global.yes,
+            ctx.cli.global.porcelain,
+            &ctx.base_branch,
+            ctx.cli.global.yes,
         ),
         Some(Commands::Delete(args)) => commands::delete::run(
-            &db,
-            &git,
-            &provider,
-            &args,
-            cli.global.porcelain,
-            cli.global.yes,
-            &base_branch,
+            &ctx.db,
+            &ctx.git,
+            &ctx.provider,
+            args,
+            ctx.cli.global.porcelain,
+            ctx.cli.global.yes,
+            &ctx.base_branch,
         ),
         Some(Commands::Pr(args)) => commands::pr::run(
-            &db,
-            &git,
-            &provider,
-            &args,
-            cli.global.porcelain,
-            cli.global.yes,
-            cli.global.debug,
+            &ctx.db,
+            &ctx.git,
+            &ctx.provider,
+            args,
+            ctx.cli.global.porcelain,
+            ctx.cli.global.yes,
+            ctx.cli.global.debug,
         ),
         Some(Commands::Completions(args)) => commands::completions::run(args.shell),
     }
