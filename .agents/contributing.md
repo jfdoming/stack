@@ -27,16 +27,14 @@ PRs should include:
 - what changed and why,
 - test evidence (command + result),
 - sample CLI output or screenshots for user-visible behaviour.
+- add or update tests in the same task when runtime behaviour changes (including bug fixes).
+- add or update tests when CLI parsing, prompts/defaults, output contracts, or persistence/sync logic changes.
+- read `.agents/testing.md` before writing or modifying tests.
 
 ## When To Update Docs
 - Update docs in the same task when changing behaviour, CLI flags/subcommands/options, workflows, architecture, or user-facing output/help text.
 - For docs edits, read `.agents/docs.md` before writing.
 - Docs-only changes do not require a changelog entry or version bump.
-
-## When To Update Tests
-- Add or update tests in the same task when runtime behaviour changes (including bug fixes).
-- Add or update tests when CLI parsing, prompts/defaults, output contracts, or persistence/sync logic changes.
-- For test edits, read `.agents/testing.md` before writing or modifying tests.
 
 ## Versioning (SemVer)
 When bumping `Cargo.toml` version, use Semantic Versioning:
