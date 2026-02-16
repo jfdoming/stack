@@ -68,6 +68,15 @@ pub enum Commands {
 pub struct CreateArgs {
     #[arg(short = 'p', long, help = "Parent branch name")]
     pub parent: Option<String>,
+    #[arg(
+        long,
+        value_name = "CHILD",
+        num_args = 0..=1,
+        default_missing_value = "",
+        help = "Insert new branch before a tracked child branch",
+        conflicts_with = "parent"
+    )]
+    pub insert: Option<String>,
     #[arg(short = 'n', long, help = "Child branch name to create")]
     pub name: Option<String>,
 }

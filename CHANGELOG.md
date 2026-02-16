@@ -2,6 +2,12 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.12.0 - 2026-02-16
+- Added `stack create --insert [child]` to insert a new branch between a tracked child branch and its current parent.
+- Insert creation now rewires stack metadata in one step (`parent -> new -> child`) and keeps checkout behaviour on the newly created branch.
+- Insert creation now refreshes managed stack-flow sections for affected open PR bodies so parent/child links stay current immediately.
+- Added integration coverage for metadata relinking, `--insert` target selection, and open-PR body refresh during insert creation.
+
 ## 0.11.1 - 2026-02-16
 - Refined managed PR-body stack flow formatting:
   - omit leading ellipsis when the base branch is the direct parent,

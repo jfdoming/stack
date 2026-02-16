@@ -72,7 +72,9 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
         Some(Commands::Create(args)) => commands::create::run(
             &ctx.db,
             &ctx.git,
+            &ctx.provider,
             &args.parent,
+            &args.insert,
             &args.name,
             ctx.cli.global.porcelain,
         ),
