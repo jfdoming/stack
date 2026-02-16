@@ -366,7 +366,12 @@ fn cmd_create(
                 } else {
                     format!(
                         " {}",
-                        out["create_url"].as_str().unwrap_or_default().dark_grey()
+                        osc8_hyperlink(
+                            out["create_url"].as_str().unwrap_or_default(),
+                            "open compare",
+                        )
+                        .dark_grey()
+                        .underlined()
                     )
                 }
             );
@@ -1343,6 +1348,10 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
             }
         }
     }
+}
+
+fn osc8_hyperlink(url: &str, label: &str) -> String {
+    format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {

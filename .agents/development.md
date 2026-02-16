@@ -32,6 +32,7 @@
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - `stack pr` requires the current branch to be tracked with a tracked parent, and skips PR creation when an existing PR already matches the branch head.
 - `stack pr` requires confirmation before creating a PR unless `--yes` is passed.
+- In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.
