@@ -2,6 +2,13 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.9.1 - 2026-02-16
+- Added managed PR body boundary markers to generated `stack pr` descriptions:
+  - `<!-- stack:managed:start -->`
+  - `<!-- stack:managed:end -->`
+- Kept the existing compact stack-flow chain inside those markers and continued appending user-provided body text below the managed block.
+- Added tests to validate marker presence in both composed PR body text and generated open-PR URL query parameters.
+
 ## 0.9.0 - 2026-02-16
 - Added stack navigation commands:
   - `stack top` to jump to the top-most descendant in the current stack path.
