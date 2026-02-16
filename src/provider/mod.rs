@@ -119,33 +119,57 @@ impl Provider for GithubProvider {
                 "number,state,mergeCommit,baseRefName".to_string(),
             ]
         } else {
-            vec![
-                "pr".to_string(),
-                "list".to_string(),
-                "--head".to_string(),
-                branch.to_string(),
-                "--state".to_string(),
-                "all".to_string(),
-                "--json".to_string(),
-                "number,state,mergeCommit,baseRefName".to_string(),
-            ]
+            Vec::new()
         };
-        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let Some(out) = self.run_gh_optional(&arg_refs)? else {
-            return Ok(None);
-        };
-        if out.trim().is_empty() {
-            return Ok(None);
-        }
 
         if cached_number.is_some() {
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let Some(out) = self.run_gh_optional(&arg_refs)? else {
+                return Ok(None);
+            };
+            if out.trim().is_empty() {
+                return Ok(None);
+            }
             let pr: GhPr = serde_json::from_str(&out)?;
             return Ok(Some(convert_pr(pr)));
         }
 
-        let mut prs: Vec<GhPr> = serde_json::from_str(&out)?;
-        prs.sort_by_key(|p| p.number);
-        Ok(prs.pop().map(convert_pr))
+        let mut head_filters = vec![branch.to_string()];
+        if let Some(remote) = self.git.remote_for_branch(branch)?
+            && let Some(url) = self.git.remote_web_url(&remote)?
+            && let Some(owner) = github_owner_from_web_url(&url)
+        {
+            let qualified = format!("{owner}:{branch}");
+            if !head_filters.iter().any(|h| h == &qualified) {
+                head_filters.push(qualified);
+            }
+        }
+
+        for head_filter in head_filters {
+            let args = vec![
+                "pr".to_string(),
+                "list".to_string(),
+                "--head".to_string(),
+                head_filter,
+                "--state".to_string(),
+                "all".to_string(),
+                "--json".to_string(),
+                "number,state,mergeCommit,baseRefName".to_string(),
+            ];
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let Some(out) = self.run_gh_optional(&arg_refs)? else {
+                continue;
+            };
+            if out.trim().is_empty() {
+                continue;
+            }
+            let mut prs: Vec<GhPr> = serde_json::from_str(&out)?;
+            prs.sort_by_key(|p| p.number);
+            if let Some(pr) = prs.pop() {
+                return Ok(Some(convert_pr(pr)));
+            }
+        }
+        Ok(None)
     }
 
     fn create_pr(&self, req: CreatePrRequest<'_>) -> Result<CreatePrResult> {
@@ -205,4 +229,16 @@ fn convert_pr(pr: GhPr) -> PrInfo {
         merge_commit_oid: pr.merge_commit.map(|m| m.oid),
         base_ref_name: pr.base_ref_name,
     }
+}
+
+fn github_owner_from_web_url(url: &str) -> Option<String> {
+    let trimmed = url.trim_end_matches('/');
+    let (_, rest) = trimmed.split_once("://")?;
+    let mut parts = rest.split('/');
+    let _host = parts.next()?;
+    let owner = parts.next()?;
+    if owner.is_empty() {
+        return None;
+    }
+    Some(owner.to_string())
 }

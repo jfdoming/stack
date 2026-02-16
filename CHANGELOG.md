@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.6.2 - 2026-02-16
+- Improved GitHub PR detection for fork-based branches by retrying head lookups with `owner:branch` qualifiers.
+
 ## 0.6.1 - 2026-02-16
 - When a command auto-assumes a single viable target branch, non-interactive mutating operations now require `--yes` (or an explicit branch) instead of proceeding silently.
 
