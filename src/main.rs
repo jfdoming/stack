@@ -103,7 +103,12 @@ fn cmd_stack(db: &Database, git: &Git, porcelain: bool, interactive: bool) -> Re
     let pr_base_url = git.origin_web_url()?;
     println!(
         "{}",
-        render_tree(&records, should_color, pr_base_url.as_deref())
+        render_tree(
+            &records,
+            should_color,
+            pr_base_url.as_deref(),
+            &db.repo_meta()?.base_branch,
+        )
     );
     Ok(())
 }
