@@ -144,6 +144,48 @@ fn track_without_parent_in_non_interactive_mode_uses_inference_when_possible() {
             "would track 'feat/b' under 'feat/a'",
         ));
 }
+
+#[test]
+fn track_inference_recurses_to_base_branch_when_reachable() {
+    let repo = init_repo();
+
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    fs::write(repo.path().join("a.txt"), "a\n").expect("write a");
+    run_git(repo.path(), &["add", "a.txt"]);
+    run_git(repo.path(), &["commit", "-m", "a"]);
+
+    run_git(repo.path(), &["checkout", "-b", "feat/b"]);
+    fs::write(repo.path().join("b.txt"), "b\n").expect("write b");
+    run_git(repo.path(), &["add", "b.txt"]);
+    run_git(repo.path(), &["commit", "-m", "b"]);
+
+    run_git(repo.path(), &["checkout", "-b", "feat/c"]);
+    fs::write(repo.path().join("c.txt"), "c\n").expect("write c");
+    run_git(repo.path(), &["add", "c.txt"]);
+    run_git(repo.path(), &["commit", "-m", "c"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["track", "feat/c", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run stack track infer dry-run");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let changes = json["changes"].as_array().expect("changes array");
+    let has_c_to_b = changes
+        .iter()
+        .any(|c| c["branch"] == "feat/c" && c["new_parent"] == "feat/b");
+    let has_b_to_a = changes
+        .iter()
+        .any(|c| c["branch"] == "feat/b" && c["new_parent"] == "feat/a");
+    let has_a_to_main = changes
+        .iter()
+        .any(|c| c["branch"] == "feat/a" && c["new_parent"] == "main");
+    assert!(has_c_to_b, "expected feat/c -> feat/b, got: {json}");
+    assert!(has_b_to_a, "expected feat/b -> feat/a, got: {json}");
+    assert!(has_a_to_main, "expected feat/a -> main, got: {json}");
+}
 #[test]
 fn track_infer_dry_run_reports_inferred_parent() {
     let repo = init_repo();

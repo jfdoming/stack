@@ -34,6 +34,7 @@
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.
+- Git-ancestry inference now recursively walks parent candidates until the configured base branch when possible.
 - Omitting `stack track <branch>` follows create/delete selection behaviour: assume when only one viable branch exists, otherwise prompt in TTY mode.
 - In non-interactive mode, if track auto-assumes a single viable target branch and would mutate state, pass `--yes` or an explicit target branch.
 - If default inference cannot resolve a parent, single-branch track falls back to the same assumption/prompt flow for parent selection.

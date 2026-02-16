@@ -171,37 +171,59 @@ pub fn run(
             continue;
         }
 
-        let inference = if args.all {
-            infer_parent_for_branch(
-                git,
-                provider,
-                &target,
-                by_name.get(&target),
-                &local,
-                &mut warnings,
-                opts.debug,
-            )?
-        } else if let Some(parent) = &args.parent {
-            if !local_set.contains(parent) {
-                return Err(anyhow!("parent branch does not exist in git: {}", parent));
-            }
-            Some(ParentInference {
-                parent: parent.clone(),
-                source: TrackSource::Explicit,
-                confidence: "high",
-            })
-        } else {
+        let proposed_changes = if args.all {
             let inferred = infer_parent_for_branch(
                 git,
                 provider,
                 &target,
                 by_name.get(&target),
                 &local,
+                base_branch,
                 &mut warnings,
                 opts.debug,
             )?;
-            if inferred.is_some() || args.infer {
-                inferred
+            inferred
+                .map(|parent| {
+                    vec![TrackChange {
+                        branch: target.clone(),
+                        old_parent: by_name
+                            .get(&target)
+                            .and_then(|rec| rec.parent_branch_id)
+                            .and_then(|id| by_id.get(&id).cloned()),
+                        new_parent: parent.parent,
+                        source: parent.source,
+                        confidence: parent.confidence,
+                    }]
+                })
+                .unwrap_or_default()
+        } else if let Some(parent) = &args.parent {
+            if !local_set.contains(parent) {
+                return Err(anyhow!("parent branch does not exist in git: {}", parent));
+            }
+            vec![TrackChange {
+                branch: target.clone(),
+                old_parent: by_name
+                    .get(&target)
+                    .and_then(|rec| rec.parent_branch_id)
+                    .and_then(|id| by_id.get(&id).cloned()),
+                new_parent: parent.clone(),
+                source: TrackSource::Explicit,
+                confidence: "high",
+            }]
+        } else {
+            let recursive = infer_parent_chain_for_branch(
+                git,
+                provider,
+                &target,
+                &by_name,
+                &by_id,
+                &local,
+                base_branch,
+                &mut warnings,
+                opts.debug,
+            )?;
+            if !recursive.is_empty() || args.infer {
+                recursive
             } else {
                 let parent_candidates: Vec<String> =
                     rank_parent_candidates(&target, &tracked, &local)
@@ -244,49 +266,43 @@ pub fn run(
                         "could not infer a parent in non-interactive mode; pass --parent <branch> or use --infer to allow unresolved output"
                     ));
                 };
-                Some(ParentInference {
-                    parent,
+                vec![TrackChange {
+                    branch: target.clone(),
+                    old_parent: by_name
+                        .get(&target)
+                        .and_then(|rec| rec.parent_branch_id)
+                        .and_then(|id| by_id.get(&id).cloned()),
+                    new_parent: parent,
                     source: TrackSource::Explicit,
                     confidence: "high",
-                })
+                }]
             }
         };
 
-        let Some(parent) = inference else {
-            unresolved.push(target);
-            continue;
-        };
-
-        if parent.parent == target {
+        if proposed_changes.is_empty() {
             unresolved.push(target);
             continue;
         }
-        if !local_set.contains(&parent.parent) {
-            return Err(anyhow!(
-                "inferred parent branch does not exist in git: {}",
-                parent.parent
-            ));
-        }
 
-        let old_parent = by_name
-            .get(&target)
-            .and_then(|rec| rec.parent_branch_id)
-            .and_then(|id| by_id.get(&id).cloned());
-        if old_parent.as_deref() == Some(parent.parent.as_str()) {
-            skipped.push(TrackSkip {
-                branch: target,
-                reason: "already linked to inferred parent".to_string(),
-            });
-            continue;
+        for change in proposed_changes {
+            if change.new_parent == change.branch {
+                continue;
+            }
+            if !local_set.contains(&change.new_parent) {
+                return Err(anyhow!(
+                    "inferred parent branch does not exist in git: {}",
+                    change.new_parent
+                ));
+            }
+            if change.old_parent.as_deref() == Some(change.new_parent.as_str()) {
+                skipped.push(TrackSkip {
+                    branch: change.branch,
+                    reason: "already linked to inferred parent".to_string(),
+                });
+                continue;
+            }
+            changes.push(change);
         }
-
-        changes.push(TrackChange {
-            branch: target,
-            old_parent,
-            new_parent: parent.parent,
-            source: parent.source,
-            confidence: parent.confidence,
-        });
     }
 
     let mut apply_changes = Vec::new();
@@ -413,6 +429,7 @@ fn infer_parent_for_branch(
     branch: &str,
     tracked: Option<&BranchRecord>,
     local: &[String],
+    base_branch: &str,
     warnings: &mut Vec<String>,
     debug: bool,
 ) -> Result<Option<ParentInference>> {
@@ -434,7 +451,7 @@ fn infer_parent_for_branch(
         Err(err) => warnings.push(format_pr_metadata_warning(branch, &err, debug)),
     }
 
-    infer_parent_from_git(git, branch, local)
+    infer_parent_from_git(git, branch, local, base_branch)
 }
 
 fn format_pr_metadata_warning(branch: &str, err: &anyhow::Error, debug: bool) -> String {
@@ -464,7 +481,11 @@ fn infer_parent_from_git(
     git: &Git,
     branch: &str,
     local: &[String],
+    base_branch: &str,
 ) -> Result<Option<ParentInference>> {
+    if branch == base_branch {
+        return Ok(None);
+    }
     let mut best_parent: Option<String> = None;
     let mut best_distance = u32::MAX;
     let mut tied = false;
@@ -493,6 +514,57 @@ fn infer_parent_from_git(
         source: TrackSource::GitAncestry,
         confidence: "medium",
     }))
+}
+
+fn infer_parent_chain_for_branch(
+    git: &Git,
+    provider: &dyn Provider,
+    start_branch: &str,
+    by_name: &HashMap<String, BranchRecord>,
+    by_id: &HashMap<i64, String>,
+    local: &[String],
+    base_branch: &str,
+    warnings: &mut Vec<String>,
+    debug: bool,
+) -> Result<Vec<TrackChange>> {
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    let mut cursor = start_branch.to_string();
+
+    while cursor != base_branch && visited.insert(cursor.clone()) {
+        let inferred = infer_parent_for_branch(
+            git,
+            provider,
+            &cursor,
+            by_name.get(&cursor),
+            local,
+            base_branch,
+            warnings,
+            debug,
+        )?;
+        let Some(parent) = inferred else {
+            break;
+        };
+
+        let old_parent = by_name
+            .get(&cursor)
+            .and_then(|rec| rec.parent_branch_id)
+            .and_then(|id| by_id.get(&id).cloned());
+        out.push(TrackChange {
+            branch: cursor.clone(),
+            old_parent,
+            new_parent: parent.parent.clone(),
+            source: parent.source,
+            confidence: if parent.parent == base_branch {
+                "high"
+            } else {
+                parent.confidence
+            },
+        });
+        cursor = parent.parent;
+    }
+
+    Ok(out)
 }
 
 enum TrackConflictResolution {
