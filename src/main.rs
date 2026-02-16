@@ -1137,10 +1137,11 @@ fn cmd_pr(
             return print_json(&payload);
         }
         if let Some(number) = payload["existing_pr_number"].as_i64() {
+            let pr_ref = format_existing_pr_ref(git, &base, number)?;
             println!(
-                "PR already exists for '{}': #{}",
+                "PR already exists for '{}': {}",
                 payload["head"].as_str().unwrap_or_default(),
-                number
+                pr_ref
             );
         } else {
             println!(
@@ -1155,10 +1156,11 @@ fn cmd_pr(
         if porcelain {
             return print_json(&payload);
         }
+        let pr_ref = format_existing_pr_ref(git, &base, number)?;
         println!(
-            "PR already exists for '{}': #{}",
+            "PR already exists for '{}': {}",
             payload["head"].as_str().unwrap_or_default(),
-            number
+            pr_ref
         );
         return Ok(());
     }
@@ -1423,6 +1425,23 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
 
 fn osc8_hyperlink(url: &str, label: &str) -> String {
     format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
+}
+
+fn format_existing_pr_ref(git: &Git, base_branch: &str, number: i64) -> Result<String> {
+    let label = format!("#{number}");
+    let use_clickable = stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    if !use_clickable {
+        return Ok(label);
+    }
+
+    let Some(remote) = git.remote_for_branch(base_branch)? else {
+        return Ok(label);
+    };
+    let Some(base_url) = git.remote_web_url(&remote)? else {
+        return Ok(label);
+    };
+    let url = format!("{}/pull/{}", base_url.trim_end_matches('/'), number);
+    Ok(osc8_hyperlink(&url, &label).underlined().to_string())
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {

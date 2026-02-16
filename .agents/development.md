@@ -34,6 +34,7 @@
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips PR creation when an existing PR already matches the branch head.
 - `stack pr` requires confirmation before creating a PR unless `--yes` is passed.
 - On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base; creation still requires confirmation (or `--yes`).
+- In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:

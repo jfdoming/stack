@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.8 - 2026-02-16
+- When `stack pr` detects an existing PR, the printed PR hash now renders as a clickable terminal link in styled TTY output.
+
 ## 0.8.7 - 2026-02-16
 - Fixed inline yes/no redraw anchoring by restoring the original cursor position each toggle, preventing repeated wrapped prompt lines.
 - Added overflow fallback for yes/no confirmation prompts: long prompts now use a non-inline selector to avoid wrapped-line redraw artifacts.
