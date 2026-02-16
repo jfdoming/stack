@@ -331,6 +331,18 @@ fn completions_command_generates_script() {
 }
 
 #[test]
+fn completions_without_shell_in_non_interactive_mode_requires_argument() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["completions"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "shell required in non-interactive mode",
+        ));
+}
+
+#[test]
 fn sync_plan_fetch_uses_base_branch_remote() {
     let repo = init_repo_with_named_remote("upstream");
 

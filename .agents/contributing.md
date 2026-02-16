@@ -7,6 +7,7 @@ Follow this workflow exactly:
 - Commit immediately after completing each task, before starting the next one.
 - “Never commit changes to this file but do update the checkbox once done.”
 - Apply version bumps when appropriate per SemVer guidance.
+- In interactive mode, prompt for missing required command args/options instead of failing fast where practical.
 
 ## Commit style
 Use concise Conventional Commit prefixes:

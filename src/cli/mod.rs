@@ -126,5 +126,5 @@ pub struct PrArgs {
 )]
 pub struct CompletionsArgs {
     #[arg(help = "Shell to generate completions for")]
-    pub shell: clap_complete::Shell,
+    pub shell: Option<clap_complete::Shell>,
 }
