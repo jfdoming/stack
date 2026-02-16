@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.18 - 2026-02-16
+- `stack pr` now always includes a managed PR description body in generated URLs (base/head links by default, plus parent/child links for stacked branches), with user body text appended below.
+
 ## 0.8.17 - 2026-02-16
 - Updated missing-PR labels to bracketed form (`[no PR]`), including same-base/head fallback text.
 

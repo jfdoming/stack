@@ -1554,7 +1554,7 @@ fn build_pr_open_url(
     {
         params.push(format!("title={}", url_encode_component(title)));
     }
-    if let Some(body) = compose_pr_body(&base_url, managed, body).as_deref()
+    if let Some(body) = compose_pr_body(&base_url, base, head, managed, body).as_deref()
         && !body.is_empty()
     {
         params.push(format!("body={}", url_encode_component(body)));
@@ -1630,6 +1630,8 @@ fn github_owner_from_web_url(url: &str) -> Option<String> {
 
 fn compose_pr_body(
     base_url: &str,
+    base_branch: &str,
+    head_branch: &str,
     managed: Option<&ManagedPrSection>,
     user_body: Option<&str>,
 ) -> Option<String> {
@@ -1641,22 +1643,30 @@ fn compose_pr_body(
         }
     });
 
-    let Some(managed) = managed else {
-        return user_body.map(ToString::to_string);
-    };
-
     let root = base_url.trim_end_matches('/');
     let mut lines = vec!["### Managed by stack".to_string()];
-    if let Some(parent) = managed.parent.as_deref() {
-        lines.push(format!("- Parent: [{parent}]({root}/tree/{parent})"));
-    }
-    if managed.children.is_empty() {
-        lines.push("- Children: none".to_string());
-    } else {
-        lines.push("- Children:".to_string());
-        for child in &managed.children {
-            lines.push(format!("  - [{child}]({root}/tree/{child})"));
+    lines.push(format!(
+        "- Base: [{base_branch}]({root}/tree/{base_branch})"
+    ));
+    lines.push(format!(
+        "- Head: [{head_branch}]({root}/tree/{head_branch})"
+    ));
+
+    if let Some(managed) = managed {
+        if let Some(parent) = managed.parent.as_deref() {
+            lines.push(format!("- Parent: [{parent}]({root}/tree/{parent})"));
         }
+        if managed.children.is_empty() {
+            lines.push("- Children: none".to_string());
+        } else {
+            lines.push("- Children:".to_string());
+            for child in &managed.children {
+                lines.push(format!("  - [{child}]({root}/tree/{child})"));
+            }
+        }
+    } else {
+        lines.push("- Parent: none".to_string());
+        lines.push("- Children: none".to_string());
     }
 
     let managed_block = lines.join("\n");
@@ -1902,6 +1912,8 @@ mod tests {
         };
         let body = compose_pr_body(
             "https://github.com/acme/repo",
+            "feat/base",
+            "feat/head",
             Some(&managed),
             Some("User body text"),
         )
@@ -1915,8 +1927,17 @@ mod tests {
 
     #[test]
     fn compose_pr_body_returns_user_body_when_unmanaged() {
-        let body = compose_pr_body("https://github.com/acme/repo", None, Some("User body text"))
-            .expect("body should be present");
-        assert_eq!(body, "User body text");
+        let body = compose_pr_body(
+            "https://github.com/acme/repo",
+            "main",
+            "feat/demo",
+            None,
+            Some("User body text"),
+        )
+        .expect("body should be present");
+        assert!(body.starts_with("### Managed by stack"));
+        assert!(body.contains("[main](https://github.com/acme/repo/tree/main)"));
+        assert!(body.contains("[feat/demo](https://github.com/acme/repo/tree/feat/demo)"));
+        assert!(body.ends_with("User body text"));
     }
 }
