@@ -3,6 +3,7 @@
 Keep entries concise (1-3 bullets each). Newest first.
 
 ## Unreleased
+- Added `stack delete` to close/delete upstream PRs, splice stack children, and delete local branches.
 - Added shell completion generation via `stack completions <shell>`.
 - Switched stack remote behavior to derive from base branch remote instead of assuming `origin`.
 - Added compare-link fallbacks in tree/create output when PR numbers are not cached.

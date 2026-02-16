@@ -34,6 +34,7 @@ cargo install --path .
 stack                 # one-shot stack visualization
 stack --interactive   # fullscreen interactive UI
 stack create
+stack --yes delete <branch>
 stack pr --dry-run
 stack sync --dry-run
 stack doctor

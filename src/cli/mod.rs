@@ -38,6 +38,8 @@ pub enum Commands {
     Doctor(DoctorArgs),
     /// Remove a branch from stack relationships
     Unlink(UnlinkArgs),
+    /// Delete a branch and splice it out of the stack
+    Delete(DeleteArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
     /// Generate shell completion scripts
@@ -70,6 +72,14 @@ pub struct UnlinkArgs {
     pub branch: String,
     #[arg(short = 'd', long, help = "Remove branch record entirely")]
     pub drop_record: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DeleteArgs {
+    #[arg(help = "Branch to delete (defaults to current branch)")]
+    pub branch: Option<String>,
+    #[arg(short = 'n', long, help = "Preview delete without mutating git or DB")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]

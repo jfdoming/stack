@@ -216,6 +216,19 @@ impl Database {
         Ok(())
     }
 
+    pub fn splice_out_branch(&self, branch_name: &str) -> Result<()> {
+        let branch = self
+            .branch_by_name(branch_name)?
+            .ok_or_else(|| anyhow!("branch '{branch_name}' is not tracked"))?;
+        self.conn.execute(
+            "UPDATE branches SET parent_branch_id = ?1 WHERE parent_branch_id = ?2",
+            params![branch.parent_branch_id, branch.id],
+        )?;
+        self.conn
+            .execute("DELETE FROM branches WHERE id = ?1", params![branch.id])?;
+        Ok(())
+    }
+
     pub fn record_sync_start(&self) -> Result<i64> {
         self.conn
             .execute("INSERT INTO sync_runs(status) VALUES ('running')", [])?;
@@ -247,5 +260,19 @@ mod tests {
         db.set_parent("b", Some("a")).unwrap();
         let err = db.set_parent("a", Some("b")).unwrap_err();
         assert!(err.to_string().contains("cycle"));
+    }
+
+    #[test]
+    fn splice_out_branch_relinks_children_to_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("a", Some("main")).unwrap();
+        db.set_parent("b", Some("a")).unwrap();
+        db.splice_out_branch("a").unwrap();
+
+        let b = db.branch_by_name("b").unwrap().unwrap();
+        let main = db.branch_by_name("main").unwrap().unwrap();
+        assert_eq!(b.parent_branch_id, Some(main.id));
+        assert!(db.branch_by_name("a").unwrap().is_none());
     }
 }

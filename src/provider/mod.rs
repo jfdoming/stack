@@ -41,6 +41,7 @@ pub trait Provider {
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>>;
     fn create_pr(&self, req: CreatePrRequest<'_>) -> Result<CreatePrResult>;
+    fn delete_pr(&self, pr_number: i64) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,22 @@ impl GithubProvider {
             .with_context(|| format!("failed to run gh {args:?}"))?;
         if !output.status.success() {
             return Ok(String::new());
+        }
+        Ok(String::from_utf8(output.stdout)?)
+    }
+
+    fn run_gh_strict(&self, args: &[&str]) -> Result<String> {
+        let output = Command::new("gh")
+            .current_dir(self.git.root())
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to run gh {args:?}"))?;
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "gh command failed {:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
         Ok(String::from_utf8(output.stdout)?)
     }
@@ -155,6 +172,13 @@ impl Provider for GithubProvider {
         Ok(CreatePrResult {
             url: out.lines().last().unwrap_or_default().trim().to_string(),
         })
+    }
+
+    fn delete_pr(&self, pr_number: i64) -> Result<()> {
+        let num = pr_number.to_string();
+        let args = ["pr", "close", &num, "--delete-branch"];
+        let _ = self.run_gh_strict(&args)?;
+        Ok(())
     }
 }
 
