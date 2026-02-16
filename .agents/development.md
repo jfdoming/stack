@@ -31,6 +31,7 @@
 - If default inference cannot resolve a parent, single-branch track falls back to the same assumption/prompt flow for parent selection.
 - Omitting `stack untrack <branch>` follows the same assumption/prompt flow as delete.
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
+- `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
 - `stack pr` requires confirmation before pushing and auto-opening the PR URL in a browser unless `--yes` is passed.

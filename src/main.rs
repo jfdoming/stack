@@ -993,7 +993,7 @@ fn cmd_untrack(
     let branch = if let Some(branch) = branch_arg {
         branch.to_string()
     } else if viable_names.is_empty() {
-        return Err(anyhow!("no tracked non-base branches available to untrack"));
+        base_branch.to_string()
     } else if viable_names.len() == 1 {
         let assumed = viable_names[0].clone();
         if !porcelain {
@@ -1037,6 +1037,21 @@ fn cmd_untrack(
                 branch
             ));
         }
+    }
+
+    if branch == base_branch {
+        let payload = serde_json::json!({
+            "branch": branch,
+            "action": "untrack",
+            "status": "noop",
+            "reason": "base branch cannot be untracked"
+        });
+        if porcelain {
+            print_json(&payload)?;
+        } else {
+            println!("base branch '{base_branch}' remains tracked as stack root; no changes made");
+        }
+        return Ok(());
     }
 
     if db.branch_by_name(&branch)?.is_none() {

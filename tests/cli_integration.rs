@@ -1178,6 +1178,33 @@ fn untrack_without_branch_in_non_interactive_mode_requires_yes_before_actioning_
 }
 
 #[test]
+fn untrack_main_is_allowed_as_noop() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["untrack", "main", "--porcelain"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"action\": \"untrack\""))
+        .stdout(predicate::str::contains("\"status\": \"noop\""))
+        .stdout(predicate::str::contains(
+            "\"reason\": \"base branch cannot be untracked\"",
+        ));
+}
+
+#[test]
+fn untrack_without_branch_is_noop_when_only_base_exists() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["untrack", "--porcelain"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"branch\": \"main\""))
+        .stdout(predicate::str::contains("\"status\": \"noop\""));
+}
+
+#[test]
 fn track_without_branch_in_non_interactive_mode_requires_argument_when_multiple_branches() {
     let repo = init_repo();
     run_git(repo.path(), &["checkout", "-b", "feat/a"]);
