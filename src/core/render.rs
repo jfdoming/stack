@@ -156,10 +156,12 @@ fn render_pr_link(
         let parent_ref = parent_branch.map(|branch| ManagedBranchRef {
             branch: branch.to_string(),
             pr_number: None,
+            pr_url: None,
         });
         let first_child_ref = child_branches.first().map(|branch| ManagedBranchRef {
             branch: branch.clone(),
             pr_number: None,
+            pr_url: None,
         });
         let body = compose_branch_pr_body(
             base,
