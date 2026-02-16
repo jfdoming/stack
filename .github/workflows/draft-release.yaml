@@ -1,0 +1,64 @@
+name: Draft Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  draft-release:
+    name: Create draft release when version bumps
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect Cargo version bump
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_version="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)"
+          previous_version="$(git show HEAD^:Cargo.toml 2>/dev/null | sed -nE 's/^version = "([^"]+)"/\1/p' | head -n1 || true)"
+
+          if [[ -z "${current_version}" ]]; then
+            echo "Could not determine current Cargo.toml version" >&2
+            exit 1
+          fi
+
+          bumped=false
+          if [[ -n "${previous_version}" && "${current_version}" != "${previous_version}" ]]; then
+            bumped=true
+          fi
+
+          echo "current=${current_version}" >> "$GITHUB_OUTPUT"
+          echo "previous=${previous_version}" >> "$GITHUB_OUTPUT"
+          echo "bumped=${bumped}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${current_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft release and tag
+        if: steps.version.outputs.bumped == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.version.outputs.tag }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Draft release for $tag already exists; skipping"
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "$tag" \
+            --generate-notes
