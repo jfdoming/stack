@@ -18,6 +18,12 @@ pub struct RepoMeta {
     pub base_branch: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ParentUpdate {
+    pub child_name: String,
+    pub parent_name: Option<String>,
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -157,6 +163,81 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_parents_batch(&self, updates: &[ParentUpdate]) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        let existing = self.list_branches()?;
+        let mut id_by_name: std::collections::HashMap<String, i64> =
+            existing.iter().map(|b| (b.name.clone(), b.id)).collect();
+        let mut parent_by_id: std::collections::HashMap<i64, Option<i64>> = existing
+            .iter()
+            .map(|b| (b.id, b.parent_branch_id))
+            .collect();
+        let mut next_id = existing.iter().map(|b| b.id).max().unwrap_or(0) + 1;
+
+        for update in updates {
+            let child_id = ensure_temp_id(
+                &mut id_by_name,
+                &mut parent_by_id,
+                &mut next_id,
+                &update.child_name,
+            );
+            let parent_id = update
+                .parent_name
+                .as_deref()
+                .map(|name| ensure_temp_id(&mut id_by_name, &mut parent_by_id, &mut next_id, name));
+            parent_by_id.insert(child_id, parent_id);
+        }
+
+        for id in parent_by_id.keys().copied() {
+            let mut seen = std::collections::HashSet::new();
+            let mut cursor = Some(id);
+            while let Some(current) = cursor {
+                if !seen.insert(current) {
+                    return Err(anyhow!("link would create a cycle"));
+                }
+                cursor = parent_by_id.get(&current).copied().flatten();
+            }
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        for update in updates {
+            tx.execute(
+                "INSERT INTO branches(name) VALUES (?1)
+                 ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP",
+                params![update.child_name],
+            )?;
+            if let Some(parent) = &update.parent_name {
+                tx.execute(
+                    "INSERT INTO branches(name) VALUES (?1)
+                     ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP",
+                    params![parent],
+                )?;
+            }
+        }
+
+        for update in updates {
+            if let Some(parent) = &update.parent_name {
+                tx.execute(
+                    "UPDATE branches
+                     SET parent_branch_id = (SELECT id FROM branches WHERE name = ?1),
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE name = ?2",
+                    params![parent, update.child_name],
+                )?;
+            } else {
+                tx.execute(
+                    "UPDATE branches SET parent_branch_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE name = ?1",
+                    params![update.child_name],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn ensure_no_cycle(&self, child_id: i64, mut parent_id: i64) -> Result<()> {
         loop {
             if parent_id == child_id {
@@ -249,6 +330,23 @@ impl Database {
     }
 }
 
+fn ensure_temp_id(
+    id_by_name: &mut std::collections::HashMap<String, i64>,
+    parent_by_id: &mut std::collections::HashMap<i64, Option<i64>>,
+    next_id: &mut i64,
+    name: &str,
+) -> i64 {
+    if let Some(id) = id_by_name.get(name) {
+        *id
+    } else {
+        let id = *next_id;
+        *next_id += 1;
+        id_by_name.insert(name.to_string(), id);
+        parent_by_id.insert(id, None);
+        id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +372,27 @@ mod tests {
         let main = db.branch_by_name("main").unwrap().unwrap();
         assert_eq!(b.parent_branch_id, Some(main.id));
         assert!(db.branch_by_name("a").unwrap().is_none());
+    }
+
+    #[test]
+    fn set_parents_batch_rejects_cycles() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("a", Some("main")).unwrap();
+        db.set_parent("b", Some("a")).unwrap();
+
+        let err = db
+            .set_parents_batch(&[
+                ParentUpdate {
+                    child_name: "a".to_string(),
+                    parent_name: Some("b".to_string()),
+                },
+                ParentUpdate {
+                    child_name: "b".to_string(),
+                    parent_name: Some("a".to_string()),
+                },
+            ])
+            .unwrap_err();
+        assert!(err.to_string().contains("cycle"));
     }
 }

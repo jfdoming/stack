@@ -22,6 +22,11 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Prefers `git replay`; falls back to `git rebase --onto` with warning.
 - Stops on conflict and warns on stash restore failures.
 
+## Track behaviour
+- `stack track` links existing local branches into stack parent relationships.
+- Parent inference uses PR base metadata first, then git ancestry heuristics.
+- Batch parent updates are validated for cycles and applied atomically.
+
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.

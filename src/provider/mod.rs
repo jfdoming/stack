@@ -18,6 +18,7 @@ pub struct PrInfo {
     pub number: i64,
     pub state: PrState,
     pub merge_commit_oid: Option<String>,
+    pub base_ref_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +93,8 @@ impl GithubProvider {
 struct GhPr {
     number: i64,
     state: String,
+    #[serde(rename = "baseRefName")]
+    base_ref_name: Option<String>,
     #[serde(rename = "mergeCommit")]
     merge_commit: Option<GhMergeCommit>,
 }
@@ -113,7 +116,7 @@ impl Provider for GithubProvider {
                 "view".to_string(),
                 num.to_string(),
                 "--json".to_string(),
-                "number,state,mergeCommit".to_string(),
+                "number,state,mergeCommit,baseRefName".to_string(),
             ]
         } else {
             vec![
@@ -124,7 +127,7 @@ impl Provider for GithubProvider {
                 "--state".to_string(),
                 "all".to_string(),
                 "--json".to_string(),
-                "number,state,mergeCommit".to_string(),
+                "number,state,mergeCommit,baseRefName".to_string(),
             ]
         };
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -200,5 +203,6 @@ fn convert_pr(pr: GhPr) -> PrInfo {
         number: pr.number,
         state,
         merge_commit_oid: pr.merge_commit.map(|m| m.oid),
+        base_ref_name: pr.base_ref_name,
     }
 }

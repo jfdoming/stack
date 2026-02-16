@@ -34,6 +34,8 @@ cargo install --path .
 stack                 # one-shot stack visualization
 stack --interactive   # fullscreen interactive UI
 stack create
+stack track feat/child --infer
+stack track --all --dry-run
 stack --yes delete <branch>
 stack pr --dry-run
 stack sync --dry-run

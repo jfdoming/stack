@@ -2,6 +2,13 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.3.0 - 2026-02-16
+- Added `stack track` to register relationships for existing local branches.
+- Added single-branch and `--all` tracking modes with dry-run and porcelain output.
+- Added parent inference using PR base metadata (`gh`) with git-ancestry fallback.
+- Added conflict handling for existing parent links, including non-interactive `--force`.
+- Added atomic batch parent updates with cycle validation in SQLite writes.
+
 ## 0.2.13 - 2026-02-16
 - Defaulted inline operation confirmation to `Yes`.
 - Auto-selected the only viable branch for create/delete flows and reported the assumption.
