@@ -11,6 +11,7 @@ Follow this workflow exactly:
 - “Never commit changes to this file but do update the checkbox once done.”
 - Apply version bumps when appropriate per SemVer guidance.
 - In interactive mode, prompt for missing required command args/options instead of failing fast where practical.
+- Use TDD for behaviour changes: add/update tests first, run to observe failure, then implement and rerun to green.
 
 ## Commit style
 Use concise Conventional Commit prefixes:

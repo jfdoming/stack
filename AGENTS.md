@@ -32,6 +32,7 @@ Read `.agents/testing.md` before writing or modifying any tests.
 - If iterating on the same task after feedback, keep a single version bump and a single changelog entry for that task.
 - Make doc updates in the same task when behaviour, flags, workflows, architecture, or user-facing output changes.
 - Add or update tests in the same task when behaviour, control flow, output contracts, or bug fixes change runtime behaviour.
+- Follow TDD for behaviour changes: write/update tests first, run them to confirm they fail before implementation, then implement and rerun until passing.
 
 ## Scope Of `AGENTS.md`
 - Keep only global guardrails and doc index/navigation in this file.
