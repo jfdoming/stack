@@ -1092,7 +1092,15 @@ fn cmd_pr(
         );
     }
 
-    let existing = provider.resolve_pr_by_head(&current, cached_number)?;
+    let existing = match provider.resolve_pr_by_head(&current, cached_number) {
+        Ok(existing) => existing,
+        Err(_) => {
+            eprintln!(
+                "warning: could not determine existing PR status from gh; continuing without duplicate check"
+            );
+            None
+        }
+    };
 
     let payload = serde_json::json!({
         "head": current,
