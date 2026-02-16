@@ -89,6 +89,12 @@ struct TrackSkip {
     reason: String,
 }
 
+#[derive(Debug, Clone)]
+struct ManagedPrSection {
+    parent: Option<String>,
+    children: Vec<String>,
+}
+
 fn main() -> Result<()> {
     if let Err(err) = run() {
         if err.downcast_ref::<UserCancelled>().is_some() {
@@ -1098,6 +1104,21 @@ fn cmd_pr(
                 Some("branch is not tracked in the stack".to_string()),
             ),
         };
+    let managed_pr_section = current_record.and_then(|record| {
+        let parent = record
+            .parent_branch_id
+            .and_then(|parent_id| by_id.get(&parent_id).map(|r| r.name.clone()));
+        if parent.is_none() {
+            return None;
+        }
+        let mut children: Vec<String> = records
+            .iter()
+            .filter(|r| r.parent_branch_id == Some(record.id))
+            .map(|r| r.name.clone())
+            .collect();
+        children.sort();
+        Some(ManagedPrSection { parent, children })
+    });
 
     if let Some(reason) = &non_stacked_reason {
         eprintln!(
@@ -1226,6 +1247,7 @@ fn cmd_pr(
         args.title.as_deref(),
         args.body.as_deref(),
         args.draft,
+        managed_pr_section.as_ref(),
     )?;
 
     if porcelain {
@@ -1239,10 +1261,10 @@ fn cmd_pr(
 
     println!("pushed '{head}' to '{push_remote}'");
     match open_url_in_browser(&url) {
-        Ok(()) => println!("opened PR URL in browser: {url}"),
+        Ok(()) => println!("opened PR URL in browser"),
         Err(err) => {
             eprintln!("warning: could not auto-open PR URL ({err})");
-            println!("open PR manually: {url}");
+            println!("open PR manually: {}", truncate_for_display(&url, 88));
         }
     }
     Ok(())
@@ -1480,6 +1502,7 @@ fn build_pr_open_url(
     title: Option<&str>,
     body: Option<&str>,
     draft: bool,
+    managed: Option<&ManagedPrSection>,
 ) -> Result<String> {
     if base == head {
         return Err(anyhow!(
@@ -1531,7 +1554,7 @@ fn build_pr_open_url(
     {
         params.push(format!("title={}", url_encode_component(title)));
     }
-    if let Some(body) = body
+    if let Some(body) = compose_pr_body(&base_url, managed, body).as_deref()
         && !body.is_empty()
     {
         params.push(format!("body={}", url_encode_component(body)));
@@ -1603,6 +1626,53 @@ fn github_owner_from_web_url(url: &str) -> Option<String> {
         return None;
     }
     Some(owner.to_string())
+}
+
+fn compose_pr_body(
+    base_url: &str,
+    managed: Option<&ManagedPrSection>,
+    user_body: Option<&str>,
+) -> Option<String> {
+    let user_body = user_body.and_then(|b| {
+        if b.trim().is_empty() {
+            None
+        } else {
+            Some(b.trim())
+        }
+    });
+
+    let Some(managed) = managed else {
+        return user_body.map(ToString::to_string);
+    };
+
+    let root = base_url.trim_end_matches('/');
+    let mut lines = vec!["### Managed by stack".to_string()];
+    if let Some(parent) = managed.parent.as_deref() {
+        lines.push(format!("- Parent: [{parent}]({root}/tree/{parent})"));
+    }
+    if managed.children.is_empty() {
+        lines.push("- Children: none".to_string());
+    } else {
+        lines.push("- Children:".to_string());
+        for child in &managed.children {
+            lines.push(format!("  - [{child}]({root}/tree/{child})"));
+        }
+    }
+
+    let managed_block = lines.join("\n");
+    Some(if let Some(user) = user_body {
+        format!("{managed_block}\n\n{user}")
+    } else {
+        managed_block
+    })
+}
+
+fn truncate_for_display(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let truncated: String = value.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{truncated}…")
 }
 
 fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
@@ -1805,5 +1875,48 @@ mod tests {
         let prompt_len = prompt.chars().count();
         let min_options_len = "  ○ Yes   ○ No".chars().count();
         assert!(prompt_len + min_options_len > 74);
+    }
+
+    #[test]
+    fn truncate_for_display_keeps_short_text() {
+        assert_eq!(
+            truncate_for_display("https://example.com/pr/1", 40),
+            "https://example.com/pr/1"
+        );
+    }
+
+    #[test]
+    fn truncate_for_display_adds_ellipsis_for_long_text() {
+        let value =
+            "https://github.com/acme/repo/compare/main...very/long/branch/name/with/extra/segments";
+        let out = truncate_for_display(value, 32);
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 32);
+    }
+
+    #[test]
+    fn compose_pr_body_prepends_managed_section() {
+        let managed = ManagedPrSection {
+            parent: Some("feat/parent".to_string()),
+            children: vec!["feat/child-a".to_string(), "feat/child-b".to_string()],
+        };
+        let body = compose_pr_body(
+            "https://github.com/acme/repo",
+            Some(&managed),
+            Some("User body text"),
+        )
+        .expect("body should be present");
+        assert!(body.starts_with("### Managed by stack"));
+        assert!(body.contains("[feat/parent](https://github.com/acme/repo/tree/feat/parent)"));
+        assert!(body.contains("[feat/child-a](https://github.com/acme/repo/tree/feat/child-a)"));
+        assert!(body.contains("[feat/child-b](https://github.com/acme/repo/tree/feat/child-b)"));
+        assert!(body.ends_with("User body text"));
+    }
+
+    #[test]
+    fn compose_pr_body_returns_user_body_when_unmanaged() {
+        let body = compose_pr_body("https://github.com/acme/repo", None, Some("User body text"))
+            .expect("body should be present");
+        assert_eq!(body, "User body text");
     }
 }
