@@ -31,6 +31,7 @@
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
 - After `stack sync` applies operations, it restores the branch that was checked out before the sync run started.
 - During `stack sync`, open PR bodies are refreshed to keep the managed stack-flow section current; user-written text outside managed markers is preserved.
+- Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.
 - Omitting `stack track <branch>` follows create/delete selection behaviour: assume when only one viable branch exists, otherwise prompt in TTY mode.

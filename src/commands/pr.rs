@@ -237,9 +237,7 @@ pub fn run(
 
 fn format_manual_pr_link(url: &str, use_clickable: bool) -> String {
     if use_clickable {
-        return osc8_hyperlink(url, "open PR manually")
-            .underlined()
-            .to_string();
+        return osc8_hyperlink(url, url).underlined().to_string();
     }
     url.to_string()
 }
@@ -493,9 +491,10 @@ mod tests {
 
     #[test]
     fn format_manual_pr_link_is_clickable_when_supported() {
-        let out = format_manual_pr_link("https://github.com/acme/repo/pull/1", true);
+        let url = "https://github.com/acme/repo/pull/1";
+        let out = format_manual_pr_link(url, true);
         assert!(out.contains("\u{1b}]8;;https://github.com/acme/repo/pull/1\u{1b}\\"));
-        assert!(out.contains("open PR manually"));
+        assert!(out.contains(url));
     }
 
     #[test]

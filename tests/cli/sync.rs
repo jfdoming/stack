@@ -183,7 +183,7 @@ fn sync_updates_existing_pr_body_with_managed_section() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  for ((i=1; i<=$#; i++)); do\n    if [[ \"${{!i}}\" == \"--head\" ]]; then\n      next=$((i+1))\n      head=\"${{!next}}\"\n      break\n    fi\n  done\n  if [[ \"$head\" == \"feat/child\" ]]; then\n    echo '[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"mergeCommit\":null,\"body\":\"Existing reviewer notes\"}}]'\n  else\n    echo '[]'\n  fi\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  if [[ \"$*\" == *\"headRefName\"* ]]; then\n    echo '[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"body\":\"Existing reviewer notes\"}}]'\n    exit 0\n  fi\n  for ((i=1; i<=$#; i++)); do\n    if [[ \"${{!i}}\" == \"--head\" ]]; then\n      next=$((i+1))\n      head=\"${{!next}}\"\n      break\n    fi\n  done\n  if [[ \"$head\" == \"feat/child\" ]]; then\n    echo '[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"body\":\"Existing reviewer notes\"}}]'\n  else\n    echo '[]'\n  fi\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
             gh_log.display()
         ),
     )
@@ -203,6 +203,10 @@ fn sync_updates_existing_pr_body_with_managed_section() {
     assert!(
         gh_calls.contains("pr edit 42 --body"),
         "expected pr edit call for managed body refresh, got: {gh_calls}"
+    );
+    assert!(
+        gh_calls.contains("pr list --state all --limit 200"),
+        "expected batched pr list metadata request, got: {gh_calls}"
     );
     assert!(
         gh_calls.contains("stack:managed:start"),

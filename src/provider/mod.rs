@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -29,6 +30,18 @@ pub trait Provider {
         branch: &str,
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>>;
+    fn resolve_prs_by_head(
+        &self,
+        branches: &[(&str, Option<i64>)],
+    ) -> Result<HashMap<String, PrInfo>> {
+        let mut out = HashMap::new();
+        for (branch, cached_number) in branches {
+            if let Some(pr) = self.resolve_pr_by_head(branch, *cached_number)? {
+                out.insert((*branch).to_string(), pr);
+            }
+        }
+        Ok(out)
+    }
     fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()>;
     fn delete_pr(&self, pr_number: i64) -> Result<()>;
 }
@@ -82,23 +95,99 @@ impl GithubProvider {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct GhPr {
     number: i64,
     state: String,
     #[serde(rename = "baseRefName")]
     base_ref_name: Option<String>,
+    #[serde(rename = "headRefName")]
+    head_ref_name: Option<String>,
     body: Option<String>,
     #[serde(rename = "mergeCommit")]
     merge_commit: Option<GhMergeCommit>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct GhMergeCommit {
     oid: String,
 }
 
 impl Provider for GithubProvider {
+    fn resolve_prs_by_head(
+        &self,
+        branches: &[(&str, Option<i64>)],
+    ) -> Result<HashMap<String, PrInfo>> {
+        let mut out = HashMap::new();
+        if branches.is_empty() {
+            return Ok(out);
+        }
+
+        let args = [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--limit",
+            "200",
+            "--json",
+            "number,state,mergeCommit,baseRefName,headRefName,body",
+        ];
+        let batch = self
+            .run_gh_optional(&args)?
+            .and_then(|raw| {
+                if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(raw)
+                }
+            })
+            .map(|raw| {
+                let cleaned = clean_gh_json_output(&raw);
+                serde_json::from_str::<Vec<GhPr>>(&cleaned).map_err(|err| {
+                    if self.debug {
+                        anyhow::anyhow!(
+                            "failed to parse gh PR list JSON: {err}; gh output: {}",
+                            raw.trim()
+                        )
+                    } else {
+                        err.into()
+                    }
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let mut by_head: HashMap<String, Vec<GhPr>> = HashMap::new();
+        for pr in batch {
+            if let Some(head) = pr.head_ref_name.as_deref()
+                && !head.is_empty()
+            {
+                by_head.entry(head.to_string()).or_default().push(pr);
+            }
+        }
+
+        for (branch, cached_number) in branches {
+            if let Some(candidates) = by_head.get(*branch)
+                && let Some(pr) = select_preferred_pr(candidates.clone())
+            {
+                let converted = convert_pr(pr);
+                if cached_number.is_none_or(|cached| cached == converted.number) {
+                    out.insert((*branch).to_string(), converted);
+                    continue;
+                }
+            }
+
+            if cached_number.is_some()
+                && let Some(pr) = self.resolve_pr_by_head(branch, *cached_number)?
+            {
+                out.insert((*branch).to_string(), pr);
+            }
+        }
+
+        Ok(out)
+    }
+
     fn resolve_pr_by_head(
         &self,
         branch: &str,
@@ -227,6 +316,7 @@ fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
                 number: pr.number,
                 state: pr.state.clone(),
                 base_ref_name: pr.base_ref_name.clone(),
+                head_ref_name: pr.head_ref_name.clone(),
                 body: pr.body.clone(),
                 merge_commit: pr
                     .merge_commit
@@ -285,6 +375,7 @@ mod tests {
                 number: 6995,
                 state: "CLOSED".to_string(),
                 base_ref_name: Some("master".to_string()),
+                head_ref_name: Some("feature/top".to_string()),
                 body: None,
                 merge_commit: None,
             },
@@ -292,6 +383,7 @@ mod tests {
                 number: 6693,
                 state: "OPEN".to_string(),
                 base_ref_name: Some("feature/base".to_string()),
+                head_ref_name: Some("feature/current".to_string()),
                 body: None,
                 merge_commit: None,
             },
