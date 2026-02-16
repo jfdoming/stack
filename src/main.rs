@@ -1049,16 +1049,36 @@ fn cmd_pr(
     let current = git.current_branch()?;
     let records = db.list_branches()?;
     let by_id: HashMap<i64, &BranchRecord> = records.iter().map(|r| (r.id, r)).collect();
-    let current_record = records
-        .iter()
-        .find(|r| r.name == current)
-        .ok_or_else(|| anyhow!("current branch '{}' is not tracked", current))?;
-    let base = current_record
-        .parent_branch_id
-        .and_then(|parent_id| by_id.get(&parent_id).map(|r| r.name.clone()))
-        .ok_or_else(|| anyhow!("current branch '{}' has no tracked parent", current))?;
+    let default_base = db.repo_meta()?.base_branch;
+    let current_record = records.iter().find(|r| r.name == current);
+    let (base, cached_number, non_stacked_reason): (String, Option<i64>, Option<String>) =
+        match current_record {
+            Some(record) => match record
+                .parent_branch_id
+                .and_then(|parent_id| by_id.get(&parent_id).map(|r| r.name.clone()))
+            {
+                Some(parent) => (parent, record.cached_pr_number, None),
+                None => (
+                    default_base,
+                    record.cached_pr_number,
+                    Some("branch is tracked but has no parent link".to_string()),
+                ),
+            },
+            None => (
+                default_base,
+                None,
+                Some("branch is not tracked in the stack".to_string()),
+            ),
+        };
 
-    let existing = provider.resolve_pr_by_head(&current, current_record.cached_pr_number)?;
+    if let Some(reason) = &non_stacked_reason {
+        eprintln!(
+            "warning: '{}' is not stacked ({}); using base branch '{}' for PR",
+            current, reason, base
+        );
+    }
+
+    let existing = provider.resolve_pr_by_head(&current, cached_number)?;
 
     let payload = serde_json::json!({
         "head": current,
@@ -1104,11 +1124,20 @@ fn cmd_pr(
     let should_create = if yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
-        confirm_inline_yes_no(&format!(
-            "Open PR from '{}' into '{}'?",
-            payload["head"].as_str().unwrap_or_default(),
-            payload["base"].as_str().unwrap_or_default()
-        ))?
+        let prompt = if non_stacked_reason.is_some() {
+            format!(
+                "Open PR from '{}' into '{}' even though the branch is not stacked?",
+                payload["head"].as_str().unwrap_or_default(),
+                payload["base"].as_str().unwrap_or_default()
+            )
+        } else {
+            format!(
+                "Open PR from '{}' into '{}'?",
+                payload["head"].as_str().unwrap_or_default(),
+                payload["base"].as_str().unwrap_or_default()
+            )
+        };
+        confirm_inline_yes_no(&prompt)?
     } else {
         return Err(anyhow!(
             "confirmation required in non-interactive mode; rerun with --yes"
