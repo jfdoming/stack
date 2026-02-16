@@ -48,6 +48,7 @@ Docs-only changes do not require a version bump.
   - Use `MAJOR` for any breaking CLI/API/schema/output/storage change.
 
 Keep version bumps task-scoped: finish the task, then bump once.
+When iterating on the same task after feedback, do not add additional bumps; keep one version bump for that task.
 
 ## Documentation hygiene
 Update documentation in the same PR as code changes:
@@ -55,5 +56,6 @@ Update documentation in the same PR as code changes:
 - add/update files in `.agents/` when module behaviour, architecture, or workflows change.
 - append a concise entry to `CHANGELOG.md` whenever a new version is released.
 - docs-only changes do not need a changelog entry.
+- For iterations on the same task, keep a single changelog entry (update the existing entry instead of adding another).
 
 Prefer small, targeted updates over large rewrites.

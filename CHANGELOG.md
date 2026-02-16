@@ -4,6 +4,7 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## 0.8.7 - 2026-02-16
 - Fixed inline yes/no redraw anchoring by restoring the original cursor position each toggle, preventing repeated wrapped prompt lines.
+- Added overflow fallback for yes/no confirmation prompts: long prompts now use a non-inline selector to avoid wrapped-line redraw artifacts.
 
 ## 0.8.6 - 2026-02-16
 - Fixed inline yes/no prompt redraw so toggling no longer leaves repeated wrapped lines when prompts exceed terminal width.
