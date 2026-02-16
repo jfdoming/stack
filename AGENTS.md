@@ -12,6 +12,7 @@ This file is the contributor index for agent-friendly navigation. Keep it short 
 - Start here for repository orientation.
 - Open only the `agents/*.md` file relevant to your change area.
 - If your change spans multiple areas (for example sync logic and CLI UX), update each affected doc.
+- Check `TASKS.md` before starting work; it is the active task queue.
 
 ## Project Structure (Quick View)
 - `src/main.rs`: command entrypoint and dispatch.
@@ -40,6 +41,7 @@ When changing behavior, architecture, or workflows:
 
 ## Style Notes
 - Rust style via `rustfmt`; use `snake_case` and `PascalCase` conventions.
+- Use Canadian English in user-facing text and documentation.
 - Keep commits incremental (`feat:`, `fix:`, `docs:`, etc.).
 - Follow SemVer for version bumps, only after atomically completing a given task:
   - `PATCH` (`x.y.Z`): bug fixes, refactors, docs, and non-breaking UX tweaks.

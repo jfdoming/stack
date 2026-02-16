@@ -1,5 +1,12 @@
 # Contributing
 
+## Task loop (`TASKS.md`)
+Follow this workflow exactly:
+- “Before marking an item off here, ask yourself if you have truly completed the task or if you cut corners.”
+- “Be sure to commit your changes before starting a new task.”
+- “Never commit changes to this file but do update the checkbox once done.”
+- Apply version bumps when appropriate per SemVer guidance.
+
 ## Commit style
 Use concise Conventional Commit prefixes:
 - `feat: ...`
@@ -9,6 +16,7 @@ Use concise Conventional Commit prefixes:
 - `docs: ...`
 
 Keep commits incremental and logically scoped.
+Use Canadian English in user-facing text and docs.
 
 ## Pull requests
 PRs should include:
