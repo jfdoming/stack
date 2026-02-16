@@ -41,6 +41,8 @@ fn main() -> Result<()> {
 }
 
 fn run() -> Result<()> {
+    // Dialoguer Ctrl-C workaround from console-rs/dialoguer#294.
+    // We keep SIGINT handler no-op and recover cursor state on prompt errors.
     ctrlc::set_handler(|| {
         // Intentionally no-op: let dialoguer return an interrupted error.
     })
