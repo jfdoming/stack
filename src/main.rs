@@ -3,8 +3,8 @@ mod commands;
 mod core;
 mod db;
 mod git;
-mod views;
 mod provider;
+mod views;
 
 mod ui;
 mod util;
@@ -94,15 +94,13 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             &ctx.base_branch,
             &ctx.base_remote,
         ),
-        Some(Commands::Create(args)) => {
-            commands::create::run(
-                &ctx.db,
-                &ctx.git,
-                &args.parent,
-                &args.name,
-                ctx.cli.global.porcelain,
-            )
-        }
+        Some(Commands::Create(args)) => commands::create::run(
+            &ctx.db,
+            &ctx.git,
+            &args.parent,
+            &args.name,
+            ctx.cli.global.porcelain,
+        ),
         Some(Commands::Track(args)) => commands::track::run(
             &ctx.db,
             &ctx.git,

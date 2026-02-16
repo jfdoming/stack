@@ -147,7 +147,7 @@ impl Provider for GithubProvider {
         }
 
         for head_filter in head_filters {
-            let args = vec![
+            let args = [
                 "pr".to_string(),
                 "list".to_string(),
                 "--head".to_string(),

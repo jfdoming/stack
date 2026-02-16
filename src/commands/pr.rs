@@ -6,10 +6,10 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::style::Stylize;
 
 use crate::args::PrArgs;
-use crate::ui::interaction::confirm_inline_yes_no;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
+use crate::ui::interaction::confirm_inline_yes_no;
 use crate::util::terminal::{osc8_hyperlink, truncate_for_display};
 use crate::util::url::{github_owner_from_web_url, url_encode_component};
 
@@ -64,10 +64,7 @@ pub fn run(
                 branch: r.name.clone(),
                 pr_number: r.cached_pr_number,
             })
-        });
-        if parent.is_none() {
-            return None;
-        }
+        })?;
         let mut children: Vec<BranchPrRef> = records
             .iter()
             .filter(|r| r.parent_branch_id == Some(record.id))
@@ -77,7 +74,10 @@ pub fn run(
             })
             .collect();
         children.sort_by(|a, b| a.branch.cmp(&b.branch));
-        Some(ManagedPrSection { parent, children })
+        Some(ManagedPrSection {
+            parent: Some(parent),
+            children,
+        })
     });
 
     if current == base {

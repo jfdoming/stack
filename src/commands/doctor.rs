@@ -48,7 +48,9 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, fix: bool) -> Result<()> {
     issues.extend(cycle_issues(&records));
 
     if porcelain {
-        return crate::views::print_json(&serde_json::json!({ "issues": issues, "fix_applied": fix }));
+        return crate::views::print_json(
+            &serde_json::json!({ "issues": issues, "fix_applied": fix }),
+        );
     }
 
     if issues.is_empty() {
