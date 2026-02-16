@@ -11,6 +11,7 @@
 - `cargo run -- untrack feat/branch`: remove a tracked branch record and splice children to its former parent.
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
+- `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
 
 ## Install from source
 - `./scripts/install.sh`: build release binary and install to `~/.local/bin/stack`.
@@ -33,6 +34,7 @@
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips PR creation when an existing PR already matches the branch head.
 - `stack pr` requires confirmation before creating a PR unless `--yes` is passed.
 - On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base; creation still requires confirmation (or `--yes`).
+- `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,

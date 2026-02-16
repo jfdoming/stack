@@ -405,6 +405,38 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
 
 #[cfg(unix)]
 #[test]
+fn pr_debug_flag_prints_full_gh_parse_error_details() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/pr-debug"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/pr-debug"]);
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/pr-debug\"* ]]; then\n  echo '<html>bad gateway</html>'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'https://github.com/acme/stack-test/pull/101'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "--debug", "pr"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("failed to parse gh PR list JSON"))
+        .stderr(predicate::str::contains("<html>bad gateway</html>"));
+}
+
+#[cfg(unix)]
+#[test]
 fn pr_create_fails_when_gh_returns_non_zero() {
     let repo = init_repo();
     stack_cmd(repo.path())

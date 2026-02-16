@@ -46,6 +46,7 @@ struct TrackRunOptions {
     yes: bool,
     dry_run: bool,
     force: bool,
+    debug: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,7 +122,7 @@ fn run() -> Result<()> {
     db.set_base_branch_if_missing(&default_base)?;
     let base_branch = db.repo_meta()?.base_branch;
     let base_remote = git.base_remote_for_stack(&base_branch)?;
-    let provider = GithubProvider::new(git.clone());
+    let provider = GithubProvider::new(git.clone(), cli.global.debug);
 
     match cli.command {
         None => cmd_stack(
@@ -146,6 +147,7 @@ fn run() -> Result<()> {
                 yes: cli.global.yes,
                 dry_run: args.dry_run,
                 force: args.force,
+                debug: cli.global.debug,
             },
         ),
         Some(Commands::Sync(args)) => cmd_sync(
@@ -185,6 +187,7 @@ fn run() -> Result<()> {
             &args,
             cli.global.porcelain,
             cli.global.yes,
+            cli.global.debug,
         ),
         Some(Commands::Completions(args)) => cmd_completions(args.shell),
     }
@@ -510,6 +513,7 @@ fn cmd_track(
                 by_name.get(&target),
                 &local,
                 &mut warnings,
+                opts.debug,
             )?
         } else if let Some(parent) = &args.parent {
             if !local_set.contains(parent) {
@@ -528,6 +532,7 @@ fn cmd_track(
                 by_name.get(&target),
                 &local,
                 &mut warnings,
+                opts.debug,
             )?;
             if inferred.is_some() || args.infer {
                 inferred
@@ -743,6 +748,7 @@ fn infer_parent_for_branch(
     tracked: Option<&BranchRecord>,
     local: &[String],
     warnings: &mut Vec<String>,
+    debug: bool,
 ) -> Result<Option<ParentInference>> {
     let cached_number = tracked.and_then(|r| r.cached_pr_number);
     match provider.resolve_pr_by_head(branch, cached_number) {
@@ -759,14 +765,20 @@ fn infer_parent_for_branch(
             }
         }
         Ok(None) => {}
-        Err(err) => warnings.push(format_pr_metadata_warning(branch, &err)),
+        Err(err) => warnings.push(format_pr_metadata_warning(branch, &err, debug)),
     }
 
     infer_parent_from_git(git, branch, local)
 }
 
-fn format_pr_metadata_warning(branch: &str, err: &anyhow::Error) -> String {
+fn format_pr_metadata_warning(branch: &str, err: &anyhow::Error, debug: bool) -> String {
     let raw = err.to_string();
+    if debug {
+        return format!(
+            "could not read PR metadata for '{}'; falling back to git ancestry ({})",
+            branch, raw
+        );
+    }
     if raw.contains("expected value at line 1 column 1")
         || raw.contains("EOF while parsing")
         || raw.contains("trailing characters")
@@ -1059,6 +1071,7 @@ fn cmd_pr(
     args: &PrArgs,
     porcelain: bool,
     yes: bool,
+    debug: bool,
 ) -> Result<()> {
     let current = git.current_branch()?;
     let records = db.list_branches()?;
@@ -1094,10 +1107,17 @@ fn cmd_pr(
 
     let existing = match provider.resolve_pr_by_head(&current, cached_number) {
         Ok(existing) => existing,
-        Err(_) => {
-            eprintln!(
-                "warning: could not determine existing PR status from gh; continuing without duplicate check"
-            );
+        Err(err) => {
+            if debug {
+                eprintln!(
+                    "warning: could not determine existing PR status from gh; continuing without duplicate check ({})",
+                    err
+                );
+            } else {
+                eprintln!(
+                    "warning: could not determine existing PR status from gh; continuing without duplicate check"
+                );
+            }
             None
         }
     };
@@ -1563,7 +1583,7 @@ mod tests {
     #[test]
     fn pr_metadata_parse_error_warning_is_user_friendly() {
         let err = anyhow!("expected value at line 1 column 1");
-        let msg = format_pr_metadata_warning("feat/a", &err);
+        let msg = format_pr_metadata_warning("feat/a", &err, false);
         assert!(msg.contains("gh returned an unexpected response"));
         assert!(!msg.contains("line 1 column 1"));
     }
