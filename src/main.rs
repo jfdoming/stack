@@ -759,13 +759,27 @@ fn infer_parent_for_branch(
             }
         }
         Ok(None) => {}
-        Err(err) => warnings.push(format!(
-            "could not inspect PR metadata for '{}': {}",
-            branch, err
-        )),
+        Err(err) => warnings.push(format_pr_metadata_warning(branch, &err)),
     }
 
     infer_parent_from_git(git, branch, local)
+}
+
+fn format_pr_metadata_warning(branch: &str, err: &anyhow::Error) -> String {
+    let raw = err.to_string();
+    if raw.contains("expected value at line 1 column 1")
+        || raw.contains("EOF while parsing")
+        || raw.contains("trailing characters")
+    {
+        return format!(
+            "could not read PR metadata for '{}'; gh returned an unexpected response. Falling back to git ancestry.",
+            branch
+        );
+    }
+    format!(
+        "could not read PR metadata for '{}'; falling back to git ancestry ({})",
+        branch, raw
+    )
 }
 
 fn infer_parent_from_git(
@@ -1536,5 +1550,13 @@ mod tests {
         assert!(result.is_err());
         let got = result.unwrap_err();
         assert!(got.downcast_ref::<UserCancelled>().is_some());
+    }
+
+    #[test]
+    fn pr_metadata_parse_error_warning_is_user_friendly() {
+        let err = anyhow!("expected value at line 1 column 1");
+        let msg = format_pr_metadata_warning("feat/a", &err);
+        assert!(msg.contains("gh returned an unexpected response"));
+        assert!(!msg.contains("line 1 column 1"));
     }
 }
