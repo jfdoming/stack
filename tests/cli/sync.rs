@@ -193,6 +193,14 @@ fn sync_updates_existing_pr_body_with_managed_section() {
     let current_path = env::var("PATH").unwrap_or_default();
     let test_path = format!("{}:{}", fake_bin.display(), current_path);
 
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET cached_pr_number = 6944, cached_pr_state = 'open' WHERE name = 'feat/parent'",
+        [],
+    )
+    .expect("seed stale parent pr cache");
+
     stack_cmd(repo.path())
         .env("PATH", test_path)
         .args(["sync", "--yes"])
@@ -215,5 +223,13 @@ fn sync_updates_existing_pr_body_with_managed_section() {
     assert!(
         gh_calls.contains("feat/parent"),
         "expected parent reference in edited body, got: {gh_calls}"
+    );
+    assert!(
+        gh_calls.contains("/tree/feat/parent"),
+        "expected unresolved parent to link to branch path, got: {gh_calls}"
+    );
+    assert!(
+        !gh_calls.contains("/pull/6944"),
+        "expected stale cached parent PR not to be reused, got: {gh_calls}"
     );
 }

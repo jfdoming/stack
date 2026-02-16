@@ -333,6 +333,14 @@ impl Provider for GithubProvider {
                     continue;
                 }
                 let context = scope.as_deref().unwrap_or("default");
+                let trimmed = out.trim();
+                if trimmed.starts_with('[') {
+                    let prs = self.parse_gh_pr_list(&out, context)?;
+                    if let Some(pr) = select_preferred_pr(prs) {
+                        return Ok(Some(convert_pr(pr)));
+                    }
+                    continue;
+                }
                 let pr = self.parse_gh_pr_view(&out, context)?;
                 return Ok(Some(convert_pr(pr)));
             }

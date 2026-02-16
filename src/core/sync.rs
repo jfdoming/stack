@@ -93,6 +93,7 @@ pub fn build_sync_plan(
     }
     let metadata_targets: Vec<(&str, Option<i64>)> = tracked
         .iter()
+        .filter(|branch| branch.name != base_branch)
         .filter(|branch| branch_exists.get(&branch.name).copied().unwrap_or(false))
         .map(|branch| (branch.name.as_str(), branch.cached_pr_number))
         .collect();
@@ -197,10 +198,7 @@ pub fn build_sync_plan(
                 .and_then(|parent_id| by_id.get(&parent_id))
                 .map(|parent| ManagedBranchRef {
                     branch: parent.name.clone(),
-                    pr_number: pr_by_branch
-                        .get(&parent.name)
-                        .map(|p| p.number)
-                        .or(parent.cached_pr_number),
+                    pr_number: pr_by_branch.get(&parent.name).map(|p| p.number),
                     pr_url: pr_by_branch.get(&parent.name).and_then(|p| p.url.clone()),
                 });
             let first_child = children.get(&branch.id).and_then(|ids| {
@@ -208,10 +206,7 @@ pub fn build_sync_plan(
                     .filter_map(|id| by_id.get(id))
                     .map(|child| ManagedBranchRef {
                         branch: child.name.clone(),
-                        pr_number: pr_by_branch
-                            .get(&child.name)
-                            .map(|p| p.number)
-                            .or(child.cached_pr_number),
+                        pr_number: pr_by_branch.get(&child.name).map(|p| p.number),
                         pr_url: pr_by_branch.get(&child.name).and_then(|p| p.url.clone()),
                     })
                     .min_by(|a, b| a.branch.cmp(&b.branch))
