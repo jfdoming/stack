@@ -134,6 +134,14 @@ fn create_command_creates_branch_and_persists_parent_link() {
         .stdout(predicate::str::contains("\"created\": \"feat/one\""))
         .stdout(predicate::str::contains("\"create_url\": \"\""));
 
+    let current = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "--show-current"])
+        .output()
+        .expect("read current branch");
+    assert!(current.status.success());
+    assert_eq!(String::from_utf8_lossy(&current.stdout).trim(), "feat/one");
+
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(db_path).expect("open db");
 

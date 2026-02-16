@@ -336,6 +336,8 @@ fn cmd_create(
 
     git.create_branch_from(&child, &parent)
         .with_context(|| format!("failed to create branch {child} from {parent}"))?;
+    git.checkout_branch(&child)
+        .with_context(|| format!("failed to switch to new branch {child}"))?;
 
     db.set_parent(&child, Some(&parent))?;
     let child_sha = git.head_sha(&child)?;
