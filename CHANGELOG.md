@@ -2,6 +2,17 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.24 - 2026-02-16
+- Refactored CLI execution into focused command modules and reduced `src/main.rs` to bootstrap/dispatch orchestration.
+- Split core behaviour into dedicated `parents`, `render`, and `sync` modules while preserving existing runtime behaviour.
+- Reorganized presentation and interaction layering:
+  - moved command-agnostic terminal interaction/picker helpers into `src/ui/`,
+  - renamed `src/cli` to `src/args`,
+  - renamed `src/output` to `src/views`,
+  - moved ratatui stack UI under `src/ui/tui.rs`.
+- Added `AppContext::build()` bootstrapping in `main` to centralize startup wiring.
+- Hardened integration test stability by disabling colourized stderr in harness defaults and adding a browser-open mock env path for test runs.
+
 ## 0.8.23 - 2026-02-16
 - `stack untrack main` now succeeds as a no-op whether passed explicitly or reached by default when no tracked non-base branches exist.
 
