@@ -364,4 +364,46 @@ mod tests {
         assert_eq!(ranked[2], "feat/a");
         assert!(ranked.contains(&"fix/c".to_string()));
     }
+
+    #[test]
+    fn render_tree_plain_includes_vertical_connectors_and_badges() {
+        let branches = vec![
+            BranchRecord {
+                id: 1,
+                name: "main".to_string(),
+                parent_branch_id: None,
+                last_synced_head_sha: Some("abc".to_string()),
+                cached_pr_number: None,
+                cached_pr_state: Some("open".to_string()),
+            },
+            BranchRecord {
+                id: 2,
+                name: "feat/a".to_string(),
+                parent_branch_id: Some(1),
+                last_synced_head_sha: None,
+                cached_pr_number: None,
+                cached_pr_state: Some("merged".to_string()),
+            },
+        ];
+
+        let rendered = render_tree(&branches, false);
+        assert!(rendered.contains("└── feat/a"));
+        assert!(rendered.contains("[PR:open]"));
+        assert!(rendered.contains("[SYNC:unsynced]"));
+    }
+
+    #[test]
+    fn render_tree_colored_emits_ansi_sequences() {
+        let branches = vec![BranchRecord {
+            id: 1,
+            name: "main".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: Some("abc".to_string()),
+            cached_pr_number: None,
+            cached_pr_state: Some("open".to_string()),
+        }];
+
+        let rendered = render_tree(&branches, true);
+        assert!(rendered.contains("\u{1b}["));
+    }
 }
