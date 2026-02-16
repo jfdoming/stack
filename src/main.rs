@@ -178,7 +178,14 @@ fn run() -> Result<()> {
             cli.global.yes,
             &base_branch,
         ),
-        Some(Commands::Pr(args)) => cmd_pr(&db, &git, &provider, &args, cli.global.porcelain),
+        Some(Commands::Pr(args)) => cmd_pr(
+            &db,
+            &git,
+            &provider,
+            &args,
+            cli.global.porcelain,
+            cli.global.yes,
+        ),
         Some(Commands::Completions(args)) => cmd_completions(args.shell),
     }
 }
@@ -1032,6 +1039,7 @@ fn cmd_pr(
     provider: &dyn Provider,
     args: &PrArgs,
     porcelain: bool,
+    yes: bool,
 ) -> Result<()> {
     let current = git.current_branch()?;
     let records = db.list_branches()?;
@@ -1085,6 +1093,27 @@ fn cmd_pr(
             payload["head"].as_str().unwrap_or_default(),
             number
         );
+        return Ok(());
+    }
+
+    let should_create = if yes {
+        true
+    } else if stdout().is_terminal() && stdin().is_terminal() {
+        confirm_inline_yes_no(&format!(
+            "Open PR from '{}' into '{}'?",
+            payload["head"].as_str().unwrap_or_default(),
+            payload["base"].as_str().unwrap_or_default()
+        ))?
+    } else {
+        return Err(anyhow!(
+            "confirmation required in non-interactive mode; rerun with --yes"
+        ));
+    };
+
+    if !should_create {
+        if !porcelain {
+            println!("PR not created: confirmation declined; no changes made");
+        }
         return Ok(());
     }
 

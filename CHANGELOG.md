@@ -2,6 +2,9 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.0 - 2026-02-16
+- `stack pr` now requires confirmation before creating a PR unless `--yes` is provided.
+
 ## 0.7.0 - 2026-02-16
 - `stack pr` now requires the current branch to be tracked with a tracked parent, ensuring PR base selection always comes from the stack parent relationship.
 - `stack pr` now skips creating a new PR when an existing PR is already found for the branch head.

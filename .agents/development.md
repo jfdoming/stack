@@ -31,6 +31,7 @@
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - `stack pr` requires the current branch to be tracked with a tracked parent, and skips PR creation when an existing PR already matches the branch head.
+- `stack pr` requires confirmation before creating a PR unless `--yes` is passed.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.
