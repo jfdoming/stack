@@ -27,9 +27,10 @@ PRs should include:
 
 ## Versioning (SemVer)
 When bumping `Cargo.toml` version, use Semantic Versioning:
+For versions below `1.0.0`, breaking changes are permitted in `MINOR` releases.
 - `PATCH`: non-breaking fixes/improvements/docs/refactors.
-- `MINOR`: new backward-compatible features.
-- `MAJOR`: any breaking change in CLI behaviour, flags, output contracts, or storage expectations.
+- `MINOR`: new features; may include breaking changes while `< 1.0.0`.
+- `MAJOR`: any breaking change in CLI behaviour, flags, output contracts, or storage expectations once `>= 1.0.0`.
 
 Keep version bumps task-scoped: finish the task, then bump once.
 
