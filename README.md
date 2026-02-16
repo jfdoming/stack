@@ -1,6 +1,7 @@
 # stack
 
 `stack` helps you manage stacked pull requests from the terminal.
+Learn more about stacked PR workflows at [stacking.dev](https://www.stacking.dev/).
 
 ## Install from source
 
