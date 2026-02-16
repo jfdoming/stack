@@ -5,8 +5,8 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow};
 use crossterm::style::Stylize;
 
-use crate::cli::PrArgs;
-use crate::commands::shared::confirm_inline_yes_no;
+use crate::args::PrArgs;
+use crate::ui::interaction::confirm_inline_yes_no;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
@@ -86,7 +86,7 @@ pub fn run(
             current
         );
         if porcelain {
-            return crate::output::print_json(&serde_json::json!({
+            return crate::views::print_json(&serde_json::json!({
                 "head": current,
                 "base": base,
                 "can_open_link": false,
@@ -132,7 +132,7 @@ pub fn run(
 
     if args.dry_run {
         if porcelain {
-            return crate::output::print_json(&payload);
+            return crate::views::print_json(&payload);
         }
         if let Some(number) = payload["existing_pr_number"].as_i64() {
             let pr_ref = format_existing_pr_ref(git, &base, number)?;
@@ -152,7 +152,7 @@ pub fn run(
 
     if let Some(number) = payload["existing_pr_number"].as_i64() {
         if porcelain {
-            return crate::output::print_json(&payload);
+            return crate::views::print_json(&payload);
         }
         let pr_ref = format_existing_pr_ref(git, &base, number)?;
         println!(
@@ -211,7 +211,7 @@ pub fn run(
     )?;
 
     if porcelain {
-        return crate::output::print_json(&serde_json::json!({
+        return crate::views::print_json(&serde_json::json!({
             "head": payload["head"],
             "base": payload["base"],
             "push_remote": push_remote,

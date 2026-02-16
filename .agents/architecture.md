@@ -4,13 +4,15 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Module map
 - `src/main.rs`: command dispatch and runtime mode selection (TTY vs non-TTY).
-- `src/cli/`: CLI flags/subcommands (`clap`).
+- `src/args/`: CLI flags/subcommands (`clap`).
+- `src/commands/`: per-command execution flows.
 - `src/core/`: stack graph logic, sync planner, sync executor, plain tree rendering.
 - `src/db/`: SQLite schema/migrations and persistence for branches, parent links, sync metadata, PR cache.
 - `src/git/`: git command wrapper (branch ops, fetch, replay/rebase, stash, merge-base).
 - `src/provider/`: provider abstraction and GitHub implementation via `gh`.
-- `src/tui/`: interactive ratatui interface for `stack` visualization.
-- `src/output/`: JSON-serializable views for porcelain output.
+- `src/ui/`: interactive terminal UX helpers and the ratatui `stack` view.
+- `src/views/`: JSON-serializable views for porcelain output.
+- `src/util/`: shared URL/terminal utilities.
 
 ## Persistence
 - DB location: `.git/stack.db` (repo-scoped).

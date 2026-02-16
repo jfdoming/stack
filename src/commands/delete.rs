@@ -4,8 +4,9 @@ use std::io::{IsTerminal, stdin, stdout};
 use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
 
-use crate::cli::DeleteArgs;
-use crate::commands::shared::{build_delete_picker_items, confirm_inline_yes_no, prompt_or_cancel};
+use crate::args::DeleteArgs;
+use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
+use crate::ui::pickers::build_delete_picker_items;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
@@ -84,7 +85,7 @@ pub fn run(
 
     if args.dry_run {
         if porcelain {
-            return crate::output::print_json(&payload);
+            return crate::views::print_json(&payload);
         }
         println!(
             "would delete branch '{}' (PR: {:?}) and splice children under '{}'",
@@ -130,7 +131,7 @@ pub fn run(
     db.splice_out_branch(&branch.name)?;
 
     if porcelain {
-        return crate::output::print_json(&serde_json::json!({
+        return crate::views::print_json(&serde_json::json!({
             "deleted_branch": branch.name,
             "closed_pr_number": pr_number,
             "spliced_to_parent": parent_name,
