@@ -1,0 +1,52 @@
+use clap::{Args, Parser, Subcommand};
+
+#[derive(Debug, Parser)]
+#[command(name = "stack", version, about = "Manage stacked pull requests")]
+pub struct Cli {
+    #[arg(long, global = true, help = "Output machine-readable JSON")]
+    pub porcelain: bool,
+    #[arg(long, global = true, help = "Skip interactive confirmations")]
+    pub yes: bool,
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    /// Add a branch to the stack
+    Create(CreateArgs),
+    /// Update stacked branches
+    Sync(SyncArgs),
+    /// Validate and optionally repair stack metadata
+    Doctor(DoctorArgs),
+    /// Remove a branch from stack relationships
+    Unlink(UnlinkArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CreateArgs {
+    #[arg(long, help = "Parent branch name")]
+    pub parent: Option<String>,
+    #[arg(long, help = "Child branch name to create")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SyncArgs {
+    #[arg(long, help = "Plan only; do not execute git operations")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    #[arg(long, help = "Apply maintenance fixes")]
+    pub fix: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct UnlinkArgs {
+    #[arg(help = "Branch to unlink")]
+    pub branch: String,
+    #[arg(long, help = "Remove branch record entirely")]
+    pub drop_record: bool,
+}
