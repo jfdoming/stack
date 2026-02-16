@@ -215,9 +215,10 @@ fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
                 number: pr.number,
                 state: pr.state.clone(),
                 base_ref_name: pr.base_ref_name.clone(),
-                merge_commit: pr.merge_commit.as_ref().map(|m| GhMergeCommit {
-                    oid: m.oid.clone(),
-                }),
+                merge_commit: pr
+                    .merge_commit
+                    .as_ref()
+                    .map(|m| GhMergeCommit { oid: m.oid.clone() }),
             });
         }
 
