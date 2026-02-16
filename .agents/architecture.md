@@ -25,6 +25,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Builds a plan (`fetch`, `restack`, metadata updates).
 - Prefers `git replay`; falls back to `git rebase --onto` with warning.
 - Restores the branch that was checked out before sync once plan execution completes.
+- For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - Stops on conflict and warns on stash restore failures.
 
 ## Track behaviour

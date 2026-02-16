@@ -20,6 +20,7 @@ pub struct PrInfo {
     pub state: PrState,
     pub merge_commit_oid: Option<String>,
     pub base_ref_name: Option<String>,
+    pub body: Option<String>,
 }
 
 pub trait Provider {
@@ -28,6 +29,7 @@ pub trait Provider {
         branch: &str,
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>>;
+    fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()>;
     fn delete_pr(&self, pr_number: i64) -> Result<()>;
 }
 
@@ -86,6 +88,7 @@ struct GhPr {
     state: String,
     #[serde(rename = "baseRefName")]
     base_ref_name: Option<String>,
+    body: Option<String>,
     #[serde(rename = "mergeCommit")]
     merge_commit: Option<GhMergeCommit>,
 }
@@ -107,7 +110,7 @@ impl Provider for GithubProvider {
                 "view".to_string(),
                 num.to_string(),
                 "--json".to_string(),
-                "number,state,mergeCommit,baseRefName".to_string(),
+                "number,state,mergeCommit,baseRefName,body".to_string(),
             ]
         } else {
             Vec::new()
@@ -155,7 +158,7 @@ impl Provider for GithubProvider {
                 "--state".to_string(),
                 "all".to_string(),
                 "--json".to_string(),
-                "number,state,mergeCommit,baseRefName".to_string(),
+                "number,state,mergeCommit,baseRefName,body".to_string(),
             ];
             let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
             let Some(out) = self.run_gh_optional(&arg_refs)? else {
@@ -189,6 +192,13 @@ impl Provider for GithubProvider {
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }
+
+    fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()> {
+        let num = pr_number.to_string();
+        let args = ["pr", "edit", &num, "--body", body];
+        let _ = self.run_gh_required(&args)?;
+        Ok(())
+    }
 }
 
 fn convert_pr(pr: GhPr) -> PrInfo {
@@ -203,6 +213,7 @@ fn convert_pr(pr: GhPr) -> PrInfo {
         state,
         merge_commit_oid: pr.merge_commit.map(|m| m.oid),
         base_ref_name: pr.base_ref_name,
+        body: pr.body,
     }
 }
 
@@ -216,6 +227,7 @@ fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
                 number: pr.number,
                 state: pr.state.clone(),
                 base_ref_name: pr.base_ref_name.clone(),
+                body: pr.body.clone(),
                 merge_commit: pr
                     .merge_commit
                     .as_ref()
@@ -273,12 +285,14 @@ mod tests {
                 number: 6995,
                 state: "CLOSED".to_string(),
                 base_ref_name: Some("master".to_string()),
+                body: None,
                 merge_commit: None,
             },
             GhPr {
                 number: 6693,
                 state: "OPEN".to_string(),
                 base_ref_name: Some("feature/base".to_string()),
+                body: None,
                 merge_commit: None,
             },
         ];

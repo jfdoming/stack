@@ -65,7 +65,7 @@ pub fn run(
         return Ok(());
     }
 
-    crate::core::execute_sync_plan(db, git, &plan)?;
+    crate::core::execute_sync_plan(db, git, provider, &plan)?;
     if !opts.porcelain {
         println!("sync completed");
     }

@@ -10,11 +10,9 @@ use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
 use crate::ui::interaction::confirm_inline_yes_no;
+use crate::util::pr_body::{ManagedBranchRef, managed_pr_section};
 use crate::util::terminal::{osc8_hyperlink, truncate_for_display};
 use crate::util::url::{github_owner_from_web_url, url_encode_component};
-
-const MANAGED_BODY_MARKER_START: &str = "<!-- stack:managed:start -->";
-const MANAGED_BODY_MARKER_END: &str = "<!-- stack:managed:end -->";
 
 #[derive(Debug, Clone)]
 struct ManagedPrSection {
@@ -377,36 +375,26 @@ fn compose_pr_body(
         }
     });
 
-    let root = base_url.trim_end_matches('/');
-    let parent_chain = managed
+    let parent = managed
         .and_then(|m| m.parent.as_ref())
-        .map(|p| format_pr_chain_node(root, p))
-        .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"));
+        .map(|p| ManagedBranchRef {
+            branch: p.branch.clone(),
+            pr_number: p.pr_number,
+        });
     let first_child = managed
         .and_then(|m| m.children.first())
-        .map(|c| format_pr_chain_node(root, c));
-
-    let managed_line = if let Some(child) = first_child {
-        format!("… {parent_chain} → #this PR (this PR) → {child} …")
-    } else {
-        format!("… {parent_chain} → #this PR (this PR) …")
-    };
+        .map(|c| ManagedBranchRef {
+            branch: c.branch.clone(),
+            pr_number: c.pr_number,
+        });
     let managed_section =
-        format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n{MANAGED_BODY_MARKER_END}");
+        managed_pr_section(base_url, base_branch, parent.as_ref(), first_child.as_ref());
 
     Some(if let Some(user) = user_body {
         format!("{managed_section}\n\n{user}")
     } else {
         managed_section
     })
-}
-
-fn format_pr_chain_node(root: &str, node: &BranchPrRef) -> String {
-    if let Some(number) = node.pr_number {
-        format!("[#{number}]({root}/pull/{number})")
-    } else {
-        format!("[{}]({root}/tree/{})", node.branch, node.branch)
-    }
 }
 
 #[cfg(test)]
@@ -442,8 +430,8 @@ mod tests {
         assert!(body.contains(
             "… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) → [#125](https://github.com/acme/repo/pull/125) …"
         ));
-        assert!(body.contains(MANAGED_BODY_MARKER_START));
-        assert!(body.contains(MANAGED_BODY_MARKER_END));
+        assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_START));
+        assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_END));
         assert!(body.ends_with("User body text"));
     }
 
@@ -462,8 +450,8 @@ mod tests {
                 "… [main](https://github.com/acme/repo/tree/main) → #this PR (this PR) …"
             )
         );
-        assert!(body.contains(MANAGED_BODY_MARKER_START));
-        assert!(body.contains(MANAGED_BODY_MARKER_END));
+        assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_START));
+        assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_END));
         assert!(body.ends_with("User body text"));
     }
 

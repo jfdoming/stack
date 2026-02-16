@@ -1,0 +1,115 @@
+#[derive(Debug, Clone)]
+pub struct ManagedBranchRef {
+    pub branch: String,
+    pub pr_number: Option<i64>,
+}
+
+pub const MANAGED_BODY_MARKER_START: &str = "<!-- stack:managed:start -->";
+pub const MANAGED_BODY_MARKER_END: &str = "<!-- stack:managed:end -->";
+
+pub fn managed_pr_section(
+    base_url: &str,
+    base_branch: &str,
+    parent: Option<&ManagedBranchRef>,
+    first_child: Option<&ManagedBranchRef>,
+) -> String {
+    let root = base_url.trim_end_matches('/');
+    let parent_chain = parent
+        .map(|p| format_pr_chain_node(root, p))
+        .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"));
+    let managed_line = if let Some(child) = first_child {
+        format!(
+            "… {parent_chain} → #this PR (this PR) → {} …",
+            format_pr_chain_node(root, child)
+        )
+    } else {
+        format!("… {parent_chain} → #this PR (this PR) …")
+    };
+    format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n{MANAGED_BODY_MARKER_END}")
+}
+
+pub fn merge_managed_pr_section(existing_body: Option<&str>, managed_section: &str) -> String {
+    let existing = existing_body.and_then(|b| {
+        let trimmed = b.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    let Some(existing) = existing else {
+        return managed_section.to_string();
+    };
+
+    if let Some((start, end)) = managed_section_bounds(existing) {
+        let prefix = existing[..start].trim_end();
+        let suffix = existing[end..].trim_start();
+        return match (prefix.is_empty(), suffix.is_empty()) {
+            (true, true) => managed_section.to_string(),
+            (true, false) => format!("{managed_section}\n\n{suffix}"),
+            (false, true) => format!("{prefix}\n\n{managed_section}"),
+            (false, false) => format!("{prefix}\n\n{managed_section}\n\n{suffix}"),
+        };
+    }
+
+    format!("{managed_section}\n\n{existing}")
+}
+
+fn managed_section_bounds(body: &str) -> Option<(usize, usize)> {
+    let start = body.find(MANAGED_BODY_MARKER_START)?;
+    let end_start = body[start..].find(MANAGED_BODY_MARKER_END)? + start;
+    let end = end_start + MANAGED_BODY_MARKER_END.len();
+    Some((start, end))
+}
+
+fn format_pr_chain_node(root: &str, node: &ManagedBranchRef) -> String {
+    if let Some(number) = node.pr_number {
+        format!("[#{number}]({root}/pull/{number})")
+    } else {
+        format!("[{}]({root}/tree/{})", node.branch, node.branch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_pr_section_wraps_stack_flow_in_markers() {
+        let parent = ManagedBranchRef {
+            branch: "feat/parent".to_string(),
+            pr_number: Some(12),
+        };
+        let child = ManagedBranchRef {
+            branch: "feat/child".to_string(),
+            pr_number: None,
+        };
+        let body = managed_pr_section(
+            "https://github.com/acme/repo",
+            "main",
+            Some(&parent),
+            Some(&child),
+        );
+        assert!(body.contains(MANAGED_BODY_MARKER_START));
+        assert!(body.contains(MANAGED_BODY_MARKER_END));
+        assert!(body.contains("[#12](https://github.com/acme/repo/pull/12)"));
+        assert!(body.contains("[feat/child](https://github.com/acme/repo/tree/feat/child)"));
+    }
+
+    #[test]
+    fn merge_managed_section_replaces_existing_managed_block() {
+        let old =
+            format!("{MANAGED_BODY_MARKER_START}\nold\n{MANAGED_BODY_MARKER_END}\n\nuser text");
+        let new_section = format!("{MANAGED_BODY_MARKER_START}\nnew\n{MANAGED_BODY_MARKER_END}");
+        let merged = merge_managed_pr_section(Some(&old), &new_section);
+        assert_eq!(merged, format!("{new_section}\n\nuser text"));
+    }
+
+    #[test]
+    fn merge_managed_section_prepends_when_markers_absent() {
+        let new_section = format!("{MANAGED_BODY_MARKER_START}\nnew\n{MANAGED_BODY_MARKER_END}");
+        let merged = merge_managed_pr_section(Some("user text"), &new_section);
+        assert_eq!(merged, format!("{new_section}\n\nuser text"));
+    }
+}

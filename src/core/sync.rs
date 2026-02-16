@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
 use crate::provider::{PrState, Provider};
+use crate::util::pr_body::{ManagedBranchRef, managed_pr_section, merge_managed_pr_section};
 use crate::views::{OperationView, SyncPlanView};
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,11 @@ pub enum SyncOp {
     UpdateSha {
         branch: String,
         sha: String,
+    },
+    UpdatePrBody {
+        branch: String,
+        pr_number: i64,
+        body: String,
     },
 }
 
@@ -56,6 +62,14 @@ impl SyncPlan {
                     onto: None,
                     details: sha.clone(),
                 }),
+                SyncOp::UpdatePrBody {
+                    branch, pr_number, ..
+                } => operations.push(OperationView {
+                    kind: "update_pr_body".to_string(),
+                    branch: branch.clone(),
+                    onto: None,
+                    details: format!("pr #{pr_number}"),
+                }),
             }
         }
         SyncPlanView {
@@ -79,6 +93,8 @@ pub fn build_sync_plan(
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
 
+    let mut pr_by_branch: HashMap<String, crate::provider::PrInfo> = HashMap::new();
+
     for b in &tracked {
         by_id.insert(b.id, b.clone());
         if let Some(parent) = b.parent_branch_id {
@@ -101,6 +117,7 @@ pub fn build_sync_plan(
                 PrState::Unknown => "unknown",
             };
             db.set_pr_cache(&branch.name, Some(pr.number), Some(state))?;
+            pr_by_branch.insert(branch.name.clone(), pr.clone());
 
             if matches!(pr.state, PrState::Merged) {
                 let new_base = pr
@@ -154,13 +171,72 @@ pub fn build_sync_plan(
         }
     }
 
+    let base_url = git
+        .remote_web_url(base_remote)?
+        .or_else(|| git.remote_web_url("origin").ok().flatten())
+        .or_else(|| git.remote_web_url("upstream").ok().flatten());
+    if let Some(base_url) = base_url {
+        for branch in &tracked {
+            let Some(pr) = pr_by_branch.get(&branch.name) else {
+                continue;
+            };
+            if !matches!(pr.state, PrState::Open) {
+                continue;
+            }
+
+            let parent_ref = branch
+                .parent_branch_id
+                .and_then(|parent_id| by_id.get(&parent_id))
+                .map(|parent| ManagedBranchRef {
+                    branch: parent.name.clone(),
+                    pr_number: pr_by_branch
+                        .get(&parent.name)
+                        .map(|p| p.number)
+                        .or(parent.cached_pr_number),
+                });
+            let first_child = children.get(&branch.id).and_then(|ids| {
+                ids.iter()
+                    .filter_map(|id| by_id.get(id))
+                    .map(|child| ManagedBranchRef {
+                        branch: child.name.clone(),
+                        pr_number: pr_by_branch
+                            .get(&child.name)
+                            .map(|p| p.number)
+                            .or(child.cached_pr_number),
+                    })
+                    .min_by(|a, b| a.branch.cmp(&b.branch))
+            });
+            let managed_section = managed_pr_section(
+                &base_url,
+                base_branch,
+                parent_ref.as_ref(),
+                first_child.as_ref(),
+            );
+            let merged_body = merge_managed_pr_section(pr.body.as_deref(), &managed_section);
+
+            let should_update = pr.body.as_deref().map(str::trim) != Some(merged_body.trim());
+            if should_update {
+                ops.push(SyncOp::UpdatePrBody {
+                    branch: branch.name.clone(),
+                    pr_number: pr.number,
+                    body: merged_body,
+                });
+            }
+        }
+    }
+
     Ok(SyncPlan {
         base_branch: base_branch.to_string(),
         ops,
     })
 }
 
-pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()> {
+pub fn execute_sync_plan(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    plan: &SyncPlan,
+) -> Result<()> {
     let starting_branch = git.current_branch()?;
     let mut stash: Option<StashHandle> = None;
     if git.is_worktree_dirty()? {
@@ -195,6 +271,9 @@ pub fn execute_sync_plan(db: &Database, git: &Git, plan: &SyncPlan) -> Result<()
                     db.set_sync_sha(branch, &sha)?;
                 }
                 SyncOp::UpdateSha { branch, sha } => db.set_sync_sha(branch, sha)?,
+                SyncOp::UpdatePrBody {
+                    pr_number, body, ..
+                } => provider.update_pr_body(*pr_number, body)?,
             }
         }
         Ok(())
