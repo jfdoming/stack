@@ -18,13 +18,18 @@ pub fn managed_pr_section(
     let parent_chain = parent
         .map(|p| format_pr_chain_node(root, p))
         .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"));
+    let prefix = if parent.is_some() {
+        "… → ".to_string()
+    } else {
+        String::new()
+    };
     let managed_line = if let Some(child) = first_child {
         format!(
-            "… {parent_chain} → #this PR (this PR) → {} …",
+            "{prefix}{parent_chain} → (this PR) → {} …",
             format_pr_chain_node(root, child)
         )
     } else {
-        format!("… {parent_chain} → #this PR (this PR) …")
+        format!("{prefix}{parent_chain} → (this PR)")
     };
     format!("{MANAGED_BODY_MARKER_START}\n{managed_line}\n{MANAGED_BODY_MARKER_END}")
 }
@@ -125,6 +130,27 @@ mod tests {
         assert!(body.contains(MANAGED_BODY_MARKER_END));
         assert!(body.contains("[#12](https://github.com/acme/repo/pull/12)"));
         assert!(body.contains("[feat/child](https://github.com/acme/repo/tree/feat/child)"));
+        assert!(body.contains("… → [#12]"));
+        assert!(body.contains("→ (this PR) →"));
+    }
+
+    #[test]
+    fn managed_pr_section_base_parent_has_no_leading_ellipsis() {
+        let body = managed_pr_section("https://github.com/acme/repo", "main", None, None);
+        assert!(body.contains("[main](https://github.com/acme/repo/tree/main) → (this PR)"));
+        assert!(!body.contains("… [main]"));
+    }
+
+    #[test]
+    fn managed_pr_section_last_branch_has_no_trailing_ellipsis() {
+        let parent = ManagedBranchRef {
+            branch: "feat/parent".to_string(),
+            pr_number: Some(12),
+            pr_url: None,
+        };
+        let body = managed_pr_section("https://github.com/acme/repo", "main", Some(&parent), None);
+        assert!(body.contains("… → [#12](https://github.com/acme/repo/pull/12) → (this PR)"));
+        assert!(!body.contains("(this PR) …"));
     }
 
     #[test]

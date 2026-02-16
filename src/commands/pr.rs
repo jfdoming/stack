@@ -366,7 +366,7 @@ mod tests {
         )
         .expect("body should be present");
         assert!(body.contains(
-            "… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) → [#125](https://github.com/acme/repo/pull/125) …"
+            "… → [#123](https://github.com/acme/repo/pull/123) → (this PR) → [#125](https://github.com/acme/repo/pull/125) …"
         ));
         assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_START));
         assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_END));
@@ -383,11 +383,7 @@ mod tests {
             Some("User body text"),
         )
         .expect("body should be present");
-        assert!(
-            body.contains(
-                "… [main](https://github.com/acme/repo/tree/main) → #this PR (this PR) …"
-            )
-        );
+        assert!(body.contains("[main](https://github.com/acme/repo/tree/main) → (this PR)"));
         assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_START));
         assert!(body.contains(crate::util::pr_body::MANAGED_BODY_MARKER_END));
         assert!(body.ends_with("User body text"));
@@ -410,10 +406,8 @@ mod tests {
             None,
         )
         .expect("body should be present");
-        assert!(
-            body.contains("… [#123](https://github.com/acme/repo/pull/123) → #this PR (this PR) …")
-        );
-        assert!(!body.contains("#this PR (this PR) →"));
+        assert!(body.contains("… → [#123](https://github.com/acme/repo/pull/123) → (this PR)"));
+        assert!(!body.contains("(this PR) →"));
     }
 
     #[test]
