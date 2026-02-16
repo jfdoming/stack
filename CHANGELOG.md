@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.10.8 - 2026-02-16
+- Fixed managed PR-body link targeting to prefer each detected PR’s own URL/repo, preventing cross-repo link mismatches in fork/upstream workflows.
+- Fixed batch PR metadata matching to prefer the branch’s remote owner, avoiding incorrect PR association for common branch names like `main`/`master`.
+
 ## 0.10.7 - 2026-02-16
 - Fixed GitHub PR detection for fork/upstream workflows by expanding metadata lookups across explicit remote repo scopes (including `upstream`) instead of relying only on default GH repo context.
 

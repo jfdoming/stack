@@ -351,12 +351,14 @@ fn compose_pr_body(
         .map(|p| ManagedBranchRef {
             branch: p.branch.clone(),
             pr_number: p.pr_number,
+            pr_url: None,
         });
     let first_child = managed
         .and_then(|m| m.children.first())
         .map(|c| ManagedBranchRef {
             branch: c.branch.clone(),
             pr_number: c.pr_number,
+            pr_url: None,
         });
     Some(compose_branch_pr_body(
         base_url,

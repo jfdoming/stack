@@ -22,6 +22,7 @@ pub struct PrInfo {
     pub merge_commit_oid: Option<String>,
     pub base_ref_name: Option<String>,
     pub body: Option<String>,
+    pub url: Option<String>,
 }
 
 pub trait Provider {
@@ -188,9 +189,17 @@ struct GhPr {
     base_ref_name: Option<String>,
     #[serde(rename = "headRefName")]
     head_ref_name: Option<String>,
+    #[serde(rename = "headRepositoryOwner")]
+    head_repository_owner: Option<GhOwner>,
     body: Option<String>,
+    url: Option<String>,
     #[serde(rename = "mergeCommit")]
     merge_commit: Option<GhMergeCommit>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct GhOwner {
+    login: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -222,7 +231,8 @@ impl Provider for GithubProvider {
                 "--limit".to_string(),
                 "200".to_string(),
                 "--json".to_string(),
-                "number,state,mergeCommit,baseRefName,headRefName,body".to_string(),
+                "number,state,mergeCommit,baseRefName,headRefName,headRepositoryOwner,url,body"
+                    .to_string(),
             ];
             if let Some(scope) = scope.as_deref() {
                 args.push("--repo".to_string());
@@ -247,13 +257,39 @@ impl Provider for GithubProvider {
         }
 
         for (branch, cached_number) in branches {
-            if let Some(candidates) = by_head.get(*branch)
-                && let Some(pr) = select_preferred_pr(candidates.clone())
-            {
-                let converted = convert_pr(pr);
-                if cached_number.is_none_or(|cached| cached == converted.number) {
-                    out.insert((*branch).to_string(), converted);
-                    continue;
+            let preferred_owner = self
+                .git
+                .remote_for_branch(branch)?
+                .and_then(|remote| self.git.remote_web_url(&remote).ok().flatten())
+                .and_then(|url| github_owner_from_web_url(&url));
+
+            if let Some(candidates) = by_head.get(*branch) {
+                let filtered = if let Some(owner) = preferred_owner.as_deref() {
+                    let scoped: Vec<GhPr> = candidates
+                        .iter()
+                        .filter(|pr| {
+                            pr.head_repository_owner
+                                .as_ref()
+                                .map(|o| o.login.eq_ignore_ascii_case(owner))
+                                .unwrap_or(false)
+                        })
+                        .cloned()
+                        .collect();
+                    if scoped.is_empty() {
+                        candidates.clone()
+                    } else {
+                        scoped
+                    }
+                } else {
+                    candidates.clone()
+                };
+
+                if let Some(pr) = select_preferred_pr(filtered) {
+                    let converted = convert_pr(pr);
+                    if cached_number.is_none_or(|cached| cached == converted.number) {
+                        out.insert((*branch).to_string(), converted);
+                        continue;
+                    }
                 }
             }
 
@@ -283,7 +319,7 @@ impl Provider for GithubProvider {
                     "view".to_string(),
                     num.to_string(),
                     "--json".to_string(),
-                    "number,state,mergeCommit,baseRefName,body".to_string(),
+                    "number,state,mergeCommit,baseRefName,url,body".to_string(),
                 ];
                 if let Some(scope) = scope.as_deref() {
                     args.push("--repo".to_string());
@@ -328,7 +364,7 @@ impl Provider for GithubProvider {
                     "--state".to_string(),
                     "all".to_string(),
                     "--json".to_string(),
-                    "number,state,mergeCommit,baseRefName,body".to_string(),
+                    "number,state,mergeCommit,baseRefName,url,body".to_string(),
                 ];
                 if let Some(scope) = scope.as_deref() {
                     args.push("--repo".to_string());
@@ -386,6 +422,7 @@ fn convert_pr(pr: GhPr) -> PrInfo {
         merge_commit_oid: pr.merge_commit.map(|m| m.oid),
         base_ref_name: pr.base_ref_name,
         body: pr.body,
+        url: pr.url,
     }
 }
 
@@ -400,7 +437,9 @@ fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
                 state: pr.state.clone(),
                 base_ref_name: pr.base_ref_name.clone(),
                 head_ref_name: pr.head_ref_name.clone(),
+                head_repository_owner: pr.head_repository_owner.clone(),
                 body: pr.body.clone(),
+                url: pr.url.clone(),
                 merge_commit: pr
                     .merge_commit
                     .as_ref()
@@ -459,7 +498,9 @@ mod tests {
                 state: "CLOSED".to_string(),
                 base_ref_name: Some("master".to_string()),
                 head_ref_name: Some("feature/top".to_string()),
+                head_repository_owner: None,
                 body: None,
+                url: None,
                 merge_commit: None,
             },
             GhPr {
@@ -467,7 +508,9 @@ mod tests {
                 state: "OPEN".to_string(),
                 base_ref_name: Some("feature/base".to_string()),
                 head_ref_name: Some("feature/current".to_string()),
+                head_repository_owner: None,
                 body: None,
+                url: None,
                 merge_commit: None,
             },
         ];

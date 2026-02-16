@@ -201,6 +201,7 @@ pub fn build_sync_plan(
                         .get(&parent.name)
                         .map(|p| p.number)
                         .or(parent.cached_pr_number),
+                    pr_url: pr_by_branch.get(&parent.name).and_then(|p| p.url.clone()),
                 });
             let first_child = children.get(&branch.id).and_then(|ids| {
                 ids.iter()
@@ -211,11 +212,17 @@ pub fn build_sync_plan(
                             .get(&child.name)
                             .map(|p| p.number)
                             .or(child.cached_pr_number),
+                        pr_url: pr_by_branch.get(&child.name).and_then(|p| p.url.clone()),
                     })
                     .min_by(|a, b| a.branch.cmp(&b.branch))
             });
+            let pr_root = pr
+                .url
+                .as_deref()
+                .and_then(repo_root_from_pr_url)
+                .unwrap_or(base_url.as_str());
             let managed_section = managed_pr_section(
-                &base_url,
+                pr_root,
                 base_branch,
                 parent_ref.as_ref(),
                 first_child.as_ref(),
@@ -323,6 +330,10 @@ pub fn execute_sync_plan(
 
     db.record_sync_finish(run_id, status, summary.as_deref())?;
     Ok(())
+}
+
+fn repo_root_from_pr_url(url: &str) -> Option<&str> {
+    url.split_once("/pull/").map(|(root, _)| root)
 }
 
 fn restore_starting_branch(git: &Git, starting_branch: &str) -> Result<()> {

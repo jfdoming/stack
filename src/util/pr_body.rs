@@ -2,6 +2,7 @@
 pub struct ManagedBranchRef {
     pub branch: String,
     pub pr_number: Option<i64>,
+    pub pr_url: Option<String>,
 }
 
 pub const MANAGED_BODY_MARKER_START: &str = "<!-- stack:managed:start -->";
@@ -88,7 +89,11 @@ fn managed_section_bounds(body: &str) -> Option<(usize, usize)> {
 
 fn format_pr_chain_node(root: &str, node: &ManagedBranchRef) -> String {
     if let Some(number) = node.pr_number {
-        format!("[#{number}]({root}/pull/{number})")
+        if let Some(url) = node.pr_url.as_deref() {
+            format!("[#{number}]({url})")
+        } else {
+            format!("[#{number}]({root}/pull/{number})")
+        }
     } else {
         format!("[{}]({root}/tree/{})", node.branch, node.branch)
     }
@@ -103,10 +108,12 @@ mod tests {
         let parent = ManagedBranchRef {
             branch: "feat/parent".to_string(),
             pr_number: Some(12),
+            pr_url: None,
         };
         let child = ManagedBranchRef {
             branch: "feat/child".to_string(),
             pr_number: None,
+            pr_url: None,
         };
         let body = managed_pr_section(
             "https://github.com/acme/repo",
