@@ -79,7 +79,10 @@ fn create_command_creates_branch_and_persists_parent_link() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"created\": \"feat/one\""));
+        .stdout(predicate::str::contains("\"created\": \"feat/one\""))
+        .stdout(predicate::str::contains(
+            "\"create_url\": \"https://github.com/acme/stack-test/compare/main...feat/one?expand=1\"",
+        ));
 
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(db_path).expect("open db");
