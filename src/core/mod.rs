@@ -387,10 +387,19 @@ fn render_pr_link(
         )
     };
     if color {
-        format!(" {}", url.dark_grey().underlined())
+        let label = if let Some(number) = pr_number {
+            format!("PR #{number}")
+        } else {
+            "open compare".to_string()
+        };
+        format!(" {}", osc8_hyperlink(&url, &label).dark_grey().underlined())
     } else {
         format!(" {url}")
     }
+}
+
+fn osc8_hyperlink(url: &str, label: &str) -> String {
+    format!("\u{1b}]8;;{url}\u{1b}\\{label}\u{1b}]8;;\u{1b}\\")
 }
 
 #[cfg(test)]
@@ -490,6 +499,27 @@ mod tests {
             "main",
         );
         assert!(rendered.contains("https://github.com/acme/repo/pull/42"));
+    }
+
+    #[test]
+    fn render_tree_colored_encodes_clickable_pr_link() {
+        let branches = vec![BranchRecord {
+            id: 1,
+            name: "feat/a".to_string(),
+            parent_branch_id: None,
+            last_synced_head_sha: None,
+            cached_pr_number: Some(123),
+            cached_pr_state: Some("open".to_string()),
+        }];
+
+        let rendered = render_tree(
+            &branches,
+            true,
+            Some("https://github.com/acme/repo"),
+            "main",
+        );
+        assert!(rendered.contains("\u{1b}]8;;https://github.com/acme/repo/pull/123\u{1b}\\"));
+        assert!(rendered.contains("PR #123"));
     }
 
     #[test]
