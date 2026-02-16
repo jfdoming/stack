@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(unix)]
 use std::{env, os::unix::fs::PermissionsExt};
@@ -63,6 +63,23 @@ fn init_repo_with_named_remote(remote: &str) -> TempDir {
         &["config", "branch.main.merge", "refs/heads/main"],
     );
     dir
+}
+
+fn configure_local_push_url(repo: &Path) -> PathBuf {
+    let bare = repo.join("origin-push.git");
+    run_git(repo, &["init", "--bare", bare.to_str().expect("bare path")]);
+    run_git(
+        repo,
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            bare.to_str().expect("bare path"),
+        ],
+    );
+    run_git(repo, &["push", "--set-upstream", "origin", "main"]);
+    bare
 }
 
 fn run_git(repo: &Path, args: &[&str]) {
@@ -240,7 +257,7 @@ fn pr_dry_run_on_untracked_branch_warns_and_uses_base() {
         .expect("run stack pr --dry-run");
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("is not stacked"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("would create PR with base="));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("would push '"));
 }
 
 #[test]
@@ -263,7 +280,7 @@ fn pr_dry_run_on_parentless_tracked_branch_warns_and_uses_base() {
         .expect("run stack pr --dry-run");
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("is not stacked"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("would create PR with base="));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("would push '"));
 }
 
 #[cfg(unix)]
@@ -364,18 +381,19 @@ fn pr_porcelain_reports_existing_pr_without_create() {
 
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     assert_eq!(json["existing_pr_number"], 88);
-    assert_eq!(json["will_create"], false);
+    assert_eq!(json["will_open_link"], false);
 }
 
 #[cfg(unix)]
 #[test]
-fn pr_yes_allows_non_interactive_creation() {
+fn pr_yes_pushes_and_prints_pr_open_link() {
     let repo = init_repo();
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/pr-create"])
         .assert()
         .success();
     run_git(repo.path(), &["checkout", "feat/pr-create"]);
+    let bare = configure_local_push_url(repo.path());
 
     let fake_bin = repo.path().join("fake-bin");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
@@ -395,9 +413,17 @@ fn pr_yes_allows_non_interactive_creation() {
         .args(["--yes", "pr"])
         .assert()
         .success()
+        .stdout(predicate::str::contains("pushed 'feat/pr-create' to 'origin'"))
         .stdout(predicate::str::contains(
-            "created PR: https://github.com/acme/stack-test/pull/99",
+            "open PR: https://github.com/acme/stack-test/compare/main...feat/pr-create?expand=1",
         ));
+
+    let pushed = Command::new("git")
+        .current_dir(&bare)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/pr-create"])
+        .status()
+        .expect("verify pushed branch");
+    assert!(pushed.success(), "expected pushed branch to exist on bare remote");
 }
 
 #[cfg(unix)]
@@ -409,6 +435,7 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
         .assert()
         .success();
     run_git(repo.path(), &["checkout", "feat/pr-parse"]);
+    configure_local_push_url(repo.path());
 
     let fake_bin = repo.path().join("fake-bin");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
@@ -428,9 +455,7 @@ fn pr_handles_existing_lookup_parse_failure_with_friendly_warning() {
         .args(["--yes", "pr"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "created PR: https://github.com/acme/stack-test/pull/100",
-        ))
+        .stdout(predicate::str::contains("open PR: https://github.com/acme/stack-test/compare/main...feat/pr-parse?expand=1"))
         .stderr(predicate::str::contains(
             "could not determine existing PR status from gh",
         ));
@@ -445,6 +470,7 @@ fn pr_debug_flag_prints_full_gh_parse_error_details() {
         .assert()
         .success();
     run_git(repo.path(), &["checkout", "feat/pr-debug"]);
+    configure_local_push_url(repo.path());
 
     let fake_bin = repo.path().join("fake-bin");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
@@ -470,37 +496,23 @@ fn pr_debug_flag_prints_full_gh_parse_error_details() {
 
 #[cfg(unix)]
 #[test]
-fn pr_create_fails_when_gh_returns_non_zero() {
-    let repo = init_repo();
+fn pr_open_fails_when_push_remote_is_missing() {
+    let repo = init_repo_without_origin();
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/pr-fail"])
         .assert()
         .success();
     run_git(repo.path(), &["checkout", "feat/pr-fail"]);
 
-    let fake_bin = repo.path().join("fake-bin");
-    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
-    let fake_gh = fake_bin.join("gh");
-    fs::write(
-        &fake_gh,
-        "#!/usr/bin/env bash\necho 'auth failed' >&2\nexit 1\n",
-    )
-    .expect("write fake gh");
-    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
-
-    let current_path = env::var("PATH").unwrap_or_default();
-    let test_path = format!("{}:{}", fake_bin.display(), current_path);
-
     stack_cmd(repo.path())
-        .env("PATH", test_path)
         .args(["--yes", "pr"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("gh command failed"));
+        .stderr(predicate::str::contains("git command failed"));
 }
 
 #[test]
-fn pr_requires_yes_in_non_interactive_mode_before_create() {
+fn pr_requires_yes_in_non_interactive_mode_before_open() {
     let repo = init_repo();
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/pr-confirm"])

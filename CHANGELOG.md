@@ -2,6 +2,10 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.8.10 - 2026-02-16
+- Changed `stack pr` to stop creating PRs directly; it now pushes the branch and prints an open-PR compare link for manual title/body editing in GitHub.
+- Hardened gh JSON calls by forcing colourless output (`NO_COLOR=1`, `CLICOLOR=0`) before parsing.
+
 ## 0.8.9 - 2026-02-16
 - Updated stack tree compare-link label from `open compare` to `no PR` in styled TTY output, while keeping it clickable.
 

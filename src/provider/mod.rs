@@ -21,27 +21,12 @@ pub struct PrInfo {
     pub base_ref_name: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CreatePrRequest<'a> {
-    pub head: &'a str,
-    pub base: &'a str,
-    pub title: Option<&'a str>,
-    pub body: Option<&'a str>,
-    pub draft: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct CreatePrResult {
-    pub url: String,
-}
-
 pub trait Provider {
     fn resolve_pr_by_head(
         &self,
         branch: &str,
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>>;
-    fn create_pr(&self, req: CreatePrRequest<'_>) -> Result<CreatePrResult>;
     fn delete_pr(&self, pr_number: i64) -> Result<()>;
 }
 
@@ -59,6 +44,8 @@ impl GithubProvider {
     fn run_gh_required(&self, args: &[&str]) -> Result<String> {
         let output = Command::new("gh")
             .current_dir(self.git.root())
+            .env("NO_COLOR", "1")
+            .env("CLICOLOR", "0")
             .args(args)
             .output()
             .with_context(|| format!("failed to run gh {args:?}"))?;
@@ -75,6 +62,8 @@ impl GithubProvider {
     fn run_gh_optional(&self, args: &[&str]) -> Result<Option<String>> {
         let output = Command::new("gh")
             .current_dir(self.git.root())
+            .env("NO_COLOR", "1")
+            .env("CLICOLOR", "0")
             .args(args)
             .output()
             .with_context(|| format!("failed to run gh {args:?}"))?;
@@ -191,42 +180,6 @@ impl Provider for GithubProvider {
             }
         }
         Ok(None)
-    }
-
-    fn create_pr(&self, req: CreatePrRequest<'_>) -> Result<CreatePrResult> {
-        let mut args = vec![
-            "pr".to_string(),
-            "create".to_string(),
-            "--head".to_string(),
-            req.head.to_string(),
-            "--base".to_string(),
-            req.base.to_string(),
-        ];
-
-        if req.draft {
-            args.push("--draft".to_string());
-        }
-
-        match (req.title, req.body) {
-            (Some(title), Some(body)) => {
-                args.push("--title".to_string());
-                args.push(title.to_string());
-                args.push("--body".to_string());
-                args.push(body.to_string());
-            }
-            (Some(title), None) => {
-                args.push("--title".to_string());
-                args.push(title.to_string());
-                args.push("--fill".to_string());
-            }
-            _ => args.push("--fill".to_string()),
-        }
-
-        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let out = self.run_gh_required(&arg_refs)?;
-        Ok(CreatePrResult {
-            url: out.lines().last().unwrap_or_default().trim().to_string(),
-        })
     }
 
     fn delete_pr(&self, pr_number: i64) -> Result<()> {

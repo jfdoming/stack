@@ -31,9 +31,9 @@
 - Omitting `stack untrack <branch>` follows the same assumption/prompt flow as delete.
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
-- On stacked branches, `stack pr` uses the tracked parent as PR base and skips PR creation when an existing PR already matches the branch head.
-- `stack pr` requires confirmation before creating a PR unless `--yes` is passed.
-- On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base; creation still requires confirmation (or `--yes`).
+- On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
+- `stack pr` requires confirmation before pushing and printing an open-PR link unless `--yes` is passed.
+- On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base; link-open flow still requires confirmation (or `--yes`).
 - In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.

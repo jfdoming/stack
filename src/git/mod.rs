@@ -82,6 +82,10 @@ impl Git {
         self.run(["branch", "-D", branch])
     }
 
+    pub fn push_branch(&self, remote: &str, branch: &str) -> Result<()> {
+        self.run(["push", "--set-upstream", remote, branch])
+    }
+
     pub fn head_sha(&self, branch: &str) -> Result<String> {
         self.capture(["rev-parse", branch])
             .map(|s| s.trim().to_string())
