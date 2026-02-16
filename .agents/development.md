@@ -40,8 +40,8 @@
 - In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.
-- In stack tree output, branches without a PR show a clickable `no PR` compare label.
-- Stack tree output no longer shows a separate `PR:none` badge; `no PR` is the single missing-PR indicator.
+- In stack tree output, branches without a PR show a clickable `[no PR]` compare label.
+- Stack tree output no longer shows a separate `PR:none` badge; `[no PR]` is the single missing-PR indicator.
 - `SYNC:never` means a branch has not yet been synced by `stack sync` (no last-synced SHA recorded).
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,

@@ -384,9 +384,9 @@ fn render_pr_link(
         let compare_base = parent_branch.unwrap_or(default_base_branch);
         if compare_base == head_branch {
             return if color {
-                format!(" {}", "no PR (same base/head)".dark_grey())
+                format!(" {}", "[no PR (same base/head)]".dark_grey())
             } else {
-                " no PR (same base/head)".to_string()
+                " [no PR (same base/head)]".to_string()
             };
         }
         format!(
@@ -400,13 +400,13 @@ fn render_pr_link(
         let label = if let Some(number) = pr_number {
             format!("PR #{number}")
         } else {
-            "no PR".to_string()
+            "[no PR]".to_string()
         };
         format!(" {}", osc8_hyperlink(&url, &label).dark_grey().underlined())
     } else if pr_number.is_some() {
         format!(" {url}")
     } else {
-        format!(" no PR {url}")
+        format!(" [no PR] {url}")
     }
 }
 
@@ -554,7 +554,7 @@ mod tests {
         assert!(rendered.contains(
             "\u{1b}]8;;https://github.com/acme/repo/compare/main...feat/no-pr?expand=1\u{1b}\\"
         ));
-        assert!(rendered.contains("no PR"));
+        assert!(rendered.contains("[no PR]"));
     }
 
     #[test]
@@ -575,7 +575,7 @@ mod tests {
             "main",
         );
         assert!(!rendered.contains("[PR:none]"));
-        assert!(rendered.contains("no PR"));
+        assert!(rendered.contains("[no PR]"));
         assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
     }
 
@@ -596,7 +596,7 @@ mod tests {
             Some("https://github.com/acme/repo"),
             "main",
         );
-        assert!(rendered.contains("no PR (same base/head)"));
+        assert!(rendered.contains("[no PR (same base/head)]"));
         assert!(!rendered.contains("/compare/main...main"));
     }
 }
