@@ -11,7 +11,7 @@ use std::io::{IsTerminal, stdin, stdout};
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use crossterm::cursor::{MoveToColumn, MoveToNextLine, Show};
+use crossterm::cursor::Show;
 use crossterm::execute;
 use crossterm::style::Stylize;
 use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     if let Err(err) = run() {
         if err.downcast_ref::<UserCancelled>().is_some() {
             restore_terminal_state();
-            eprintln!("cancelled by user");
+            eprintln!("\ncancelled by user");
             std::process::exit(130);
         }
         return Err(err);
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     ctrlc::set_handler(|| {
         restore_terminal_state();
-        eprintln!("cancelled by user");
+        eprintln!("\ncancelled by user");
         std::process::exit(130);
     })
     .context("failed to install Ctrl-C handler")?;
@@ -489,13 +489,7 @@ fn prompt_or_cancel<T>(result: dialoguer::Result<T>) -> Result<T> {
 fn restore_terminal_state() {
     let _ = disable_raw_mode();
     let mut out = std::io::stdout();
-    let _ = execute!(
-        out,
-        LeaveAlternateScreen,
-        Show,
-        MoveToColumn(0),
-        MoveToNextLine(1)
-    );
+    let _ = execute!(out, LeaveAlternateScreen, Show);
 }
 
 fn build_branch_picker_items(
