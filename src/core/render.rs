@@ -195,7 +195,7 @@ fn compose_stack_pr_body(
     let root = base_url.trim_end_matches('/');
     let mut lines = vec!["### Stack Flow".to_string()];
     lines.push(format!(
-        "[{base_branch}]({root}/tree/{base_branch}) -> [{head_branch}]({root}/tree/{head_branch})"
+        "[{base_branch}]({root}/tree/{base_branch}) → [{head_branch}]({root}/tree/{head_branch})"
     ));
     if let Some(parent) = parent_branch {
         lines.push(format!("parent: [{parent}]({root}/tree/{parent})"));
@@ -343,6 +343,7 @@ mod tests {
         assert!(rendered.contains("[no PR]"));
         assert!(rendered.contains("https://github.com/acme/repo/compare/main...feat/a?expand=1"));
         assert!(rendered.contains("body=%23%23%23%20Stack%20Flow"));
+        assert!(rendered.contains("%E2%86%92"));
     }
 
     #[test]
