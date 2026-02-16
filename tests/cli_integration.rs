@@ -368,3 +368,21 @@ fn delete_command_splices_children_and_deletes_local_branch() {
         .expect("query feat/c parent");
     assert_eq!(parent_name, "feat/a");
 }
+
+#[test]
+fn delete_without_branch_in_non_interactive_mode_requires_argument() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["delete", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "branch required in non-interactive mode",
+        ));
+}

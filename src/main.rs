@@ -498,11 +498,40 @@ fn cmd_delete(
     yes: bool,
     base_branch: &str,
 ) -> Result<()> {
-    let target = args.branch.clone().unwrap_or(git.current_branch()?);
+    let current = git.current_branch()?;
+    let records = db.list_branches()?;
+    let theme = ColorfulTheme::default();
+
+    let target = if let Some(branch) = &args.branch {
+        branch.clone()
+    } else if stdout().is_terminal() && stdin().is_terminal() {
+        let tracked_names: Vec<String> = records.iter().map(|r| r.name.clone()).collect();
+        if tracked_names.is_empty() {
+            return Err(anyhow!("no tracked branches available to delete"));
+        }
+        let picker_items = build_delete_picker_items(&tracked_names, &current, &records);
+        let default_idx = tracked_names
+            .iter()
+            .position(|b| b == &current)
+            .unwrap_or(0);
+        let idx = prompt_or_cancel(
+            Select::with_theme(&theme)
+                .with_prompt(
+                    "Select branch to delete (↑/↓ to navigate, Enter to select, Ctrl-C to cancel)",
+                )
+                .items(&picker_items)
+                .default(default_idx)
+                .interact(),
+        )?;
+        tracked_names[idx].clone()
+    } else {
+        return Err(anyhow!(
+            "branch required in non-interactive mode; pass stack delete <branch>"
+        ));
+    };
     let branch = db
         .branch_by_name(&target)?
         .ok_or_else(|| anyhow!("branch '{}' is not tracked", target))?;
-    let records = db.list_branches()?;
     let by_id: HashMap<i64, &BranchRecord> = records.iter().map(|r| (r.id, r)).collect();
     let parent_name = branch
         .parent_branch_id
@@ -563,7 +592,6 @@ fn cmd_delete(
         eprintln!("warning: no upstream PR found for '{}'", branch.name);
     }
 
-    let current = git.current_branch()?;
     if current == branch.name {
         if parent_name == branch.name {
             return Err(anyhow!(
@@ -684,6 +712,28 @@ fn build_branch_picker_items(
         .collect()
 }
 
+fn build_delete_picker_items(
+    tracked_names: &[String],
+    current: &str,
+    tracked: &[BranchRecord],
+) -> Vec<String> {
+    let tracked_map: HashMap<&str, &BranchRecord> =
+        tracked.iter().map(|b| (b.name.as_str(), b)).collect();
+    tracked_names
+        .iter()
+        .map(|name| {
+            if name == current {
+                format!("● current  {name}")
+            } else if let Some(rec) = tracked_map.get(name.as_str()) {
+                let pr = rec.cached_pr_state.as_deref().unwrap_or("none");
+                format!("◆ tracked  {name}  (pr:{pr})")
+            } else {
+                format!("◆ tracked  {name}")
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,6 +757,32 @@ mod tests {
         assert!(items[0].starts_with("● current"));
         assert!(items[1].starts_with("◆ tracked"));
         assert!(items[2].starts_with("○ local"));
+    }
+
+    #[test]
+    fn delete_picker_items_highlight_current() {
+        let tracked = vec![
+            BranchRecord {
+                id: 1,
+                name: "feat/a".to_string(),
+                parent_branch_id: None,
+                last_synced_head_sha: None,
+                cached_pr_number: Some(10),
+                cached_pr_state: Some("open".to_string()),
+            },
+            BranchRecord {
+                id: 2,
+                name: "feat/b".to_string(),
+                parent_branch_id: None,
+                last_synced_head_sha: None,
+                cached_pr_number: None,
+                cached_pr_state: None,
+            },
+        ];
+        let names = vec!["feat/a".to_string(), "feat/b".to_string()];
+        let items = build_delete_picker_items(&names, "feat/b", &tracked);
+        assert!(items[0].starts_with("◆ tracked"));
+        assert!(items[1].starts_with("● current"));
     }
 
     #[test]

@@ -3,6 +3,8 @@
 Keep entries concise (1-3 bullets each). Newest first.
 
 ## Unreleased
+- `stack delete` now uses an interactive tracked-branch picker by default in TTYs (current branch preselected).
+- Non-interactive `stack delete` now requires an explicit branch argument instead of assuming current branch.
 - Clarified help output by separating command options from global options.
 - Added explicit shell completion installation examples to `stack completions --help`.
 - Added `stack delete` to close/delete upstream PRs, splice stack children, and delete local branches.
