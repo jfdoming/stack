@@ -58,7 +58,7 @@ fn sync_dry_run_porcelain_reports_restack_operation() {
 }
 
 #[test]
-fn sync_dry_run_restack_when_parent_not_ancestor_even_without_sha_delta() {
+fn sync_restack_when_parent_not_ancestor_even_without_sha_delta_plans_and_applies() {
     let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
@@ -115,46 +115,6 @@ fn sync_dry_run_restack_when_parent_not_ancestor_even_without_sha_delta() {
         found_parent,
         "expected restack op for feat/parent onto main when parent is not ancestor"
     );
-}
-
-#[test]
-fn sync_applies_restack_when_parent_not_ancestor() {
-    let repo = init_repo_without_origin();
-
-    stack_cmd(repo.path())
-        .args(["create", "--parent", "main", "--name", "feat/parent"])
-        .assert()
-        .success();
-    stack_cmd(repo.path())
-        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
-        .assert()
-        .success();
-
-    run_git(repo.path(), &["checkout", "main"]);
-    fs::write(repo.path().join("base.txt"), "base update\n").expect("write base update");
-    run_git(repo.path(), &["add", "base.txt"]);
-    run_git(repo.path(), &["commit", "-m", "base update"]);
-
-    let main_sha = {
-        let output = Command::new("git")
-            .current_dir(repo.path())
-            .args(["rev-parse", "main"])
-            .output()
-            .expect("rev-parse main");
-        assert!(output.status.success());
-        String::from_utf8(output.stdout)
-            .expect("utf8")
-            .trim()
-            .to_string()
-    };
-
-    let db_path = repo.path().join(".git").join("stack.db");
-    let conn = Connection::open(&db_path).expect("open db");
-    conn.execute(
-        "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
-        [main_sha],
-    )
-    .expect("seed main last synced sha");
 
     stack_cmd(repo.path())
         .args(["sync", "--yes"])

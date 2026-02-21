@@ -98,24 +98,7 @@ fn stack_top_and_bottom_switch_to_stack_extremes() {
 }
 
 #[test]
-fn stack_down_from_stack_root_errors_instead_of_switching_to_base() {
-    let repo = init_repo_without_origin();
-
-    stack_cmd(repo.path())
-        .args(["create", "--parent", "main", "--name", "feat/root"])
-        .assert()
-        .success();
-    run_git(repo.path(), &["checkout", "feat/root"]);
-
-    stack_cmd(repo.path())
-        .args(["down"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("has no parent branch in the stack"));
-}
-
-#[test]
-fn stack_nav_from_base_branch_reports_base_not_in_stack() {
+fn stack_navigation_excludes_base_branch() {
     let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
@@ -129,6 +112,14 @@ fn stack_nav_from_base_branch_reports_base_not_in_stack() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("is not part of stack navigation"));
+
+    run_git(repo.path(), &["checkout", "feat/root"]);
+
+    stack_cmd(repo.path())
+        .args(["down"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("has no parent branch in the stack"));
 }
 
 #[test]
