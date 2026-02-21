@@ -7,6 +7,7 @@ All notable changes to this repository are documented here. Each version in `Car
 - After successful non-dry-run `stack sync` in interactive TTY mode, stack now offers a follow-up push prompt; `--yes` auto-accepts this prompt in TTY mode.
 - Fixed sync replay execution by using `git replay --onto <new-base> <old-base>..<branch>` revision ranges.
 - Sync now applies replay-emitted branch ref updates and fast-forwards zero-commit restacks via `git rebase --onto`, so inherited parent commits are correctly propagated down the stack.
+- Fixed child restacks after parent rewrites to avoid synthetic duplicate empty commits by anchoring replay/rebase on the parent’s pre-sync SHA.
 - Added integration coverage for `stack push`, non-fast-forward force-with-lease pushes, and sync non-interactive post-apply push behaviour.
 
 ## 0.12.1 - 2026-02-16

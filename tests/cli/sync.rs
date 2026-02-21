@@ -181,6 +181,63 @@ fn sync_applies_restack_when_parent_not_ancestor() {
         "expected feat/child to contain feat/parent after sync restack"
     );
 }
+
+#[test]
+fn sync_fast_forwards_inherited_only_child_without_creating_empty_commit() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    fs::write(repo.path().join("parent.txt"), "parent work\n").expect("write parent work");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent work"]);
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path()).args(["sync", "--yes"]).assert().success();
+
+    fs::write(repo.path().join("base.txt"), "base update\n").expect("write base update");
+    run_git(repo.path(), &["add", "base.txt"]);
+    run_git(repo.path(), &["commit", "-m", "base update"]);
+
+    stack_cmd(repo.path()).args(["sync", "--yes"]).assert().success();
+
+    let parent_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "feat/parent"])
+            .output()
+            .expect("rev-parse feat/parent");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+    let child_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "feat/child"])
+            .output()
+            .expect("rev-parse feat/child");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    assert_eq!(
+        child_sha, parent_sha,
+        "expected inherited-only child to fast-forward to parent tip"
+    );
+}
 #[test]
 fn sync_succeeds_without_origin_remote() {
     let repo = init_repo_without_origin();

@@ -46,6 +46,7 @@
 - After non-dry-run `stack sync` in interactive TTY mode, stack offers a follow-up prompt to run `stack push`; `--yes` auto-accepts that prompt in TTY mode.
 - During restack execution, `stack sync` uses `git replay --onto <new-base> <old-base>..<branch>` and applies replay-emitted ref updates.
 - When a restack target has zero commits beyond the computed merge-base, sync uses `git rebase --onto` to fast-forward the branch onto its parent.
+- For child restacks onto a tracked parent branch, sync uses the parent’s pre-sync SHA as `old-base` to avoid generating duplicate empty commits when parent commits are rewritten.
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.

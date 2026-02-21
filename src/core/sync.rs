@@ -16,6 +16,7 @@ pub enum SyncOp {
     Restack {
         branch: String,
         onto: String,
+        old_base: Option<String>,
         reason: String,
     },
     UpdateSha {
@@ -49,6 +50,7 @@ impl SyncPlan {
                 SyncOp::Restack {
                     branch,
                     onto,
+                    old_base: _,
                     reason,
                 } => operations.push(OperationView {
                     kind: "restack".to_string(),
@@ -102,6 +104,7 @@ pub fn build_sync_plan(
     let mut ops = vec![SyncOp::Fetch {
         remote: base_remote.to_string(),
     }];
+    let mut current_sha_by_branch: HashMap<String, String> = HashMap::new();
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
 
@@ -146,6 +149,7 @@ pub fn build_sync_plan(
         }
 
         let current_sha = git.head_sha(&branch.name)?;
+        current_sha_by_branch.insert(branch.name.clone(), current_sha.clone());
         if let Some(parent_id) = branch.parent_branch_id
             && let Some(parent) = by_id.get(&parent_id)
             && branch_exists.get(&parent.name).copied().unwrap_or(false)
@@ -177,6 +181,7 @@ pub fn build_sync_plan(
         ops.push(SyncOp::Restack {
             branch: branch.clone(),
             onto: onto.clone(),
+            old_base: current_sha_by_branch.get(&onto).cloned(),
             reason: "parent updated or merged".to_string(),
         });
         if let Some(node) = tracked.iter().find(|b| b.name == branch)
@@ -278,8 +283,17 @@ pub fn execute_sync_plan(
         for op in &plan.ops {
             match op {
                 SyncOp::Fetch { remote } => git.fetch_remote(remote)?,
-                SyncOp::Restack { branch, onto, .. } => {
-                    let old_base = git.merge_base(branch, onto)?;
+                SyncOp::Restack {
+                    branch,
+                    onto,
+                    old_base,
+                    ..
+                } => {
+                    let old_base = if let Some(old_base) = old_base {
+                        old_base.clone()
+                    } else {
+                        git.merge_base(branch, onto)?
+                    };
                     if git.commit_distance(&old_base, branch)? == 0 {
                         git.rebase_onto(branch, &old_base, onto)?;
                         let sha = git.head_sha(branch)?;
