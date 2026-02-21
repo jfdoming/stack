@@ -2,6 +2,13 @@
 
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
+## 0.13.0 - 2026-02-21
+- Added `stack push` to push all tracked non-base branches with `git push --force-with-lease --set-upstream`.
+- After successful non-dry-run `stack sync` in interactive TTY mode, stack now offers a follow-up push prompt; `--yes` auto-accepts this prompt in TTY mode.
+- Fixed sync replay execution by using `git replay --onto <new-base> <old-base>..<branch>` revision ranges.
+- Sync now skips no-op restacks when a branch has no commits to replay, avoiding unnecessary replay/rebase fallback churn.
+- Added integration coverage for `stack push`, non-fast-forward force-with-lease pushes, and sync non-interactive post-apply push behaviour.
+
 ## 0.12.1 - 2026-02-16
 - Expanded `stack doctor` diagnostics to report:
   - base branch parent-link corruption (`base_has_parent`),
