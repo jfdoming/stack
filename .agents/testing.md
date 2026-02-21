@@ -22,8 +22,11 @@ Use this file for test strategy, scope, and execution expectations.
 - Add/update integration tests for user-visible command behaviour changes.
 - Cover non-interactive mode explicitly when command defaults/prompts change.
 - Validate porcelain output shape when output contracts change.
+- Prefer updating or extending existing tests before adding new test cases/files.
+- If adding a new test is necessary, keep it minimal and merge overlapping scenarios where practical.
 
 ## Quality Bar
 - New behaviour should be covered by at least one new or updated test.
 - Prefer deterministic tests (no network dependency assumptions).
 - Keep tests task-scoped; avoid unrelated refactors in test-only commits.
+- Keep test files as short as possible without reducing behavioural coverage.

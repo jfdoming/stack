@@ -31,6 +31,7 @@ PRs should include:
 - sample CLI output or screenshots for user-visible behaviour.
 - add or update tests in the same task when runtime behaviour changes (including bug fixes).
 - add or update tests when CLI parsing, prompts/defaults, output contracts, or persistence/sync logic changes.
+- prefer updating/merging existing tests over adding new ones when coverage can be preserved.
 - read `.agents/testing.md` before writing or modifying tests.
 
 ## When To Update Docs
