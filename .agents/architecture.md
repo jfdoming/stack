@@ -27,6 +27,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - Stops on conflict and warns on stash restore failures.
+- In interactive TTY mode after successful apply, offers a follow-up push step for tracked non-base branches.
 
 ## Track behaviour
 - `stack track` links existing local branches into stack parent relationships.

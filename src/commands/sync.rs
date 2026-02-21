@@ -69,5 +69,23 @@ pub fn run(
     if !opts.porcelain {
         println!("sync completed");
     }
+
+    if opts.porcelain {
+        return Ok(());
+    }
+
+    let is_tty = stdout().is_terminal() && stdin().is_terminal();
+    let should_push = if !is_tty {
+        false
+    } else if opts.yes {
+        true
+    } else {
+        confirm_inline_yes_no("Push tracked branches now?")?
+    };
+
+    if should_push {
+        crate::commands::push::run(db, git, false, base_branch)?;
+    }
+
     Ok(())
 }

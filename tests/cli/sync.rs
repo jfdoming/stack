@@ -233,3 +233,102 @@ fn sync_updates_existing_pr_body_with_managed_section() {
         "expected stale cached parent PR not to be reused, got: {gh_calls}"
     );
 }
+
+#[test]
+fn sync_yes_does_not_push_in_non_interactive_mode() {
+    let repo = init_repo_without_origin();
+    let bare = repo.path().join("origin.git");
+    run_git(
+        repo.path(),
+        &["init", "--bare", bare.to_str().expect("bare path")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            bare.to_str().expect("bare path"),
+        ],
+    );
+    run_git(repo.path(), &["config", "branch.main.remote", "origin"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+    run_git(repo.path(), &["push", "--set-upstream", "origin", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/local"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/local"]);
+    fs::write(repo.path().join("sync-push.txt"), "local\n").expect("write sync push file");
+    run_git(repo.path(), &["add", "sync-push.txt"]);
+    run_git(repo.path(), &["commit", "-m", "sync push commit"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pushed 'feat/local' to 'origin'").not());
+
+    let pushed = Command::new("git")
+        .current_dir(&bare)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/local"])
+        .status()
+        .expect("verify branch not pushed");
+    assert!(
+        !pushed.success(),
+        "expected non-interactive sync --yes not to auto-push"
+    );
+}
+
+#[test]
+fn sync_without_yes_does_not_push_in_non_interactive_mode() {
+    let repo = init_repo_without_origin();
+    let bare = repo.path().join("origin.git");
+    run_git(
+        repo.path(),
+        &["init", "--bare", bare.to_str().expect("bare path")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            bare.to_str().expect("bare path"),
+        ],
+    );
+    run_git(repo.path(), &["config", "branch.main.remote", "origin"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+    run_git(repo.path(), &["push", "--set-upstream", "origin", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/local"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/local"]);
+    fs::write(repo.path().join("sync-no-yes.txt"), "local\n").expect("write sync no yes file");
+    run_git(repo.path(), &["add", "sync-no-yes.txt"]);
+    run_git(repo.path(), &["commit", "-m", "sync no yes commit"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path()).args(["sync"]).assert().success();
+
+    let pushed = Command::new("git")
+        .current_dir(&bare)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/local"])
+        .status()
+        .expect("verify branch not pushed");
+    assert!(
+        !pushed.success(),
+        "expected non-interactive sync without --yes not to push"
+    );
+}
