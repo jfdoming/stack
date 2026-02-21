@@ -44,6 +44,10 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.
 
+## Push behaviour
+- `stack push` iterates tracked non-base branches from stack metadata and pushes each branch with `git push --force-with-lease --set-upstream`.
+- Branches tracked in metadata but missing locally are skipped with a warning.
+
 ## Create behaviour
 - `stack create --insert [child]` inserts the new branch between the child's prior parent and the child itself.
 - Insert operations update affected open PR managed-body sections to reflect the new parent/child chain.

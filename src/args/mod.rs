@@ -52,6 +52,8 @@ pub enum Commands {
     Delete(DeleteArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
+    /// Push tracked branches with force-with-lease
+    Push,
     /// Switch to the highest descendant in the current stack path
     Top,
     /// Switch to the stack root ancestor for the current branch

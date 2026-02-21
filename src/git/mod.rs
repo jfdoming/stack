@@ -86,6 +86,16 @@ impl Git {
         self.run(["push", "--set-upstream", remote, branch])
     }
 
+    pub fn push_branch_force_with_lease(&self, remote: &str, branch: &str) -> Result<()> {
+        self.run([
+            "push",
+            "--force-with-lease",
+            "--set-upstream",
+            remote,
+            branch,
+        ])
+    }
+
     pub fn head_sha(&self, branch: &str) -> Result<String> {
         self.capture(["rev-parse", branch])
             .map(|s| s.trim().to_string())

@@ -17,6 +17,7 @@
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
+- `cargo run -- push`: push all tracked non-base branches with `--force-with-lease`.
 
 ## CI
 - GitHub Actions workflow `.github/workflows/build.yaml` runs tests unconditionally (pull requests and `main` pushes).
@@ -57,6 +58,7 @@
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
 - `stack pr` pushes and auto-opens the PR URL immediately (no confirmation prompt).
+- `stack push` pushes all tracked non-base branches and uses `--force-with-lease` for each branch push.
 - If browser auto-open fails, `stack pr` prints a manual fallback link; styled TTY output uses OSC 8 clickable text instead of truncating the URL.
 - On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base.
 - `stack pr` blocks self-targeted PRs (`base == head`) with a clear message instead of generating a broken compare link.
