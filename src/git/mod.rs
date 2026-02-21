@@ -1,5 +1,6 @@
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -253,6 +254,30 @@ impl Git {
                 revision_range,
                 String::from_utf8_lossy(&output.stderr)
             ));
+        }
+        if !output.stdout.is_empty() {
+            let mut apply = Command::new("git")
+                .current_dir(&self.root)
+                .args(["update-ref", "--stdin"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("failed to run git update-ref --stdin")?;
+            if let Some(stdin) = apply.stdin.as_mut() {
+                stdin
+                    .write_all(&output.stdout)
+                    .context("failed to write git replay ref updates")?;
+            }
+            let apply_output = apply
+                .wait_with_output()
+                .context("failed to apply git replay ref updates")?;
+            if !apply_output.status.success() {
+                return Err(anyhow!(
+                    "git command failed [\"update-ref\", \"--stdin\"]: {}",
+                    String::from_utf8_lossy(&apply_output.stderr)
+                ));
+            }
         }
         Ok(())
     }

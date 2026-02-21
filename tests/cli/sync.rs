@@ -56,6 +56,131 @@ fn sync_dry_run_porcelain_reports_restack_operation() {
     });
     assert!(found, "expected restack op for feat/child onto feat/parent");
 }
+
+#[test]
+fn sync_dry_run_restack_when_parent_not_ancestor_even_without_sha_delta() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "main"]);
+    fs::write(repo.path().join("base.txt"), "base update\n").expect("write base update");
+    run_git(repo.path(), &["add", "base.txt"]);
+    run_git(repo.path(), &["commit", "-m", "base update"]);
+
+    let main_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse main");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
+        [main_sha],
+    )
+    .expect("seed main last synced sha");
+
+    let output = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run stack sync");
+    assert!(
+        output.status.success(),
+        "sync failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let ops = json["operations"].as_array().expect("operations array");
+    let found_parent = ops.iter().any(|op| {
+        op["kind"] == "restack" && op["branch"] == "feat/parent" && op["onto"] == "main"
+    });
+    assert!(
+        found_parent,
+        "expected restack op for feat/parent onto main when parent is not ancestor"
+    );
+}
+
+#[test]
+fn sync_applies_restack_when_parent_not_ancestor() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "main"]);
+    fs::write(repo.path().join("base.txt"), "base update\n").expect("write base update");
+    run_git(repo.path(), &["add", "base.txt"]);
+    run_git(repo.path(), &["commit", "-m", "base update"]);
+
+    let main_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse main");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
+        [main_sha],
+    )
+    .expect("seed main last synced sha");
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let parent_contains_main = Command::new("git")
+        .current_dir(repo.path())
+        .args(["merge-base", "--is-ancestor", "main", "feat/parent"])
+        .status()
+        .expect("check main ancestor feat/parent");
+    assert!(
+        parent_contains_main.success(),
+        "expected feat/parent to contain main after sync restack"
+    );
+
+    let child_contains_parent = Command::new("git")
+        .current_dir(repo.path())
+        .args(["merge-base", "--is-ancestor", "feat/parent", "feat/child"])
+        .status()
+        .expect("check parent ancestor feat/child");
+    assert!(
+        child_contains_parent.success(),
+        "expected feat/child to contain feat/parent after sync restack"
+    );
+}
 #[test]
 fn sync_succeeds_without_origin_remote() {
     let repo = init_repo_without_origin();

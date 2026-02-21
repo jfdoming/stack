@@ -146,6 +146,13 @@ pub fn build_sync_plan(
         }
 
         let current_sha = git.head_sha(&branch.name)?;
+        if let Some(parent_id) = branch.parent_branch_id
+            && let Some(parent) = by_id.get(&parent_id)
+            && branch_exists.get(&parent.name).copied().unwrap_or(false)
+            && !git.is_ancestor(&parent.name, &branch.name)?
+        {
+            queue.push_back((branch.name.clone(), parent.name.clone()));
+        }
         if let Some(previous_sha) = &branch.last_synced_head_sha
             && previous_sha != &current_sha
             && let Some(children_ids) = children.get(&branch.id)
@@ -274,6 +281,7 @@ pub fn execute_sync_plan(
                 SyncOp::Restack { branch, onto, .. } => {
                     let old_base = git.merge_base(branch, onto)?;
                     if git.commit_distance(&old_base, branch)? == 0 {
+                        git.rebase_onto(branch, &old_base, onto)?;
                         let sha = git.head_sha(branch)?;
                         db.set_sync_sha(branch, &sha)?;
                         continue;
