@@ -76,6 +76,17 @@ fn sync_succeeds_without_origin_remote() {
 
 #[test]
 fn sync_restores_branch_checked_out_before_run() {
+    let replay_supported = {
+        let output = Command::new("git")
+            .args(["help", "-a"])
+            .output()
+            .expect("check git help");
+        String::from_utf8_lossy(&output.stdout).contains("replay")
+    };
+    if !replay_supported {
+        return;
+    }
+
     let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
@@ -118,7 +129,8 @@ fn sync_restores_branch_checked_out_before_run() {
     stack_cmd(repo.path())
         .args(["sync", "--yes"])
         .assert()
-        .success();
+        .success()
+        .stderr(predicate::str::contains("falling back to rebase").not());
 
     let branch_output = Command::new("git")
         .current_dir(repo.path())

@@ -273,6 +273,11 @@ pub fn execute_sync_plan(
                 SyncOp::Fetch { remote } => git.fetch_remote(remote)?,
                 SyncOp::Restack { branch, onto, .. } => {
                     let old_base = git.merge_base(branch, onto)?;
+                    if git.commit_distance(&old_base, branch)? == 0 {
+                        let sha = git.head_sha(branch)?;
+                        db.set_sync_sha(branch, &sha)?;
+                        continue;
+                    }
                     if replay_supported {
                         if let Err(err) = git.replay_onto(branch, &old_base, onto) {
                             let reason = summarize_replay_error(&err);

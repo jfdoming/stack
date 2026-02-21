@@ -236,7 +236,25 @@ impl Git {
     }
 
     pub fn replay_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
-        self.run(["replay", "--onto", new_base, old_base, branch])
+        let revision_range = format!("{old_base}..{branch}");
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["replay", "--onto", new_base, &revision_range])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to run git [\"replay\", \"--onto\", \"{new_base}\", \"{revision_range}\"]"
+                )
+            })?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "git command failed [\"replay\", \"--onto\", \"{}\", \"{}\"]: {}",
+                new_base,
+                revision_range,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
     }
 
     pub fn rebase_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
