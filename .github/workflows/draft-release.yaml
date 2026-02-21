@@ -81,6 +81,19 @@ jobs:
             rm -f "${zip_path}"
           done
 
+      - name: Ensure Unix binaries are executable
+        if: steps.version.outputs.release_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          for path in dist/*; do
+            if [[ -f "$path" && "$path" != *.exe ]]; then
+              chmod 755 "$path"
+            fi
+          done
+
       - name: Create draft release and attach binaries
         if: steps.version.outputs.release_exists != 'true'
         env:
