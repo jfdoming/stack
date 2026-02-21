@@ -15,6 +15,8 @@ Use this file for documentation update rules and scope decisions.
 - `.agents/architecture.md`: module responsibilities, data model, behavioural design.
 - `README.md`: user-facing quick start and common command examples.
 - `CHANGELOG.md`: only when a new release version is created (not for docs-only changes).
+  Released version sections are immutable once that version bump is committed/pushed.
+  Put subsequent changes under `## Unreleased` until the next release.
 
 ## Writing Style
 - Use Canadian English for user-facing docs.

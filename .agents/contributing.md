@@ -58,6 +58,8 @@ Update documentation in the same PR as code changes:
 - update `AGENTS.md` when top-level navigation or contributor workflow changes,
 - add/update files in `.agents/` when module behaviour, architecture, or workflows change.
 - append a concise entry to `CHANGELOG.md` whenever a new version is released.
+- keep released sections immutable: after a version bump is committed/pushed, do not add/edit bullets under that released version.
+- record post-release follow-up changes under `## Unreleased` until the next version bump.
 - docs-only changes do not need a changelog entry.
 - For iterations on the same task, keep a single changelog entry (update the existing entry instead of adding another).
 
