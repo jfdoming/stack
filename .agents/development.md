@@ -70,6 +70,7 @@
 - When `stack pr` exits early for self-targeted PRs (`base == head`), it suppresses the redundant non-stacked warning.
 - For fork branches, `stack pr` builds compare links against `upstream` (when configured) and uses `owner:branch` head refs.
 - Generated `stack pr` URLs always include a compact `Stack Flow` PR body section wrapped in `<!-- stack:managed:start -->`/`<!-- stack:managed:end -->` markers; stacked branches include parent/child links, and user-provided body text is appended below it.
+- Stack-generated PR/compare links now URL-encode branch path segments and escape markdown link labels in generated bodies to avoid malformed or injected markdown links.
 - In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.

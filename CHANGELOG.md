@@ -3,6 +3,7 @@
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
 ## Unreleased
+- Hardened stack-managed PR/compare link generation by URL-encoding branch path segments and escaping markdown link labels.
 
 ## 0.13.1 - 2026-02-21
 - Sync now applies replay-emitted branch ref updates and fast-forwards zero-commit restacks via `git rebase --onto`, so inherited parent commits are correctly propagated down the stack.

@@ -12,7 +12,7 @@ use crate::provider::Provider;
 use crate::util::pr_body::{ManagedBranchRef, compose_branch_pr_body};
 use crate::util::pr_links::determine_pr_link_target;
 use crate::util::terminal::osc8_hyperlink;
-use crate::util::url::url_encode_component;
+use crate::util::url::{url_encode_compare_ref, url_encode_component};
 
 #[derive(Debug, Clone)]
 struct ManagedPrSection {
@@ -275,8 +275,8 @@ fn build_pr_open_url(
     Ok(format!(
         "{}/compare/{}...{}?{}",
         base_url.trim_end_matches('/'),
-        base,
-        head_ref,
+        url_encode_compare_ref(base),
+        url_encode_compare_ref(&head_ref),
         params.join("&")
     ))
 }

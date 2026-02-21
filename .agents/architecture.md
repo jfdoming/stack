@@ -64,6 +64,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitized before display to avoid terminal control-character injection.
+- Generated markdown link labels and branch path segments in stack-managed PR/compare content are escaped/URL-encoded to reduce malformed-link and markdown-injection risks.
 
 ## Doctor behaviour
 - `stack doctor` validates stack metadata integrity and reports repairable issues.

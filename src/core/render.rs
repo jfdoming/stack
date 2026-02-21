@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crossterm::style::Stylize;
 
 use crate::db::BranchRecord;
-use crate::util::url::url_encode_component;
+use crate::util::url::{
+    escape_markdown_link_label, url_encode_branch_path, url_encode_compare_ref,
+    url_encode_component,
+};
 
 #[derive(Debug, Clone)]
 pub struct BranchLinkTarget {
@@ -174,10 +177,12 @@ fn render_pr_link(
         format!(
             "{}/compare/{}...{}?expand=1&body={}",
             base.trim_end_matches('/'),
-            compare_base,
-            link_target
-                .map(|t| t.head_ref.as_str())
-                .unwrap_or(head_branch),
+            url_encode_compare_ref(compare_base),
+            url_encode_compare_ref(
+                link_target
+                    .map(|t| t.head_ref.as_str())
+                    .unwrap_or(head_branch),
+            ),
             url_encode_component(&body)
         )
     };
@@ -207,17 +212,29 @@ fn compose_stack_pr_body(
     child_branches: &[String],
 ) -> String {
     let root = base_url.trim_end_matches('/');
+    let base_label = escape_markdown_link_label(base_branch);
+    let base_path = url_encode_branch_path(base_branch);
+    let head_label = escape_markdown_link_label(head_branch);
+    let head_path = url_encode_branch_path(head_branch);
     let mut lines = vec!["### Stack Flow".to_string()];
     lines.push(format!(
-        "[{base_branch}]({root}/tree/{base_branch}) -> [{head_branch}]({root}/tree/{head_branch})"
+        "[{base_label}]({root}/tree/{base_path}) -> [{head_label}]({root}/tree/{head_path})"
     ));
     if let Some(parent) = parent_branch {
-        lines.push(format!("parent: [{parent}]({root}/tree/{parent})"));
+        let parent_label = escape_markdown_link_label(parent);
+        let parent_path = url_encode_branch_path(parent);
+        lines.push(format!(
+            "parent: [{parent_label}]({root}/tree/{parent_path})"
+        ));
     }
     if !child_branches.is_empty() {
         let children = child_branches
             .iter()
-            .map(|child| format!("[{child}]({root}/tree/{child})"))
+            .map(|child| {
+                let child_label = escape_markdown_link_label(child);
+                let child_path = url_encode_branch_path(child);
+                format!("[{child_label}]({root}/tree/{child_path})")
+            })
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("children: {children}"));
@@ -413,5 +430,28 @@ mod tests {
         );
         assert!(rendered.contains("[no PR (same base/head)]"));
         assert!(!rendered.contains("/compare/main...main"));
+    }
+
+    #[test]
+    fn compose_stack_pr_body_escapes_labels_and_encodes_branch_paths() {
+        let body = compose_stack_pr_body(
+            "https://github.com/acme/repo",
+            "main(prod)",
+            "feat/[head)",
+            Some("feat/paren]t"),
+            &["child one".to_string()],
+        );
+        assert!(
+            body.contains("[main\\(prod\\)](https://github.com/acme/repo/tree/main%28prod%29)")
+        );
+        assert!(
+            body.contains("[feat/\\[head\\)](https://github.com/acme/repo/tree/feat/%5Bhead%29)")
+        );
+        assert!(body.contains(
+            "parent: [feat/paren\\]t](https://github.com/acme/repo/tree/feat/paren%5Dt)"
+        ));
+        assert!(
+            body.contains("children: [child one](https://github.com/acme/repo/tree/child%20one)")
+        );
     }
 }

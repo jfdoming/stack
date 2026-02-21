@@ -1,3 +1,5 @@
+use crate::util::url::{escape_markdown_link_label, url_encode_branch_path};
+
 #[derive(Debug, Clone)]
 pub struct ManagedBranchRef {
     pub branch: String,
@@ -16,11 +18,13 @@ pub fn managed_pr_section(
     first_child: Option<&ManagedBranchRef>,
 ) -> String {
     let root = base_url.trim_end_matches('/');
+    let base_label = escape_markdown_link_label(base_branch);
+    let base_path = url_encode_branch_path(base_branch);
     let parent_chain = parent
         .map(|p| {
             if p.branch == base_branch {
                 base_commit_url
-                    .map(|url| format!("[{base_branch}]({url})"))
+                    .map(|url| format!("[{base_label}]({url})"))
                     .unwrap_or_else(|| format_pr_chain_node(root, p))
             } else {
                 format_pr_chain_node(root, p)
@@ -28,8 +32,8 @@ pub fn managed_pr_section(
         })
         .unwrap_or_else(|| {
             base_commit_url
-                .map(|url| format!("[{base_branch}]({url})"))
-                .unwrap_or_else(|| format!("[{base_branch}]({root}/tree/{base_branch})"))
+                .map(|url| format!("[{base_label}]({url})"))
+                .unwrap_or_else(|| format!("[{base_label}]({root}/tree/{base_path})"))
         });
     let prefix = if parent.is_some_and(|p| p.branch != base_branch) {
         "… → ".to_string()
@@ -115,7 +119,9 @@ fn format_pr_chain_node(root: &str, node: &ManagedBranchRef) -> String {
             format!("[#{number}]({root}/pull/{number})")
         }
     } else {
-        format!("[{}]({root}/tree/{})", node.branch, node.branch)
+        let label = escape_markdown_link_label(&node.branch);
+        let encoded = url_encode_branch_path(&node.branch);
+        format!("[{label}]({root}/tree/{encoded})")
     }
 }
 
@@ -244,5 +250,32 @@ mod tests {
         );
         assert!(body.contains("[main](https://github.com/acme/repo/commit/abc123)"));
         assert!(!body.contains("/tree/main"));
+    }
+
+    #[test]
+    fn managed_pr_section_escapes_labels_and_encodes_branch_paths() {
+        let parent = ManagedBranchRef {
+            branch: "feat/paren]t".to_string(),
+            pr_number: None,
+            pr_url: None,
+        };
+        let child = ManagedBranchRef {
+            branch: "feat/[child)".to_string(),
+            pr_number: None,
+            pr_url: None,
+        };
+        let body = managed_pr_section(
+            "https://github.com/acme/repo",
+            "main(prod)",
+            None,
+            Some(&parent),
+            Some(&child),
+        );
+        assert!(
+            body.contains("[feat/paren\\]t](https://github.com/acme/repo/tree/feat/paren%5Dt)")
+        );
+        assert!(
+            body.contains("[feat/\\[child\\)](https://github.com/acme/repo/tree/feat/%5Bchild%29)")
+        );
     }
 }
