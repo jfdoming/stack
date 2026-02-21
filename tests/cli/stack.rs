@@ -91,10 +91,44 @@ fn stack_top_and_bottom_switch_to_stack_extremes() {
         .success();
 
     stack_cmd(repo.path()).args(["bottom"]).assert().success();
-    assert_eq!(current_branch(repo.path()), "main");
+    assert_eq!(current_branch(repo.path()), "feat/a");
 
     stack_cmd(repo.path()).args(["top"]).assert().success();
     assert_eq!(current_branch(repo.path()), "feat/c");
+}
+
+#[test]
+fn stack_down_from_stack_root_errors_instead_of_switching_to_base() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/root"]);
+
+    stack_cmd(repo.path())
+        .args(["down"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("has no parent branch in the stack"));
+}
+
+#[test]
+fn stack_nav_from_base_branch_reports_base_not_in_stack() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["up"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not part of stack navigation"));
 }
 
 #[test]
@@ -102,15 +136,19 @@ fn stack_up_requires_disambiguation_when_branch_has_multiple_children() {
     let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
-        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .args(["create", "--parent", "main", "--name", "feat/root"])
         .assert()
         .success();
-    run_git(repo.path(), &["checkout", "main"]);
     stack_cmd(repo.path())
-        .args(["create", "--parent", "main", "--name", "feat/b"])
+        .args(["create", "--parent", "feat/root", "--name", "feat/a"])
         .assert()
         .success();
-    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["checkout", "feat/root"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/root", "--name", "feat/b"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "feat/root"]);
 
     stack_cmd(repo.path())
         .args(["up"])

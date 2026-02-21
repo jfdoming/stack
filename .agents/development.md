@@ -6,7 +6,7 @@
 - `cargo fmt`: apply rustfmt formatting.
 - `cargo run -- --help`: top-level command help.
 - `cargo run -- top`: switch to the top-most descendant in the current stack path.
-- `cargo run -- bottom`: switch to the root ancestor branch for the current stack path.
+- `cargo run -- bottom`: switch to the root stacked ancestor branch (base branch excluded).
 - `cargo run -- up`: switch to a direct child branch.
 - `cargo run -- down`: switch to the direct parent branch.
 - `cargo run -- sync --dry-run`: preview sync plan without execution.
@@ -36,6 +36,7 @@
 - `stack` without args prints a one-shot tree visualization by default.
 - `stack --interactive` opens the fullscreen TUI.
 - `stack up`/`stack top` prompt for child selection in TTY mode when the current branch has multiple tracked children; non-interactive mode returns an ambiguity error.
+- Base branch is excluded from stack navigation (`up`, `down`, `top`, `bottom`); run navigation commands from tracked non-base branches.
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.
 - `stack create --insert [child]` inserts a new branch between the child's current parent and that child, updates stack metadata links, and refreshes managed sections for affected open PR bodies.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).

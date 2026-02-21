@@ -48,6 +48,10 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.
 
+## Navigation behaviour
+- Stack navigation treats the configured base branch as outside the stack.
+- `bottom` resolves to the lowest tracked non-base ancestor; `down` from that root errors instead of switching to base.
+
 ## Push behaviour
 - `stack push` iterates tracked non-base branches from stack metadata and pushes each branch with `git push --force-with-lease --set-upstream`.
 - Branches tracked in metadata but missing locally are skipped with a warning.

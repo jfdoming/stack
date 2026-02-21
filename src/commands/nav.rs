@@ -33,12 +33,29 @@ pub fn run(db: &Database, git: &Git, command: NavCommand, porcelain: bool) -> Re
         return Err(anyhow!("cannot navigate stack from detached HEAD"));
     }
 
+    let base_branch = db.repo_meta()?.base_branch;
+    if current == base_branch {
+        return Err(anyhow!(
+            "base branch '{}' is not part of stack navigation; switch to a stacked branch first",
+            base_branch
+        ));
+    }
+
     let tracked = db.list_branches()?;
-    let by_name: HashMap<&str, &BranchRecord> =
-        tracked.iter().map(|b| (b.name.as_str(), b)).collect();
-    let by_id: HashMap<i64, &BranchRecord> = tracked.iter().map(|b| (b.id, b)).collect();
+    let nav_tracked: Vec<&BranchRecord> = tracked
+        .iter()
+        .filter(|record| record.name != base_branch)
+        .collect();
+    let by_name: HashMap<&str, &BranchRecord> = nav_tracked
+        .iter()
+        .map(|record| (record.name.as_str(), *record))
+        .collect();
+    let by_id: HashMap<i64, &BranchRecord> = nav_tracked
+        .iter()
+        .map(|record| (record.id, *record))
+        .collect();
     let mut children_by_parent: HashMap<i64, Vec<String>> = HashMap::new();
-    for rec in &tracked {
+    for rec in &nav_tracked {
         if let Some(parent_id) = rec.parent_branch_id {
             children_by_parent
                 .entry(parent_id)
@@ -108,9 +125,12 @@ fn resolve_down(current: &BranchRecord, by_id: &HashMap<i64, &BranchRecord>) -> 
             current.name
         )
     })?;
-    let parent = by_id
-        .get(&parent_id)
-        .ok_or_else(|| anyhow!("tracked parent metadata missing for '{}'", current.name))?;
+    let Some(parent) = by_id.get(&parent_id) else {
+        return Err(anyhow!(
+            "branch '{}' has no parent branch in the stack",
+            current.name
+        ));
+    };
     Ok(parent.name.clone())
 }
 
@@ -120,10 +140,9 @@ fn resolve_bottom(current: &BranchRecord, by_id: &HashMap<i64, &BranchRecord>) -
     seen.insert(cursor.id);
 
     while let Some(parent_id) = cursor.parent_branch_id {
-        let parent = by_id
-            .get(&parent_id)
-            .copied()
-            .ok_or_else(|| anyhow!("tracked parent metadata missing for '{}'", cursor.name))?;
+        let Some(parent) = by_id.get(&parent_id).copied() else {
+            return Ok(cursor.name.clone());
+        };
         if !seen.insert(parent.id) {
             return Err(anyhow!("detected a cycle while walking stack parents"));
         }

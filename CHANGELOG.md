@@ -5,6 +5,7 @@ All notable changes to this repository are documented here. Each version in `Car
 ## Unreleased
 - Sync now applies replay-emitted branch ref updates and fast-forwards zero-commit restacks via `git rebase --onto`, so inherited parent commits are correctly propagated down the stack.
 - Fixed child restacks after parent rewrites to avoid synthetic duplicate empty commits by anchoring replay/rebase on the parent’s pre-sync SHA.
+- Stack navigation now excludes the base branch: `bottom` resolves to the root stacked branch and `down` from that root no longer switches to base.
 
 ## 0.13.0 - 2026-02-21
 - Added `stack push` to push all tracked non-base branches with `git push --force-with-lease --set-upstream`.
