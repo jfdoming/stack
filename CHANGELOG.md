@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.14.1 - 2026-02-22
+- Fixed a sync planning regression where descendants could be re-restacked when a merged parent branch was tracked but missing locally.
+- Added coverage to ensure sync does not plan child restacks when the merged parent ref is absent.
+
 ## 0.14.0 - 2026-02-22
 - Sync dry-run planning now suppresses no-op `fetch`, `update_base`, and `update_sha` operations when the stack is already current.
 - When the entire tracked non-base stack is merged, `stack sync` now prunes merged local branch refs and stack metadata; partially merged stacks are left intact.
