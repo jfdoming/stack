@@ -144,6 +144,13 @@ impl Git {
         self.run(["fetch", remote])
     }
 
+    pub fn preferred_sync_remote(&self, base_remote: &str) -> Result<String> {
+        if self.has_remote("upstream")? {
+            return Ok("upstream".to_string());
+        }
+        Ok(base_remote.to_string())
+    }
+
     pub fn default_base_branch(&self) -> Result<String> {
         let output = Command::new("git")
             .current_dir(&self.root)
@@ -221,6 +228,25 @@ impl Git {
             .output()
             .map(|out| String::from_utf8_lossy(&out.stdout).contains("replay"))
             .unwrap_or(false)
+    }
+
+    pub fn ref_exists(&self, name: &str) -> Result<bool> {
+        let status = Command::new("git")
+            .current_dir(&self.root)
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{name}^{{commit}}"),
+            ])
+            .status()
+            .with_context(|| format!("failed to verify ref {name}"))?;
+        Ok(status.success())
+    }
+
+    pub fn fast_forward_branch(&self, branch: &str, onto: &str) -> Result<()> {
+        self.run(["checkout", branch])?;
+        self.run(["merge", "--ff-only", onto])
     }
 
     fn has_remote(&self, name: &str) -> Result<bool> {

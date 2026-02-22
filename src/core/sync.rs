@@ -13,6 +13,10 @@ pub enum SyncOp {
     Fetch {
         remote: String,
     },
+    UpdateBaseToMergeCommit {
+        branch: String,
+        merge_commit: String,
+    },
     Restack {
         branch: String,
         onto: String,
@@ -46,6 +50,15 @@ impl SyncPlan {
                     branch: remote.clone(),
                     onto: None,
                     details: format!("fetch {remote}"),
+                }),
+                SyncOp::UpdateBaseToMergeCommit {
+                    branch,
+                    merge_commit,
+                } => operations.push(OperationView {
+                    kind: "update_base".to_string(),
+                    branch: branch.clone(),
+                    onto: Some(merge_commit.clone()),
+                    details: format!("ff-only to merged commit {merge_commit}"),
                 }),
                 SyncOp::Restack {
                     branch,
@@ -88,6 +101,7 @@ pub fn build_sync_plan(
     base_branch: &str,
     base_remote: &str,
 ) -> Result<SyncPlan> {
+    let sync_remote = git.preferred_sync_remote(base_remote)?;
     let tracked = db.list_branches()?;
     let mut branch_exists: HashMap<String, bool> = HashMap::new();
     for branch in &tracked {
@@ -102,11 +116,12 @@ pub fn build_sync_plan(
     let pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
 
     let mut ops = vec![SyncOp::Fetch {
-        remote: base_remote.to_string(),
+        remote: sync_remote.clone(),
     }];
     let mut current_sha_by_branch: HashMap<String, String> = HashMap::new();
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut base_merge_commit_to_apply: Option<String> = None;
 
     for b in &tracked {
         by_id.insert(b.id, b.clone());
@@ -135,9 +150,22 @@ pub fn build_sync_plan(
             db.set_pr_cache(&branch.name, Some(pr.number), Some(state))?;
 
             if matches!(pr.state, PrState::Merged) {
-                let new_base = pr
-                    .merge_commit_oid
-                    .unwrap_or_else(|| format!("{base_remote}/{base_branch}"));
+                let merge_commit_oid = pr.merge_commit_oid.clone();
+                let new_base = merge_commit_oid
+                    .clone()
+                    .unwrap_or_else(|| format!("{sync_remote}/{base_branch}"));
+
+                let is_direct_child_of_base = branch
+                    .parent_branch_id
+                    .and_then(|parent_id| by_id.get(&parent_id))
+                    .is_some_and(|parent| parent.name == base_branch);
+                if is_direct_child_of_base
+                    && base_merge_commit_to_apply.is_none()
+                    && let Some(merge_commit_oid) = merge_commit_oid.as_deref()
+                {
+                    base_merge_commit_to_apply = Some(merge_commit_oid.to_string());
+                }
+
                 if let Some(children_ids) = children.get(&branch.id) {
                     for child_id in children_ids {
                         if let Some(child) = by_id.get(child_id) {
@@ -153,9 +181,20 @@ pub fn build_sync_plan(
         if let Some(parent_id) = branch.parent_branch_id
             && let Some(parent) = by_id.get(&parent_id)
             && branch_exists.get(&parent.name).copied().unwrap_or(false)
-            && !git.is_ancestor(&parent.name, &branch.name)?
         {
-            queue.push_back((branch.name.clone(), parent.name.clone()));
+            let parent_onto = if parent.name == base_branch {
+                let remote_base_ref = format!("{sync_remote}/{base_branch}");
+                if git.ref_exists(&remote_base_ref)? {
+                    remote_base_ref
+                } else {
+                    parent.name.clone()
+                }
+            } else {
+                parent.name.clone()
+            };
+            if !git.is_ancestor(&parent_onto, &branch.name)? {
+                queue.push_back((branch.name.clone(), parent.name.clone()));
+            }
         }
         if let Some(previous_sha) = &branch.last_synced_head_sha
             && previous_sha != &current_sha
@@ -171,6 +210,16 @@ pub fn build_sync_plan(
             branch: branch.name.clone(),
             sha: current_sha,
         });
+    }
+
+    if let Some(merge_commit) = base_merge_commit_to_apply {
+        ops.insert(
+            1,
+            SyncOp::UpdateBaseToMergeCommit {
+                branch: base_branch.to_string(),
+                merge_commit,
+            },
+        );
     }
 
     let mut seen_restack = HashSet::new();
@@ -196,7 +245,7 @@ pub fn build_sync_plan(
     }
 
     let base_url = git
-        .remote_web_url(base_remote)?
+        .remote_web_url(&sync_remote)?
         .or_else(|| git.remote_web_url("origin").ok().flatten())
         .or_else(|| git.remote_web_url("upstream").ok().flatten());
     if let Some(base_url) = base_url {
@@ -283,6 +332,14 @@ pub fn execute_sync_plan(
         for op in &plan.ops {
             match op {
                 SyncOp::Fetch { remote } => git.fetch_remote(remote)?,
+                SyncOp::UpdateBaseToMergeCommit {
+                    branch,
+                    merge_commit,
+                } => {
+                    git.fast_forward_branch(branch, merge_commit)?;
+                    let sha = git.head_sha(branch)?;
+                    db.set_sync_sha(branch, &sha)?;
+                }
                 SyncOp::Restack {
                     branch,
                     onto,

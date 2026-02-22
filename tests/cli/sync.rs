@@ -307,6 +307,258 @@ fn sync_plan_fetch_uses_base_branch_remote() {
 
 #[cfg(unix)]
 #[test]
+fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
+    let repo = init_repo_without_origin();
+    let origin_bare = repo.path().join("origin.git");
+    let upstream_bare = repo.path().join("upstream.git");
+
+    run_git(
+        repo.path(),
+        &["init", "--bare", origin_bare.to_str().expect("origin bare")],
+    );
+    run_git(
+        repo.path(),
+        &["init", "--bare", upstream_bare.to_str().expect("upstream bare")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin_bare.to_str().expect("origin bare"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            upstream_bare.to_str().expect("upstream bare"),
+        ],
+    );
+    run_git(repo.path(), &["push", "--set-upstream", "origin", "main"]);
+    run_git(repo.path(), &["push", "upstream", "main"]);
+    run_git(repo.path(), &["config", "branch.main.remote", "origin"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let upstream_work = repo.path().join("upstream-work");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            upstream_bare.to_str().expect("upstream bare"),
+            upstream_work.to_str().expect("upstream work"),
+        ],
+    );
+    run_git(
+        &upstream_work,
+        &["config", "user.email", "upstream@example.com"],
+    );
+    run_git(&upstream_work, &["config", "user.name", "Upstream Bot"]);
+    run_git(&upstream_work, &["config", "commit.gpgsign", "false"]);
+    fs::write(upstream_work.join("README.md"), "init\nmerged\n").expect("write merged state");
+    run_git(&upstream_work, &["add", "README.md"]);
+    run_git(&upstream_work, &["commit", "-m", "merge feat/parent"]);
+    let merged_sha = {
+        let output = Command::new("git")
+            .current_dir(&upstream_work)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("rev-parse merged sha");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    fs::write(upstream_work.join("README.md"), "init\nmerged\nafter\n").expect("write tip state");
+    run_git(&upstream_work, &["add", "README.md"]);
+    run_git(&upstream_work, &["commit", "-m", "after merge commit"]);
+    let upstream_tip_sha = {
+        let output = Command::new("git")
+            .current_dir(&upstream_work)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("rev-parse upstream tip");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+    run_git(&upstream_work, &["push", "origin", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-merged");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            merged_sha
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let local_main_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse local main");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+    assert_eq!(
+        local_main_sha, merged_sha,
+        "expected sync to update local main to merged commit"
+    );
+    assert_ne!(
+        local_main_sha, upstream_tip_sha,
+        "expected sync not to advance local main past merged commit"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_does_not_move_main_without_merged_pr() {
+    let repo = init_repo_without_origin();
+    let origin_bare = repo.path().join("origin.git");
+    let upstream_bare = repo.path().join("upstream.git");
+
+    run_git(
+        repo.path(),
+        &["init", "--bare", origin_bare.to_str().expect("origin bare")],
+    );
+    run_git(
+        repo.path(),
+        &["init", "--bare", upstream_bare.to_str().expect("upstream bare")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin_bare.to_str().expect("origin bare"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            upstream_bare.to_str().expect("upstream bare"),
+        ],
+    );
+    run_git(repo.path(), &["push", "--set-upstream", "origin", "main"]);
+    run_git(repo.path(), &["push", "upstream", "main"]);
+    run_git(repo.path(), &["config", "branch.main.remote", "origin"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+
+    let main_before_sync = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse main before sync");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    let upstream_work = repo.path().join("upstream-work-no-merge");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            upstream_bare.to_str().expect("upstream bare"),
+            upstream_work.to_str().expect("upstream work"),
+        ],
+    );
+    run_git(
+        &upstream_work,
+        &["config", "user.email", "upstream@example.com"],
+    );
+    run_git(&upstream_work, &["config", "user.name", "Upstream Bot"]);
+    run_git(&upstream_work, &["config", "commit.gpgsign", "false"]);
+    fs::write(upstream_work.join("README.md"), "init\nupstream only\n").expect("write upstream");
+    run_git(&upstream_work, &["add", "README.md"]);
+    run_git(&upstream_work, &["commit", "-m", "upstream only"]);
+    run_git(&upstream_work, &["push", "origin", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-no-merge");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let main_after_sync = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse main after sync");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+    assert_eq!(
+        main_after_sync, main_before_sync,
+        "expected main to remain unchanged when no PR is merged"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_updates_existing_pr_body_with_managed_section() {
     let repo = init_repo_without_origin();
     run_git(
