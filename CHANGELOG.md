@@ -3,6 +3,8 @@
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
 ## Unreleased
+
+## 0.13.2 - 2026-02-22
 - Hardened stack-managed PR/compare link generation by URL-encoding branch path segments and escaping markdown link labels.
 - Sync now prefers fetching `upstream` (when configured) so merged-parent commit SHAs resolve correctly in fork workflows.
 - Sync now only advances the local base branch when a direct child PR is merged, and fast-forwards to that exact merge commit SHA rather than the latest base tip.
