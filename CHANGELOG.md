@@ -7,6 +7,7 @@ All notable changes to this repository are documented here. Each version in `Car
 - Sync now prefers fetching `upstream` (when configured) so merged-parent commit SHAs resolve correctly in fork workflows.
 - Sync now only advances the local base branch when a direct child PR is merged, and fast-forwards to that exact merge commit SHA rather than the latest base tip.
 - Fixed sync rebase fallback after squash merges by anchoring merged-parent child restacks on the parent branch tip, preventing already-merged parent commits from being replayed.
+- Sync now treats cached merged branches as merged when fresh PR metadata is unavailable, skipping direct restack/update ops for those branches to avoid conflicting rewrites.
 
 ## 0.13.1 - 2026-02-21
 - Sync now applies replay-emitted branch ref updates and fast-forwards zero-commit restacks via `git rebase --onto`, so inherited parent commits are correctly propagated down the stack.

@@ -683,6 +683,71 @@ fn sync_rebase_fallback_drops_merged_parent_commits_after_squash_merge() {
 
 #[cfg(unix)]
 #[test]
+fn sync_skips_cached_merged_branch_when_pr_metadata_missing() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    fs::write(repo.path().join("parent.txt"), "parent\n").expect("write parent change");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent change"]);
+
+    run_git(repo.path(), &["checkout", "main"]);
+    fs::write(repo.path().join("base.txt"), "base update\n").expect("write base update");
+    run_git(repo.path(), &["add", "base.txt"]);
+    run_git(repo.path(), &["commit", "-m", "base update"]);
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/parent'",
+        [],
+    )
+    .expect("seed merged pr cache");
+
+    let fake_bin = repo.path().join("fake-bin-no-pr-metadata");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[]'\n  exit 0\nfi\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run sync dry-run");
+    assert!(
+        output.status.success(),
+        "sync dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let ops = json["operations"].as_array().expect("operations array");
+    let parent_restack = ops.iter().any(|op| {
+        op["kind"] == "restack" && op["branch"] == "feat/parent" && op["onto"] == "main"
+    });
+    assert!(
+        !parent_restack,
+        "expected merged parent branch to be skipped from restack operations"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_updates_existing_pr_body_with_managed_section() {
     let repo = init_repo_without_origin();
     run_git(

@@ -149,7 +149,10 @@ pub fn build_sync_plan(
         let current_sha = git.head_sha(&branch.name)?;
         current_sha_by_branch.insert(branch.name.clone(), current_sha.clone());
 
-        let mut is_merged_pr = false;
+        let mut is_merged_pr = branch
+            .cached_pr_state
+            .as_deref()
+            .is_some_and(|state| state.eq_ignore_ascii_case("merged"));
         if let Some(pr) = pr_by_branch.get(&branch.name).cloned() {
             let state = match pr.state {
                 PrState::Open => "open",
@@ -158,9 +161,9 @@ pub fn build_sync_plan(
                 PrState::Unknown => "unknown",
             };
             db.set_pr_cache(&branch.name, Some(pr.number), Some(state))?;
+            is_merged_pr = matches!(pr.state, PrState::Merged);
 
             if matches!(pr.state, PrState::Merged) {
-                is_merged_pr = true;
                 let merge_commit_oid = pr.merge_commit_oid.clone();
                 let new_base = merge_commit_oid
                     .clone()
@@ -186,6 +189,19 @@ pub fn build_sync_plan(
                                 old_base: Some(current_sha.clone()),
                             });
                         }
+                    }
+                }
+            }
+        } else if is_merged_pr {
+            let new_base = format!("{sync_remote}/{base_branch}");
+            if let Some(children_ids) = children.get(&branch.id) {
+                for child_id in children_ids {
+                    if let Some(child) = by_id.get(child_id) {
+                        queue.push_back(RestackCandidate {
+                            branch: child.name.clone(),
+                            onto: new_base.clone(),
+                            old_base: Some(current_sha.clone()),
+                        });
                     }
                 }
             }
@@ -229,10 +245,12 @@ pub fn build_sync_plan(
                 }
             }
         }
-        ops.push(SyncOp::UpdateSha {
-            branch: branch.name.clone(),
-            sha: current_sha,
-        });
+        if !is_merged_pr {
+            ops.push(SyncOp::UpdateSha {
+                branch: branch.name.clone(),
+                sha: current_sha,
+            });
+        }
     }
 
     if let Some(merge_commit) = base_merge_commit_to_apply {

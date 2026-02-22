@@ -30,6 +30,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - For tracked parent-child restacks, execution prefers the parent’s pre-sync SHA as the replay/rebase `old_base` anchor to avoid duplicate empty commits after parent history rewrites.
 - For merged-parent child restacks, execution uses the merged parent branch tip as `old_base` so parent commits are not replayed again over squash-merged base history.
 - When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
+- Branches marked merged (from fresh PR metadata or cached merged state) are excluded from direct sync restack/update operations; only descendants are considered for follow-up restacks.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - Stops on conflict and warns on stash restore failures.
