@@ -126,7 +126,6 @@ pub fn build_sync_plan(
     let metadata_targets: Vec<(&str, Option<i64>)> = tracked
         .iter()
         .filter(|branch| branch.name != base_branch)
-        .filter(|branch| branch_exists.get(&branch.name).copied().unwrap_or(false))
         .map(|branch| (branch.name.as_str(), branch.cached_pr_number))
         .collect();
     let pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
@@ -149,14 +148,15 @@ pub fn build_sync_plan(
     let mut queue: VecDeque<RestackCandidate> = VecDeque::new();
 
     for branch in &tracked {
-        if !branch_exists.get(&branch.name).copied().unwrap_or(false) {
-            continue;
-        }
-        if branch.name == base_branch {
-            db.set_pr_cache(&branch.name, None, None)?;
-        }
-        let current_sha = git.head_sha(&branch.name)?;
-        current_sha_by_branch.insert(branch.name.clone(), current_sha.clone());
+        let branch_is_local = branch_exists.get(&branch.name).copied().unwrap_or(false);
+        let current_sha = if branch_is_local {
+            let sha = git.head_sha(&branch.name)?;
+            current_sha_by_branch.insert(branch.name.clone(), sha.clone());
+            Some(sha)
+        } else {
+            None
+        };
+        let mut merged_restack_base: Option<String> = None;
 
         let mut is_merged_pr = branch
             .cached_pr_state
@@ -174,9 +174,11 @@ pub fn build_sync_plan(
 
             if matches!(pr.state, PrState::Merged) {
                 let merge_commit_oid = pr.merge_commit_oid.clone();
-                let new_base = merge_commit_oid
-                    .clone()
-                    .unwrap_or_else(|| format!("{sync_remote}/{base_branch}"));
+                merged_restack_base = Some(
+                    merge_commit_oid
+                        .clone()
+                        .unwrap_or_else(|| format!("{sync_remote}/{base_branch}")),
+                );
 
                 let is_direct_child_of_base = branch
                     .parent_branch_id
@@ -188,46 +190,27 @@ pub fn build_sync_plan(
                 {
                     base_merge_commit_to_apply = Some(merge_commit_oid.to_string());
                 }
-
-                if let Some(children_ids) = children.get(&branch.id) {
-                    for child_id in children_ids {
-                        if let Some(child) = by_id.get(child_id) {
-                            let should_restack = if git.ref_exists(&new_base)? {
-                                !git.is_ancestor(&new_base, &child.name)?
-                            } else {
-                                true
-                            };
-                            if should_restack {
-                                let child_merged = pr_by_branch
-                                    .get(&child.name)
-                                    .map(|pr| matches!(pr.state, PrState::Merged))
-                                    .unwrap_or_else(|| {
-                                        child
-                                            .cached_pr_state
-                                            .as_deref()
-                                            .is_some_and(|state| {
-                                                state.eq_ignore_ascii_case("merged")
-                                            })
-                                    });
-                                if child_merged {
-                                    continue;
-                                }
-                                needs_fetch = true;
-                                queue.push_back(RestackCandidate {
-                                    branch: child.name.clone(),
-                                    onto: new_base.clone(),
-                                    old_base: Some(current_sha.clone()),
-                                });
-                            }
-                        }
-                    }
-                }
             }
-        } else if is_merged_pr {
-            let new_base = format!("{sync_remote}/{base_branch}");
+        }
+        merged_state_by_branch.insert(branch.name.clone(), is_merged_pr);
+
+        if !branch_is_local {
+            continue;
+        }
+        if branch.name == base_branch {
+            db.set_pr_cache(&branch.name, None, None)?;
+        }
+        let current_sha = current_sha.expect("local branch SHA should be available");
+
+        if is_merged_pr {
+            let new_base =
+                merged_restack_base.unwrap_or_else(|| format!("{sync_remote}/{base_branch}"));
             if let Some(children_ids) = children.get(&branch.id) {
                 for child_id in children_ids {
                     if let Some(child) = by_id.get(child_id) {
+                        if !branch_exists.get(&child.name).copied().unwrap_or(false) {
+                            continue;
+                        }
                         let should_restack = if git.ref_exists(&new_base)? {
                             !git.is_ancestor(&new_base, &child.name)?
                         } else {
@@ -257,7 +240,6 @@ pub fn build_sync_plan(
                 }
             }
         }
-        merged_state_by_branch.insert(branch.name.clone(), is_merged_pr);
 
         if !is_merged_pr {
             if let Some(parent_id) = branch.parent_branch_id
@@ -299,6 +281,9 @@ pub fn build_sync_plan(
             {
                 for child_id in children_ids {
                     if let Some(child) = by_id.get(child_id) {
+                        if !branch_exists.get(&child.name).copied().unwrap_or(false) {
+                            continue;
+                        }
                         queue.push_back(RestackCandidate {
                             branch: child.name.clone(),
                             onto: branch.name.clone(),
@@ -338,6 +323,9 @@ pub fn build_sync_plan(
 
     let mut seen_restack = HashSet::new();
     while let Some(item) = queue.pop_front() {
+        if !branch_exists.get(&item.branch).copied().unwrap_or(false) {
+            continue;
+        }
         if !seen_restack.insert(item.branch.clone()) {
             continue;
         }
@@ -355,6 +343,9 @@ pub fn build_sync_plan(
         {
             for child_id in children_ids {
                 if let Some(child) = by_id.get(child_id) {
+                    if !branch_exists.get(&child.name).copied().unwrap_or(false) {
+                        continue;
+                    }
                     queue.push_back(RestackCandidate {
                         branch: child.name.clone(),
                         onto: item.branch.clone(),
@@ -372,7 +363,12 @@ pub fn build_sync_plan(
             merged_state_by_branch
                 .get(&branch.name)
                 .copied()
-                .unwrap_or(false)
+                .unwrap_or_else(|| {
+                    branch
+                        .cached_pr_state
+                        .as_deref()
+                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                })
         });
     if stack_fully_merged {
         let mut prune_candidates: Vec<(String, usize)> = Vec::new();
@@ -380,7 +376,16 @@ pub fn build_sync_plan(
             if branch.name == base_branch {
                 continue;
             }
-            if !merged_state_by_branch.get(&branch.name).copied().unwrap_or(false) {
+            if !merged_state_by_branch
+                .get(&branch.name)
+                .copied()
+                .unwrap_or_else(|| {
+                    branch
+                        .cached_pr_state
+                        .as_deref()
+                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                })
+            {
                 continue;
             }
 
