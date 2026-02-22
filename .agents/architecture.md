@@ -58,6 +58,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Push behaviour
 - `stack push` iterates tracked non-base branches from stack metadata and pushes each branch with `git push --force-with-lease --set-upstream`.
+- Branches marked merged in cached PR state are skipped during push operations.
 - Branches tracked in metadata but missing locally are skipped with a warning.
 
 ## Create behaviour

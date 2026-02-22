@@ -105,3 +105,58 @@ fn push_pushes_all_tracked_non_base_branches() {
         .expect("verify feat/b push");
     assert!(feat_b_exists.success(), "expected feat/b on remote");
 }
+
+#[test]
+fn push_skips_merged_branches() {
+    let repo = init_repo();
+    let bare = configure_local_push_url(repo.path());
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/a", "--name", "feat/b"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/a"]);
+    std::fs::write(repo.path().join("a.txt"), "a\n").expect("write a");
+    run_git(repo.path(), &["add", "a.txt"]);
+    run_git(repo.path(), &["commit", "-m", "a"]);
+
+    run_git(repo.path(), &["checkout", "feat/b"]);
+    std::fs::write(repo.path().join("b.txt"), "b\n").expect("write b");
+    run_git(repo.path(), &["add", "b.txt"]);
+    run_git(repo.path(), &["commit", "-m", "b"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/a'",
+        [],
+    )
+    .expect("seed merged pr cache");
+
+    stack_cmd(repo.path())
+        .args(["push"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pushed 'feat/a' to 'origin'").not())
+        .stdout(predicate::str::contains("pushed 'feat/b' to 'origin'"));
+
+    let feat_a_exists = Command::new("git")
+        .current_dir(&bare)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/a"])
+        .status()
+        .expect("verify feat/a not pushed");
+    assert!(!feat_a_exists.success(), "expected merged feat/a not to push");
+
+    let feat_b_exists = Command::new("git")
+        .current_dir(&bare)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/b"])
+        .status()
+        .expect("verify feat/b push");
+    assert!(feat_b_exists.success(), "expected feat/b on remote");
+}

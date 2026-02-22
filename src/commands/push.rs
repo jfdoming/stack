@@ -5,18 +5,29 @@ use crate::git::Git;
 
 pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Result<()> {
     let records = db.list_branches()?;
-    let mut branches: Vec<String> = records
+    let mut branches: Vec<(String, bool)> = records
         .iter()
         .filter(|record| record.name != base_branch)
-        .map(|record| record.name.clone())
+        .map(|record| {
+            let is_merged = record
+                .cached_pr_state
+                .as_deref()
+                .is_some_and(|state| state.eq_ignore_ascii_case("merged"));
+            (record.name.clone(), is_merged)
+        })
         .collect();
-    branches.sort();
+    branches.sort_by(|a, b| a.0.cmp(&b.0));
     branches.dedup();
 
     let mut pushed = Vec::new();
     let mut skipped_missing = Vec::new();
+    let mut skipped_merged = Vec::new();
 
-    for branch in branches {
+    for (branch, is_merged) in branches {
+        if is_merged {
+            skipped_merged.push(branch);
+            continue;
+        }
         if !git.branch_exists(&branch)? {
             skipped_missing.push(branch);
             continue;
@@ -38,6 +49,7 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Resu
         return crate::views::print_json(&serde_json::json!({
             "pushed": pushed,
             "skipped_missing": skipped_missing,
+            "skipped_merged": skipped_merged,
         }));
     }
 
@@ -53,6 +65,12 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Resu
         eprintln!(
             "warning: skipped missing tracked branches: {}",
             skipped_missing.join(", ")
+        );
+    }
+    if !skipped_merged.is_empty() {
+        eprintln!(
+            "warning: skipped merged tracked branches: {}",
+            skipped_merged.join(", ")
         );
     }
 

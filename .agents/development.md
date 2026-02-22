@@ -69,6 +69,7 @@
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
 - `stack pr` pushes and auto-opens the PR URL immediately (no confirmation prompt).
 - `stack push` pushes all tracked non-base branches and uses `--force-with-lease` for each branch push.
+- `stack push` skips branches marked as merged in PR cache metadata.
 - If browser auto-open fails, `stack pr` prints a manual fallback link; styled TTY output uses OSC 8 clickable text instead of truncating the URL.
 - On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base.
 - `stack pr` blocks self-targeted PRs (`base == head`) with a clear message instead of generating a broken compare link.
