@@ -122,9 +122,8 @@ pub fn build_sync_plan(
         .collect();
     let pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
 
-    let mut ops = vec![SyncOp::Fetch {
-        remote: sync_remote.clone(),
-    }];
+    let mut ops = Vec::new();
+    let mut needs_fetch = false;
     let mut current_sha_by_branch: HashMap<String, String> = HashMap::new();
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
@@ -189,6 +188,7 @@ pub fn build_sync_plan(
                                 true
                             };
                             if should_restack {
+                                needs_fetch = true;
                                 queue.push_back(RestackCandidate {
                                     branch: child.name.clone(),
                                     onto: new_base.clone(),
@@ -210,6 +210,7 @@ pub fn build_sync_plan(
                             true
                         };
                         if should_restack {
+                            needs_fetch = true;
                             queue.push_back(RestackCandidate {
                                 branch: child.name.clone(),
                                 onto: new_base.clone(),
@@ -270,9 +271,13 @@ pub fn build_sync_plan(
                 }
             }
         }
-        let has_base_merge_update =
-            base_merge_commit_to_apply.is_some() && branch.name == base_branch;
-        if !is_merged_pr && !has_base_merge_update {
+        let has_base_merge_update = base_merge_commit_to_apply
+            .as_deref()
+            .is_some_and(|merge_commit| branch.name == base_branch && merge_commit != current_sha);
+        if !is_merged_pr
+            && !has_base_merge_update
+            && branch.last_synced_head_sha.as_deref() != Some(current_sha.as_str())
+        {
             ops.push(SyncOp::UpdateSha {
                 branch: branch.name.clone(),
                 sha: current_sha,
@@ -281,13 +286,17 @@ pub fn build_sync_plan(
     }
 
     if let Some(merge_commit) = base_merge_commit_to_apply {
-        ops.insert(
-            1,
-            SyncOp::UpdateBaseToMergeCommit {
-                branch: base_branch.to_string(),
-                merge_commit,
-            },
-        );
+        let base_current_sha = current_sha_by_branch.get(base_branch).cloned();
+        if base_current_sha.as_deref() != Some(merge_commit.as_str()) {
+            needs_fetch = true;
+            ops.insert(
+                0,
+                SyncOp::UpdateBaseToMergeCommit {
+                    branch: base_branch.to_string(),
+                    merge_commit,
+                },
+            );
+        }
     }
 
     let mut seen_restack = HashSet::new();
@@ -295,6 +304,7 @@ pub fn build_sync_plan(
         if !seen_restack.insert(item.branch.clone()) {
             continue;
         }
+        needs_fetch = true;
         ops.push(SyncOp::Restack {
             branch: item.branch.clone(),
             onto: item.onto.clone(),
@@ -376,6 +386,15 @@ pub fn build_sync_plan(
                 });
             }
         }
+    }
+
+    if needs_fetch {
+        ops.insert(
+            0,
+            SyncOp::Fetch {
+                remote: sync_remote.clone(),
+            },
+        );
     }
 
     Ok(SyncPlan {

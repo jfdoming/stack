@@ -210,10 +210,7 @@ fn sync_succeeds_without_origin_remote() {
     stack_cmd(repo.path())
         .args(["sync", "--yes"])
         .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "no 'origin' remote configured; skipping fetch",
-        ));
+        .success();
 }
 
 #[test]
@@ -289,7 +286,7 @@ fn sync_restores_branch_checked_out_before_run() {
 }
 
 #[test]
-fn sync_plan_fetch_uses_base_branch_remote() {
+fn sync_plan_omits_noop_fetch_and_updates_when_stack_is_current() {
     let repo = init_repo_with_named_remote("upstream");
 
     let output = stack_cmd(repo.path())
@@ -300,9 +297,10 @@ fn sync_plan_fetch_uses_base_branch_remote() {
 
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     let ops = json["operations"].as_array().expect("operations array");
-    let fetch = ops.first().expect("has first op");
-    assert_eq!(fetch["kind"], "fetch");
-    assert_eq!(fetch["branch"], "upstream");
+    assert!(
+        ops.is_empty(),
+        "expected no sync operations when stack is already current: {ops:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -420,6 +418,20 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
     let current_path = env::var("PATH").unwrap_or_default();
     let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    let preflight = stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run preflight sync dry-run");
+    assert!(preflight.status.success());
+    let preflight_json: Value = serde_json::from_slice(&preflight.stdout).expect("valid json");
+    let preflight_ops = preflight_json["operations"]
+        .as_array()
+        .expect("operations array");
+    let fetch = preflight_ops.first().expect("has fetch op");
+    assert_eq!(fetch["kind"], "fetch");
+    assert_eq!(fetch["branch"], "upstream");
 
     stack_cmd(repo.path())
         .env("PATH", &test_path)
