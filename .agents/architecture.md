@@ -31,6 +31,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - For merged-parent child restacks, execution uses the merged parent branch tip as `old_base` so parent commits are not replayed again over squash-merged base history.
 - When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
 - Branches marked merged (from fresh PR metadata or cached merged state) are excluded from direct sync restack/update operations; only descendants are considered for follow-up restacks.
+- Merged-parent descendant restacks are gated by ancestry checks so repeated sync runs do not keep emitting no-op restack plans.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - Stops on conflict and warns on stash restore failures.

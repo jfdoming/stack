@@ -231,7 +231,7 @@ impl Git {
     }
 
     pub fn ref_exists(&self, name: &str) -> Result<bool> {
-        let status = Command::new("git")
+        let output = Command::new("git")
             .current_dir(&self.root)
             .args([
                 "rev-parse",
@@ -239,9 +239,9 @@ impl Git {
                 "--quiet",
                 &format!("{name}^{{commit}}"),
             ])
-            .status()
+            .output()
             .with_context(|| format!("failed to verify ref {name}"))?;
-        Ok(status.success())
+        Ok(output.status.success())
     }
 
     pub fn fast_forward_branch(&self, branch: &str, onto: &str) -> Result<()> {

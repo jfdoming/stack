@@ -9,6 +9,7 @@ All notable changes to this repository are documented here. Each version in `Car
 - Fixed sync rebase fallback after squash merges by anchoring merged-parent child restacks on the parent branch tip, preventing already-merged parent commits from being replayed.
 - Sync now treats cached merged branches as merged when fresh PR metadata is unavailable, skipping direct restack/update ops for those branches to avoid conflicting rewrites.
 - `stack push` now skips tracked branches marked merged in cached PR metadata, preventing redundant/conflicting pushes of already-merged branches.
+- Fixed repeated `stack sync` no-op restack planning after merge-driven rebases by gating merged-parent descendant restacks on ancestry and preserving base sync SHA updates correctly.
 
 ## 0.13.1 - 2026-02-21
 - Sync now applies replay-emitted branch ref updates and fast-forwards zero-commit restacks via `git rebase --onto`, so inherited parent commits are correctly propagated down the stack.

@@ -183,11 +183,18 @@ pub fn build_sync_plan(
                 if let Some(children_ids) = children.get(&branch.id) {
                     for child_id in children_ids {
                         if let Some(child) = by_id.get(child_id) {
-                            queue.push_back(RestackCandidate {
-                                branch: child.name.clone(),
-                                onto: new_base.clone(),
-                                old_base: Some(current_sha.clone()),
-                            });
+                            let should_restack = if git.ref_exists(&new_base)? {
+                                !git.is_ancestor(&new_base, &child.name)?
+                            } else {
+                                true
+                            };
+                            if should_restack {
+                                queue.push_back(RestackCandidate {
+                                    branch: child.name.clone(),
+                                    onto: new_base.clone(),
+                                    old_base: Some(current_sha.clone()),
+                                });
+                            }
                         }
                     }
                 }
@@ -197,11 +204,18 @@ pub fn build_sync_plan(
             if let Some(children_ids) = children.get(&branch.id) {
                 for child_id in children_ids {
                     if let Some(child) = by_id.get(child_id) {
-                        queue.push_back(RestackCandidate {
-                            branch: child.name.clone(),
-                            onto: new_base.clone(),
-                            old_base: Some(current_sha.clone()),
-                        });
+                        let should_restack = if git.ref_exists(&new_base)? {
+                            !git.is_ancestor(&new_base, &child.name)?
+                        } else {
+                            true
+                        };
+                        if should_restack {
+                            queue.push_back(RestackCandidate {
+                                branch: child.name.clone(),
+                                onto: new_base.clone(),
+                                old_base: Some(current_sha.clone()),
+                            });
+                        }
                     }
                 }
             }
@@ -212,22 +226,33 @@ pub fn build_sync_plan(
                 && let Some(parent) = by_id.get(&parent_id)
                 && branch_exists.get(&parent.name).copied().unwrap_or(false)
             {
-                let parent_onto = if parent.name == base_branch {
-                    let remote_base_ref = format!("{sync_remote}/{base_branch}");
-                    if git.ref_exists(&remote_base_ref)? {
-                        remote_base_ref
+                let parent_is_merged = pr_by_branch
+                    .get(&parent.name)
+                    .map(|pr| matches!(pr.state, PrState::Merged))
+                    .unwrap_or_else(|| {
+                        parent
+                            .cached_pr_state
+                            .as_deref()
+                            .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                    });
+                if !parent_is_merged {
+                    let parent_onto = if parent.name == base_branch {
+                        let remote_base_ref = format!("{sync_remote}/{base_branch}");
+                        if git.ref_exists(&remote_base_ref)? {
+                            remote_base_ref
+                        } else {
+                            parent.name.clone()
+                        }
                     } else {
                         parent.name.clone()
+                    };
+                    if !git.is_ancestor(&parent_onto, &branch.name)? {
+                        queue.push_back(RestackCandidate {
+                            branch: branch.name.clone(),
+                            onto: parent.name.clone(),
+                            old_base: None,
+                        });
                     }
-                } else {
-                    parent.name.clone()
-                };
-                if !git.is_ancestor(&parent_onto, &branch.name)? {
-                    queue.push_back(RestackCandidate {
-                        branch: branch.name.clone(),
-                        onto: parent.name.clone(),
-                        old_base: None,
-                    });
                 }
             }
             if let Some(previous_sha) = &branch.last_synced_head_sha
@@ -245,7 +270,9 @@ pub fn build_sync_plan(
                 }
             }
         }
-        if !is_merged_pr {
+        let has_base_merge_update =
+            base_merge_commit_to_apply.is_some() && branch.name == base_branch;
+        if !is_merged_pr && !has_base_merge_update {
             ops.push(SyncOp::UpdateSha {
                 branch: branch.name.clone(),
                 sha: current_sha,

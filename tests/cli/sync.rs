@@ -420,7 +420,7 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     let test_path = format!("{}:{}", fake_bin.display(), current_path);
 
     stack_cmd(repo.path())
-        .env("PATH", test_path)
+        .env("PATH", &test_path)
         .args(["sync", "--yes"])
         .assert()
         .success();
@@ -444,6 +444,26 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     assert_ne!(
         local_main_sha, upstream_tip_sha,
         "expected sync not to advance local main past merged commit"
+    );
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run second sync dry-run");
+    assert!(
+        output.status.success(),
+        "second sync dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let ops = json["operations"].as_array().expect("operations array");
+    let child_restack = ops.iter().any(|op| {
+        op["kind"] == "restack" && op["branch"] == "feat/child" && op["onto"] == merged_sha
+    });
+    assert!(
+        !child_restack,
+        "expected no repeated child restack once already based on merged commit"
     );
 }
 
