@@ -303,6 +303,36 @@ fn sync_plan_omits_noop_fetch_and_updates_when_stack_is_current() {
     );
 }
 
+#[test]
+fn sync_skips_apply_when_plan_has_no_operations() {
+    let repo = init_repo_with_named_remote("upstream");
+
+    stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .assert()
+        .success();
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    let before_runs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sync_runs", [], |row| row.get(0))
+        .expect("count sync runs before");
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sync already up to date"));
+
+    let after_runs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sync_runs", [], |row| row.get(0))
+        .expect("count sync runs after");
+    assert_eq!(
+        before_runs, after_runs,
+        "expected sync with no operations to skip execution bookkeeping"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {

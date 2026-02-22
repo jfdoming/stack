@@ -50,6 +50,13 @@ pub fn run(
         return Ok(());
     }
 
+    if plan_view.operations.is_empty() {
+        if !opts.porcelain {
+            println!("sync already up to date");
+        }
+        return Ok(());
+    }
+
     let should_apply = if opts.yes {
         true
     } else if stdout().is_terminal() && stdin().is_terminal() {
