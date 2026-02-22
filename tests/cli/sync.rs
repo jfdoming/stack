@@ -361,6 +361,8 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
         repo.path(),
         &[
             "clone",
+            "--branch",
+            "main",
             upstream_bare.to_str().expect("upstream bare"),
             upstream_work.to_str().expect("upstream work"),
         ],
@@ -526,6 +528,8 @@ fn sync_does_not_move_main_without_merged_pr() {
         repo.path(),
         &[
             "clone",
+            "--branch",
+            "main",
             upstream_bare.to_str().expect("upstream bare"),
             upstream_work.to_str().expect("upstream work"),
         ],
