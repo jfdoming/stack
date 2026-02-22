@@ -28,6 +28,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Executes replay using revision ranges (`old_base..branch`) and applies replay-emitted ref updates.
 - For restacks with zero commits to replay, uses `git rebase --onto` to fast-forward branch tips to the tracked parent.
 - For tracked parent-child restacks, execution prefers the parent’s pre-sync SHA as the replay/rebase `old_base` anchor to avoid duplicate empty commits after parent history rewrites.
+- For merged-parent child restacks, execution uses the merged parent branch tip as `old_base` so parent commits are not replayed again over squash-merged base history.
 - When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.

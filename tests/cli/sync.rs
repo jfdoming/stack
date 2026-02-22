@@ -559,6 +559,130 @@ fn sync_does_not_move_main_without_merged_pr() {
 
 #[cfg(unix)]
 #[test]
+fn sync_rebase_fallback_drops_merged_parent_commits_after_squash_merge() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    fs::write(repo.path().join("parent.txt"), "p1\n").expect("write parent p1");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent 1"]);
+    fs::write(repo.path().join("parent.txt"), "p1\np2\n").expect("write parent p2");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent 2"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/child"]);
+    fs::write(repo.path().join("child.txt"), "c1\n").expect("write child c1");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child 1"]);
+    fs::write(repo.path().join("child.txt"), "c1\nc2\n").expect("write child c2");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child 2"]);
+
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["merge", "--squash", "feat/parent"]);
+    run_git(repo.path(), &["commit", "-m", "squash parent"]);
+    let merged_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("rev-parse merged sha");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    let fake_bin = repo.path().join("fake-bin-rebase-fallback");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let real_git = {
+        let output = Command::new("sh")
+            .args(["-lc", "command -v git"])
+            .output()
+            .expect("resolve real git");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"help\" && \"$2\" == \"-a\" ]]; then\n  \"{}\" help -a | sed '/replay/d'\n  exit 0\nfi\nexec \"{}\" \"$@\"\n",
+            real_git, real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            merged_sha
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let child_subjects = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args([
+                "log",
+                "--format=%s",
+                &format!("{merged_sha}..feat/child"),
+            ])
+            .output()
+            .expect("child log");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).expect("utf8")
+    };
+
+    assert!(
+        child_subjects.contains("child 1"),
+        "expected child commit to remain after sync: {child_subjects}"
+    );
+    assert!(
+        child_subjects.contains("child 2"),
+        "expected child commit to remain after sync: {child_subjects}"
+    );
+    assert!(
+        !child_subjects.contains("parent 1"),
+        "expected merged parent commit to be dropped after sync: {child_subjects}"
+    );
+    assert!(
+        !child_subjects.contains("parent 2"),
+        "expected merged parent commit to be dropped after sync: {child_subjects}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_updates_existing_pr_body_with_managed_section() {
     let repo = init_repo_without_origin();
     run_git(

@@ -101,6 +101,13 @@ pub fn build_sync_plan(
     base_branch: &str,
     base_remote: &str,
 ) -> Result<SyncPlan> {
+    #[derive(Clone)]
+    struct RestackCandidate {
+        branch: String,
+        onto: String,
+        old_base: Option<String>,
+    }
+
     let sync_remote = git.preferred_sync_remote(base_remote)?;
     let tracked = db.list_branches()?;
     let mut branch_exists: HashMap<String, bool> = HashMap::new();
@@ -130,7 +137,7 @@ pub fn build_sync_plan(
         }
     }
 
-    let mut queue: VecDeque<(String, String)> = VecDeque::new();
+    let mut queue: VecDeque<RestackCandidate> = VecDeque::new();
 
     for branch in &tracked {
         if !branch_exists.get(&branch.name).copied().unwrap_or(false) {
@@ -139,7 +146,10 @@ pub fn build_sync_plan(
         if branch.name == base_branch {
             db.set_pr_cache(&branch.name, None, None)?;
         }
+        let current_sha = git.head_sha(&branch.name)?;
+        current_sha_by_branch.insert(branch.name.clone(), current_sha.clone());
 
+        let mut is_merged_pr = false;
         if let Some(pr) = pr_by_branch.get(&branch.name).cloned() {
             let state = match pr.state {
                 PrState::Open => "open",
@@ -150,6 +160,7 @@ pub fn build_sync_plan(
             db.set_pr_cache(&branch.name, Some(pr.number), Some(state))?;
 
             if matches!(pr.state, PrState::Merged) {
+                is_merged_pr = true;
                 let merge_commit_oid = pr.merge_commit_oid.clone();
                 let new_base = merge_commit_oid
                     .clone()
@@ -169,40 +180,52 @@ pub fn build_sync_plan(
                 if let Some(children_ids) = children.get(&branch.id) {
                     for child_id in children_ids {
                         if let Some(child) = by_id.get(child_id) {
-                            queue.push_back((child.name.clone(), new_base.clone()));
+                            queue.push_back(RestackCandidate {
+                                branch: child.name.clone(),
+                                onto: new_base.clone(),
+                                old_base: Some(current_sha.clone()),
+                            });
                         }
                     }
                 }
             }
         }
 
-        let current_sha = git.head_sha(&branch.name)?;
-        current_sha_by_branch.insert(branch.name.clone(), current_sha.clone());
-        if let Some(parent_id) = branch.parent_branch_id
-            && let Some(parent) = by_id.get(&parent_id)
-            && branch_exists.get(&parent.name).copied().unwrap_or(false)
-        {
-            let parent_onto = if parent.name == base_branch {
-                let remote_base_ref = format!("{sync_remote}/{base_branch}");
-                if git.ref_exists(&remote_base_ref)? {
-                    remote_base_ref
+        if !is_merged_pr {
+            if let Some(parent_id) = branch.parent_branch_id
+                && let Some(parent) = by_id.get(&parent_id)
+                && branch_exists.get(&parent.name).copied().unwrap_or(false)
+            {
+                let parent_onto = if parent.name == base_branch {
+                    let remote_base_ref = format!("{sync_remote}/{base_branch}");
+                    if git.ref_exists(&remote_base_ref)? {
+                        remote_base_ref
+                    } else {
+                        parent.name.clone()
+                    }
                 } else {
                     parent.name.clone()
+                };
+                if !git.is_ancestor(&parent_onto, &branch.name)? {
+                    queue.push_back(RestackCandidate {
+                        branch: branch.name.clone(),
+                        onto: parent.name.clone(),
+                        old_base: None,
+                    });
                 }
-            } else {
-                parent.name.clone()
-            };
-            if !git.is_ancestor(&parent_onto, &branch.name)? {
-                queue.push_back((branch.name.clone(), parent.name.clone()));
             }
-        }
-        if let Some(previous_sha) = &branch.last_synced_head_sha
-            && previous_sha != &current_sha
-            && let Some(children_ids) = children.get(&branch.id)
-        {
-            for child_id in children_ids {
-                if let Some(child) = by_id.get(child_id) {
-                    queue.push_back((child.name.clone(), branch.name.clone()));
+            if let Some(previous_sha) = &branch.last_synced_head_sha
+                && previous_sha != &current_sha
+                && let Some(children_ids) = children.get(&branch.id)
+            {
+                for child_id in children_ids {
+                    if let Some(child) = by_id.get(child_id) {
+                        queue.push_back(RestackCandidate {
+                            branch: child.name.clone(),
+                            onto: branch.name.clone(),
+                            old_base: None,
+                        });
+                    }
                 }
             }
         }
@@ -223,22 +246,28 @@ pub fn build_sync_plan(
     }
 
     let mut seen_restack = HashSet::new();
-    while let Some((branch, onto)) = queue.pop_front() {
-        if !seen_restack.insert(branch.clone()) {
+    while let Some(item) = queue.pop_front() {
+        if !seen_restack.insert(item.branch.clone()) {
             continue;
         }
         ops.push(SyncOp::Restack {
-            branch: branch.clone(),
-            onto: onto.clone(),
-            old_base: current_sha_by_branch.get(&onto).cloned(),
+            branch: item.branch.clone(),
+            onto: item.onto.clone(),
+            old_base: item
+                .old_base
+                .or_else(|| current_sha_by_branch.get(&item.onto).cloned()),
             reason: "parent updated or merged".to_string(),
         });
-        if let Some(node) = tracked.iter().find(|b| b.name == branch)
+        if let Some(node) = tracked.iter().find(|b| b.name == item.branch)
             && let Some(children_ids) = children.get(&node.id)
         {
             for child_id in children_ids {
                 if let Some(child) = by_id.get(child_id) {
-                    queue.push_back((child.name.clone(), branch.clone()));
+                    queue.push_back(RestackCandidate {
+                        branch: child.name.clone(),
+                        onto: item.branch.clone(),
+                        old_base: None,
+                    });
                 }
             }
         }
