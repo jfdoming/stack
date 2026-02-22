@@ -4,6 +4,7 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 - Sync dry-run planning now suppresses no-op `fetch`, `update_base`, and `update_sha` operations when the stack is already current.
+- When the entire tracked non-base stack is merged, `stack sync` now prunes merged local branch refs and stack metadata; partially merged stacks are left intact.
 
 ## 0.13.2 - 2026-02-22
 - Hardened stack-managed PR/compare link generation by URL-encoding branch path segments and escaping markdown link labels.

@@ -33,6 +33,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Branches marked merged (from fresh PR metadata or cached merged state) are excluded from direct sync restack/update operations; only descendants are considered for follow-up restacks.
 - Merged-parent descendant restacks are gated by ancestry checks so repeated sync runs do not keep emitting no-op restack plans.
 - Sync planning prunes no-op operations (fetch/update-sha/update-base) when branch sync state is already current.
+- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - Stops on conflict and warns on stash restore failures.

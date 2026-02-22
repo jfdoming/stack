@@ -32,6 +32,9 @@ pub enum SyncOp {
         pr_number: i64,
         body: String,
     },
+    PruneMergedBranch {
+        branch: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +88,12 @@ impl SyncPlan {
                     onto: None,
                     details: format!("pr #{pr_number}"),
                 }),
+                SyncOp::PruneMergedBranch { branch } => operations.push(OperationView {
+                    kind: "prune_merged".to_string(),
+                    branch: branch.clone(),
+                    onto: None,
+                    details: "remove merged branch from local refs and stack metadata".to_string(),
+                }),
             }
         }
         SyncPlanView {
@@ -128,6 +137,7 @@ pub fn build_sync_plan(
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
     let mut base_merge_commit_to_apply: Option<String> = None;
+    let mut merged_state_by_branch: HashMap<String, bool> = HashMap::new();
 
     for b in &tracked {
         by_id.insert(b.id, b.clone());
@@ -188,6 +198,20 @@ pub fn build_sync_plan(
                                 true
                             };
                             if should_restack {
+                                let child_merged = pr_by_branch
+                                    .get(&child.name)
+                                    .map(|pr| matches!(pr.state, PrState::Merged))
+                                    .unwrap_or_else(|| {
+                                        child
+                                            .cached_pr_state
+                                            .as_deref()
+                                            .is_some_and(|state| {
+                                                state.eq_ignore_ascii_case("merged")
+                                            })
+                                    });
+                                if child_merged {
+                                    continue;
+                                }
                                 needs_fetch = true;
                                 queue.push_back(RestackCandidate {
                                     branch: child.name.clone(),
@@ -210,6 +234,18 @@ pub fn build_sync_plan(
                             true
                         };
                         if should_restack {
+                            let child_merged = pr_by_branch
+                                .get(&child.name)
+                                .map(|pr| matches!(pr.state, PrState::Merged))
+                                .unwrap_or_else(|| {
+                                    child
+                                        .cached_pr_state
+                                        .as_deref()
+                                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                                });
+                            if child_merged {
+                                continue;
+                            }
                             needs_fetch = true;
                             queue.push_back(RestackCandidate {
                                 branch: child.name.clone(),
@@ -221,6 +257,7 @@ pub fn build_sync_plan(
                 }
             }
         }
+        merged_state_by_branch.insert(branch.name.clone(), is_merged_pr);
 
         if !is_merged_pr {
             if let Some(parent_id) = branch.parent_branch_id
@@ -325,6 +362,39 @@ pub fn build_sync_plan(
                     });
                 }
             }
+        }
+    }
+
+    let stack_fully_merged = tracked
+        .iter()
+        .filter(|branch| branch.name != base_branch)
+        .all(|branch| {
+            merged_state_by_branch
+                .get(&branch.name)
+                .copied()
+                .unwrap_or(false)
+        });
+    if stack_fully_merged {
+        let mut prune_candidates: Vec<(String, usize)> = Vec::new();
+        for branch in &tracked {
+            if branch.name == base_branch {
+                continue;
+            }
+            if !merged_state_by_branch.get(&branch.name).copied().unwrap_or(false) {
+                continue;
+            }
+
+            let mut depth = 0usize;
+            let mut cursor = branch.parent_branch_id;
+            while let Some(parent_id) = cursor {
+                depth += 1;
+                cursor = by_id.get(&parent_id).and_then(|p| p.parent_branch_id);
+            }
+            prune_candidates.push((branch.name.clone(), depth));
+        }
+        prune_candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        for (branch, _) in prune_candidates {
+            ops.push(SyncOp::PruneMergedBranch { branch });
         }
     }
 
@@ -469,6 +539,17 @@ pub fn execute_sync_plan(
                 SyncOp::UpdatePrBody {
                     pr_number, body, ..
                 } => provider.update_pr_body(*pr_number, body)?,
+                SyncOp::PruneMergedBranch { branch } => {
+                    if git.branch_exists(branch)? {
+                        if git.current_branch()? == *branch {
+                            git.checkout_branch(&plan.base_branch)?;
+                        }
+                        git.delete_local_branch(branch)?;
+                    }
+                    if db.branch_by_name(branch)?.is_some() {
+                        db.splice_out_branch(branch)?;
+                    }
+                }
             }
         }
         Ok(())
