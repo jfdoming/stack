@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::git::Git;
 use crate::util::url::{github_owner_from_web_url, github_repo_slug_from_web_url};
@@ -218,40 +219,55 @@ impl Provider for GithubProvider {
         }
 
         let mut by_head: HashMap<String, Vec<GhPr>> = HashMap::new();
-        let mut repo_scopes: Vec<Option<String>> = vec![None];
-        for scope in self.repo_scope_candidates_for_branches(branches)? {
-            repo_scopes.push(Some(scope));
-        }
-        for scope in repo_scopes {
-            let mut args = vec![
-                "pr".to_string(),
-                "list".to_string(),
-                "--state".to_string(),
-                "all".to_string(),
-                "--limit".to_string(),
-                "200".to_string(),
-                "--json".to_string(),
-                "number,state,mergeCommit,baseRefName,headRefName,headRepositoryOwner,url,body"
-                    .to_string(),
-            ];
-            if let Some(scope) = scope.as_deref() {
-                args.push("--repo".to_string());
-                args.push(scope.to_string());
+        let repo_scopes = self.repo_scope_candidates_for_branches(branches)?;
+        if repo_scopes.is_empty() {
+            for (branch, cached_number) in branches {
+                if let Some(pr) = self.resolve_pr_by_head(branch, *cached_number)? {
+                    out.insert((*branch).to_string(), pr);
+                }
             }
-            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let Some(raw) = self.run_gh_optional(&arg_refs)? else {
+            return Ok(out);
+        }
+
+        let mut unique_heads: Vec<String> = branches.iter().map(|(name, _)| (*name).to_string()).collect();
+        unique_heads.sort();
+        unique_heads.dedup();
+
+        for scope in repo_scopes {
+            let Some((owner, repo)) = parse_repo_scope(&scope) else {
                 continue;
             };
-            if raw.trim().is_empty() {
-                continue;
-            }
-            let context = scope.as_deref().unwrap_or("default");
-            let prs = self.parse_gh_pr_list(&raw, context)?;
-            for pr in prs {
-                if let Some(head) = pr.head_ref_name.as_deref()
-                    && !head.is_empty()
-                {
-                    by_head.entry(head.to_string()).or_default().push(pr);
+
+            for chunk in unique_heads.chunks(HEAD_QUERY_CHUNK_SIZE) {
+                let (query, query_fields) = build_head_lookup_query(chunk);
+                let mut args = vec![
+                    "api".to_string(),
+                    "graphql".to_string(),
+                    "-f".to_string(),
+                    format!("query={query}"),
+                    "-F".to_string(),
+                    format!("owner={owner}"),
+                    "-F".to_string(),
+                    format!("name={repo}"),
+                ];
+                args.extend(query_fields);
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                let Some(raw) = self.run_gh_optional(&arg_refs)? else {
+                    continue;
+                };
+                if raw.trim().is_empty() {
+                    continue;
+                }
+
+                let by_alias = parse_graphql_head_lookup_result(&raw)?;
+                for prs in by_alias.into_values() {
+                    for pr in prs {
+                        if let Some(head) = pr.head_ref_name.as_deref()
+                            && !head.is_empty()
+                        {
+                            by_head.entry(head.to_string()).or_default().push(pr);
+                        }
+                    }
                 }
             }
         }
@@ -309,10 +325,7 @@ impl Provider for GithubProvider {
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>> {
         if let Some(num) = cached_number {
-            let mut scopes: Vec<Option<String>> = vec![None];
-            for scope in self.repo_scope_candidates_for_branch(branch)? {
-                scopes.push(Some(scope));
-            }
+            let scopes = build_scope_options(self.repo_scope_candidates_for_branch(branch)?);
             for scope in scopes {
                 let mut args = vec![
                     "pr".to_string(),
@@ -358,10 +371,7 @@ impl Provider for GithubProvider {
             }
         }
 
-        let mut scopes: Vec<Option<String>> = vec![None];
-        for scope in self.repo_scope_candidates_for_branch(branch)? {
-            scopes.push(Some(scope));
-        }
+        let scopes = build_scope_options(self.repo_scope_candidates_for_branch(branch)?);
         for scope in scopes {
             for head_filter in &head_filters {
                 let mut args = vec![
@@ -415,6 +425,31 @@ impl Provider for GithubProvider {
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }
+}
+
+fn build_scope_options(scopes: Vec<String>) -> Vec<Option<String>> {
+    if scopes.is_empty() {
+        return vec![None];
+    }
+    scopes.into_iter().map(Some).collect()
+}
+
+fn build_pr_list_args(scope: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "pr".to_string(),
+        "list".to_string(),
+        "--state".to_string(),
+        "all".to_string(),
+        "--limit".to_string(),
+        "200".to_string(),
+        "--json".to_string(),
+        "number,state,mergeCommit,baseRefName,headRefName,headRepositoryOwner,url,body".to_string(),
+    ];
+    if let Some(scope) = scope {
+        args.push("--repo".to_string());
+        args.push(scope.to_string());
+    }
+    args
 }
 
 fn convert_pr(pr: GhPr) -> PrInfo {
@@ -525,5 +560,11 @@ mod tests {
         let picked = select_preferred_pr(prs).expect("selected pr");
         assert_eq!(picked.number, 6693);
         assert_eq!(picked.state, "OPEN");
+    }
+
+    #[test]
+    fn build_scope_options_omits_default_when_repo_scopes_exist() {
+        let scopes = build_scope_options(vec!["acme/repo".to_string()]);
+        assert_eq!(scopes, vec![Some("acme/repo".to_string())]);
     }
 }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 
@@ -41,6 +42,13 @@ pub enum SyncOp {
 pub struct SyncPlan {
     pub base_branch: String,
     pub ops: Vec<SyncOp>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncPlanTiming {
+    pub setup: Duration,
+    pub pr_lookup: Duration,
+    pub assemble: Duration,
 }
 
 impl SyncPlan {
@@ -109,7 +117,7 @@ pub fn build_sync_plan(
     provider: &dyn Provider,
     base_branch: &str,
     base_remote: &str,
-) -> Result<SyncPlan> {
+) -> Result<(SyncPlan, SyncPlanTiming)> {
     #[derive(Clone)]
     struct RestackCandidate {
         branch: String,
@@ -117,18 +125,25 @@ pub fn build_sync_plan(
         old_base: Option<String>,
     }
 
+    let setup_started = Instant::now();
     let sync_remote = git.preferred_sync_remote(base_remote)?;
     let tracked = db.list_branches()?;
     let mut branch_exists: HashMap<String, bool> = HashMap::new();
     for branch in &tracked {
         branch_exists.insert(branch.name.clone(), git.branch_exists(&branch.name)?);
     }
+    let setup_elapsed = setup_started.elapsed();
+
+    let pr_lookup_started = Instant::now();
     let metadata_targets: Vec<(&str, Option<i64>)> = tracked
         .iter()
         .filter(|branch| branch.name != base_branch)
         .map(|branch| (branch.name.as_str(), branch.cached_pr_number))
         .collect();
     let pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
+    let pr_lookup_elapsed = pr_lookup_started.elapsed();
+
+    let assemble_started = Instant::now();
 
     let mut ops = Vec::new();
     let mut needs_fetch = false;
@@ -472,10 +487,16 @@ pub fn build_sync_plan(
         );
     }
 
-    Ok(SyncPlan {
+    let plan = SyncPlan {
         base_branch: base_branch.to_string(),
         ops,
-    })
+    };
+    let timing = SyncPlanTiming {
+        setup: setup_elapsed,
+        pr_lookup: pr_lookup_elapsed,
+        assemble: assemble_started.elapsed(),
+    };
+    Ok((plan, timing))
 }
 
 pub fn execute_sync_plan(

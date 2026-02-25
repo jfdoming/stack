@@ -214,6 +214,39 @@ fn sync_succeeds_without_origin_remote() {
 }
 
 #[test]
+fn sync_debug_prints_timing_info() {
+    let repo = init_repo_without_origin();
+
+    let output = stack_cmd(repo.path())
+        .args(["--debug", "sync", "--dry-run"])
+        .output()
+        .expect("run stack sync");
+    assert!(
+        output.status.success(),
+        "sync failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("debug: sync timing"),
+        "expected debug timing output, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("plan_ms="),
+        "expected plan timing metric, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("total_ms="),
+        "expected total timing metric, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("pr_lookup_ms="),
+        "expected detailed plan timing metric, got: {stderr}"
+    );
+}
+
+#[test]
 fn sync_restores_branch_checked_out_before_run() {
     let replay_supported = {
         let output = Command::new("git")

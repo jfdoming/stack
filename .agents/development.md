@@ -17,6 +17,7 @@
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
+- `cargo run -- --debug sync --dry-run`: include sync timing metrics in debug output.
 - `cargo run -- push`: push all tracked non-base branches with `--force-with-lease`.
 
 ## CI
@@ -83,6 +84,7 @@
 - Stack-generated PR/compare links now URL-encode branch path segments and escape markdown link labels in generated bodies to avoid malformed or injected markdown links.
 - In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
+- `stack sync` with `--debug` prints timing metrics to stderr, including totals (`plan_ms`, `apply_ms`, `total_ms`) plus plan breakdown (`setup_ms`, `pr_lookup_ms`, `assemble_ms`).
 - In coloured TTY output, stack/compare links use clickable OSC 8 hyperlinks instead of raw URL text.
 - In stack tree output, branches without a PR show a clickable `[no PR]` compare label.
 - Stack tree output no longer shows a separate `PR:none` badge; `[no PR]` is the single missing-PR indicator.

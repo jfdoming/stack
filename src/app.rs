@@ -102,6 +102,7 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
                 porcelain: ctx.cli.global.porcelain,
                 yes: ctx.cli.global.yes,
                 dry_run: args.dry_run,
+                debug: ctx.cli.global.debug,
             },
         ),
         Some(Commands::Doctor(args)) => {
