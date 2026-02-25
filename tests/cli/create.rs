@@ -138,7 +138,7 @@ fn create_before_refreshes_open_pr_bodies_for_affected_branches() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":101,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/101\",\"body\":\"Parent user body\"}},{{\"number\":102,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/102\",\"body\":\"Child user body\"}}]'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":102,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/102\",\"body\":\"Child user body\",\"mergeCommit\":null}}]}},\"h1\":{{\"nodes\":[]}},\"h2\":{{\"nodes\":[{{\"number\":101,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/101\",\"body\":\"Parent user body\",\"mergeCommit\":null}}]}}}}}}}}'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
             gh_log.display()
         ),
     )

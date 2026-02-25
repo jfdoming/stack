@@ -76,7 +76,7 @@ fn track_refreshes_pr_cache_for_tracked_branch() {
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{\"number\":77,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/a\",\"headRepositoryOwner\":{\"login\":\"acme\"},\"url\":\"https://github.com/acme/stack-test/pull/77\",\"body\":\"\"}]'\n  exit 0\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{\"data\":{\"repository\":{\"h0\":{\"nodes\":[{\"number\":77,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/a\",\"headRepositoryOwner\":{\"login\":\"acme\"},\"url\":\"https://github.com/acme/stack-test/pull/77\",\"body\":\"\",\"mergeCommit\":null}]}}}}'\n  exit 0\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");

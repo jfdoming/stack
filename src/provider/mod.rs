@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -180,6 +180,24 @@ impl GithubProvider {
             }
         })
     }
+
+    fn default_repo_scope_from_gh(&self) -> Result<Option<String>> {
+        let args = ["repo", "view", "--json", "nameWithOwner"];
+        let Some(raw) = self.run_gh_optional(&args)? else {
+            return Ok(None);
+        };
+        if raw.trim().is_empty() {
+            return Ok(None);
+        }
+        let cleaned = clean_gh_json_output(&raw);
+        let Ok(view) = serde_json::from_str::<GhRepoView>(&cleaned) else {
+            return Ok(None);
+        };
+        if view.name_with_owner.trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(view.name_with_owner))
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -208,6 +226,12 @@ struct GhMergeCommit {
     oid: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GhRepoView {
+    #[serde(rename = "nameWithOwner")]
+    name_with_owner: String,
+}
+
 impl Provider for GithubProvider {
     fn resolve_prs_by_head(
         &self,
@@ -219,17 +243,19 @@ impl Provider for GithubProvider {
         }
 
         let mut by_head: HashMap<String, Vec<GhPr>> = HashMap::new();
-        let repo_scopes = self.repo_scope_candidates_for_branches(branches)?;
+        let mut repo_scopes = self.repo_scope_candidates_for_branches(branches)?;
         if repo_scopes.is_empty() {
-            for (branch, cached_number) in branches {
-                if let Some(pr) = self.resolve_pr_by_head(branch, *cached_number)? {
-                    out.insert((*branch).to_string(), pr);
-                }
+            if let Some(scope) = self.default_repo_scope_from_gh()? {
+                repo_scopes.push(scope);
+            } else {
+                return Ok(out);
             }
-            return Ok(out);
         }
 
-        let mut unique_heads: Vec<String> = branches.iter().map(|(name, _)| (*name).to_string()).collect();
+        let mut unique_heads: Vec<String> = branches
+            .iter()
+            .map(|(name, _)| (*name).to_string())
+            .collect();
         unique_heads.sort();
         unique_heads.dedup();
 
@@ -259,7 +285,13 @@ impl Provider for GithubProvider {
                     continue;
                 }
 
-                let by_alias = parse_graphql_head_lookup_result(&raw)?;
+                let by_alias = match parse_graphql_head_lookup_result(&raw) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if by_alias.is_empty() {
+                    continue;
+                }
                 for prs in by_alias.into_values() {
                     for pr in prs {
                         if let Some(head) = pr.head_ref_name.as_deref()
@@ -434,22 +466,59 @@ fn build_scope_options(scopes: Vec<String>) -> Vec<Option<String>> {
     scopes.into_iter().map(Some).collect()
 }
 
-fn build_pr_list_args(scope: Option<&str>) -> Vec<String> {
-    let mut args = vec![
-        "pr".to_string(),
-        "list".to_string(),
-        "--state".to_string(),
-        "all".to_string(),
-        "--limit".to_string(),
-        "200".to_string(),
-        "--json".to_string(),
-        "number,state,mergeCommit,baseRefName,headRefName,headRepositoryOwner,url,body".to_string(),
-    ];
-    if let Some(scope) = scope {
-        args.push("--repo".to_string());
-        args.push(scope.to_string());
+const HEAD_QUERY_CHUNK_SIZE: usize = 20;
+
+fn parse_repo_scope(scope: &str) -> Option<(&str, &str)> {
+    let (owner, repo) = scope.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
     }
-    args
+    Some((owner, repo))
+}
+
+fn build_head_lookup_query(heads: &[String]) -> (String, Vec<String>) {
+    let mut query = String::from("query($owner:String!, $name:String!");
+    for idx in 0..heads.len() {
+        query.push_str(&format!(", $h{idx}:String!"));
+    }
+    query.push_str(") { repository(owner:$owner, name:$name) {");
+    for idx in 0..heads.len() {
+        query.push_str(&format!(
+            " h{idx}: pullRequests(first:20, states:[OPEN,MERGED,CLOSED], headRefName:$h{idx}, orderBy:{{field:UPDATED_AT, direction:DESC}}) {{ nodes {{ number state mergeCommit {{ oid }} baseRefName headRefName headRepositoryOwner {{ login }} url body }} }}"
+        ));
+    }
+    query.push_str(" } }");
+
+    let mut fields = Vec::with_capacity(heads.len() * 2);
+    for (idx, head) in heads.iter().enumerate() {
+        fields.push("-F".to_string());
+        fields.push(format!("h{idx}={head}"));
+    }
+    (query, fields)
+}
+
+fn parse_graphql_head_lookup_result(raw: &str) -> Result<HashMap<String, Vec<GhPr>>> {
+    let cleaned = clean_gh_json_output(raw);
+    let parsed: Value = serde_json::from_str(&cleaned)?;
+    let mut out = HashMap::new();
+
+    let Some(repo_obj) = parsed
+        .get("data")
+        .and_then(|v| v.get("repository"))
+        .and_then(Value::as_object)
+    else {
+        return Ok(out);
+    };
+
+    for (alias, payload) in repo_obj {
+        let Some(nodes) = payload.get("nodes") else {
+            continue;
+        };
+        let prs: Vec<GhPr> = serde_json::from_value(nodes.clone())?;
+        out.insert(alias.clone(), prs);
+    }
+
+    Ok(out)
 }
 
 fn convert_pr(pr: GhPr) -> PrInfo {
@@ -566,5 +635,51 @@ mod tests {
     fn build_scope_options_omits_default_when_repo_scopes_exist() {
         let scopes = build_scope_options(vec!["acme/repo".to_string()]);
         assert_eq!(scopes, vec![Some("acme/repo".to_string())]);
+    }
+
+    #[test]
+    fn parse_repo_scope_extracts_owner_and_repo() {
+        assert_eq!(parse_repo_scope("acme/repo"), Some(("acme", "repo")));
+        assert_eq!(parse_repo_scope("acme"), None);
+    }
+
+    #[test]
+    fn build_head_lookup_query_includes_aliases_and_head_vars() {
+        let heads = vec!["feat/a".to_string(), "feat/b".to_string()];
+        let (query, fields) = build_head_lookup_query(&heads);
+        assert!(query.contains("h0: pullRequests"));
+        assert!(query.contains("h1: pullRequests"));
+        assert!(query.contains("$h0:String!"));
+        assert!(query.contains("$h1:String!"));
+        assert_eq!(fields, vec!["-F", "h0=feat/a", "-F", "h1=feat/b"]);
+    }
+
+    #[test]
+    fn parse_graphql_head_lookup_result_extracts_pr_nodes() {
+        let raw = r#"{
+          "data": {
+            "repository": {
+              "h0": {
+                "nodes": [
+                  {
+                    "number": 10,
+                    "state": "OPEN",
+                    "mergeCommit": null,
+                    "baseRefName": "main",
+                    "headRefName": "feat/a",
+                    "headRepositoryOwner": {"login": "acme"},
+                    "url": "https://example.com/pull/10",
+                    "body": "test"
+                  }
+                ]
+              }
+            }
+          }
+        }"#;
+        let parsed = parse_graphql_head_lookup_result(raw).expect("parsed graphql result");
+        let h0 = parsed.get("h0").expect("h0 alias");
+        assert_eq!(h0.len(), 1);
+        assert_eq!(h0[0].number, 10);
+        assert_eq!(h0[0].head_ref_name.as_deref(), Some("feat/a"));
     }
 }

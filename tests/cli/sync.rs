@@ -473,7 +473,7 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
             merged_sha
         ),
     )
@@ -732,7 +732,7 @@ fn sync_rebase_fallback_drops_merged_parent_commits_after_squash_merge() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
             merged_sha
         ),
     )
@@ -938,7 +938,7 @@ fn sync_prunes_fully_merged_stack_branches() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}},{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/12\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
             main_sha, main_sha
         ),
     )
@@ -1022,7 +1022,7 @@ fn sync_prunes_metadata_when_merged_branch_ref_is_already_missing() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}},{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/12\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
             main_sha, main_sha
         ),
     )
@@ -1104,7 +1104,7 @@ fn sync_does_not_prune_partially_merged_stack() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":null,\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/11\"}},{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"body\":\"\",\"url\":\"https://github.com/acme/stack-test/pull/12\"}}]'\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
             main_sha
         ),
     )
@@ -1176,7 +1176,7 @@ fn sync_updates_existing_pr_body_with_managed_section() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  if [[ \"$*\" == *\"headRefName\"* ]]; then\n    echo '[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"body\":\"Existing reviewer notes\"}}]'\n    exit 0\n  fi\n  for ((i=1; i<=$#; i++)); do\n    if [[ \"${{!i}}\" == \"--head\" ]]; then\n      next=$((i+1))\n      head=\"${{!next}}\"\n      break\n    fi\n  done\n  if [[ \"$head\" == \"feat/child\" ]]; then\n    echo '[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"body\":\"Existing reviewer notes\"}}]'\n  else\n    echo '[]'\n  fi\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/42\",\"body\":\"Existing reviewer notes\"}}]}},\"h1\":{{\"nodes\":[]}}}}}}}}'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
             gh_log.display()
         ),
     )
@@ -1206,8 +1206,8 @@ fn sync_updates_existing_pr_body_with_managed_section() {
         "expected pr edit call for managed body refresh, got: {gh_calls}"
     );
     assert!(
-        gh_calls.contains("pr list --state all --limit 200"),
-        "expected batched pr list metadata request, got: {gh_calls}"
+        gh_calls.contains("api graphql"),
+        "expected batched graphql metadata request, got: {gh_calls}"
     );
     assert!(
         gh_calls.contains("stack:managed:start"),
