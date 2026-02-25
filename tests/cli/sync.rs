@@ -417,6 +417,26 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
         .success();
     run_git(repo.path(), &["checkout", "main"]);
 
+    let local_main_before_pull = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse local main before pull");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
+        [local_main_before_pull],
+    )
+    .expect("seed main last synced sha");
+
     let upstream_work = repo.path().join("upstream-work");
     run_git(
         repo.path(),
@@ -495,6 +515,13 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     let fetch = preflight_ops.first().expect("has fetch op");
     assert_eq!(fetch["kind"], "fetch");
     assert_eq!(fetch["branch"], "upstream");
+    let merged_parent_restack = preflight_ops
+        .iter()
+        .any(|op| op["kind"] == "restack" && op["branch"] == "feat/parent");
+    assert!(
+        !merged_parent_restack,
+        "expected merged parent branch to be excluded from restack planning"
+    );
 
     stack_cmd(repo.path())
         .env("PATH", &test_path)
@@ -842,6 +869,201 @@ fn sync_skips_cached_merged_branch_when_pr_metadata_missing() {
     assert!(
         !parent_restack,
         "expected merged parent branch to be skipped from restack operations"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_does_not_restack_cached_merged_direct_child_when_base_sha_changes() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let old_main_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse main before update");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    fs::write(repo.path().join("base.txt"), "base update\n").expect("write base update");
+    run_git(repo.path(), &["add", "base.txt"]);
+    run_git(repo.path(), &["commit", "-m", "base update"]);
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
+        [old_main_sha],
+    )
+    .expect("seed main last synced sha");
+    conn.execute(
+        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/parent'",
+        [],
+    )
+    .expect("seed merged parent cache");
+
+    let fake_bin = repo.path().join("fake-bin-no-pr-metadata-merged-child");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        "#!/usr/bin/env bash\necho '[]'\n",
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run sync dry-run");
+    assert!(
+        output.status.success(),
+        "sync dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let ops = json["operations"].as_array().expect("operations array");
+    let parent_restack = ops
+        .iter()
+        .any(|op| op["kind"] == "restack" && op["branch"] == "feat/parent");
+    assert!(
+        !parent_restack,
+        "expected merged direct child to be excluded from restack operations when base SHA changes"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_skips_update_base_when_base_already_contains_merge_commit() {
+    let repo = init_repo_without_origin();
+    let origin_bare = repo.path().join("origin.git");
+    let upstream_bare = repo.path().join("upstream.git");
+
+    run_git(
+        repo.path(),
+        &["init", "--bare", origin_bare.to_str().expect("origin bare")],
+    );
+    run_git(
+        repo.path(),
+        &["init", "--bare", upstream_bare.to_str().expect("upstream bare")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin_bare.to_str().expect("origin bare"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            upstream_bare.to_str().expect("upstream bare"),
+        ],
+    );
+    run_git(repo.path(), &["push", "--set-upstream", "origin", "main"]);
+    run_git(repo.path(), &["push", "upstream", "main"]);
+    run_git(repo.path(), &["config", "branch.main.remote", "origin"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let upstream_work = repo.path().join("upstream-work-contains-merge");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            "--branch",
+            "main",
+            upstream_bare.to_str().expect("upstream bare"),
+            upstream_work.to_str().expect("upstream work"),
+        ],
+    );
+    run_git(
+        &upstream_work,
+        &["config", "user.email", "upstream@example.com"],
+    );
+    run_git(&upstream_work, &["config", "user.name", "Upstream Bot"]);
+    run_git(&upstream_work, &["config", "commit.gpgsign", "false"]);
+    fs::write(upstream_work.join("README.md"), "init\nmerged\n").expect("write merged state");
+    run_git(&upstream_work, &["add", "README.md"]);
+    run_git(&upstream_work, &["commit", "-m", "merge feat/parent"]);
+    let merged_sha = {
+        let output = Command::new("git")
+            .current_dir(&upstream_work)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("rev-parse merged sha");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+    fs::write(upstream_work.join("README.md"), "init\nmerged\nafter\n").expect("write tip state");
+    run_git(&upstream_work, &["add", "README.md"]);
+    run_git(&upstream_work, &["commit", "-m", "after merge commit"]);
+    run_git(&upstream_work, &["push", "origin", "main"]);
+
+    run_git(repo.path(), &["fetch", "upstream"]);
+    run_git(repo.path(), &["merge", "--ff-only", "upstream/main"]);
+
+    let fake_bin = repo.path().join("fake-bin-skip-update-base");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            merged_sha
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run sync dry-run");
+    assert!(
+        output.status.success(),
+        "sync dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let ops = json["operations"].as_array().expect("operations array");
+    let has_update_base = ops.iter().any(|op| op["kind"] == "update_base");
+    assert!(
+        !has_update_base,
+        "expected no update_base op when base already contains merged commit"
     );
 }
 
