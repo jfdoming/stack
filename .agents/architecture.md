@@ -52,6 +52,12 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack untrack` removes a tracked branch record and splices its children to the removed branch's parent.
 - When branch is omitted, target selection mirrors create/delete flows (assume single viable branch, prompt on TTY when multiple).
 
+## Rename behaviour
+- `stack rename <old> <new>` renames a tracked branch in local git and updates the existing branch record name in stack metadata.
+- Child/parent links are preserved because rename updates the existing branch record identity rather than deleting/reinserting links.
+- Rename only updates remotes (push new branch + delete old branch) when the source branch already has an upstream configured.
+- If an open PR is detected and upstream deletion is planned, rename warns that deleting the remote branch may close that PR.
+
 ## PR behaviour
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.

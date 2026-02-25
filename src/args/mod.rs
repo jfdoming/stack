@@ -50,6 +50,8 @@ pub enum Commands {
     Untrack(UntrackArgs),
     /// Delete a branch and splice it out of the stack
     Delete(DeleteArgs),
+    /// Rename a tracked branch and update stack metadata
+    Rename(RenameArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
     /// Push tracked branches with force-with-lease
@@ -129,6 +131,20 @@ pub struct DeleteArgs {
     #[arg(help = "Branch to delete (defaults to current branch)")]
     pub branch: Option<String>,
     #[arg(short = 'n', long, help = "Preview delete without mutating git or DB")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RenameArgs {
+    #[arg(help = "Tracked branch to rename")]
+    pub old: Option<String>,
+    #[arg(help = "New branch name")]
+    pub new: Option<String>,
+    #[arg(
+        short = 'n',
+        long,
+        help = "Preview rename without mutating git, DB, or remotes"
+    )]
     pub dry_run: bool,
 }
 

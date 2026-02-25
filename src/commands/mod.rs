@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod nav;
 pub mod pr;
 pub mod push;
+pub mod rename;
 pub mod stack;
 pub mod sync;
 pub mod track;

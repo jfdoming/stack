@@ -290,6 +290,38 @@ impl Database {
         Ok(())
     }
 
+    pub fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let old_id: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM branches WHERE name = ?1",
+                params![old_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if old_id.is_none() {
+            return Err(anyhow!("branch '{old_name}' is not tracked"));
+        }
+
+        let new_exists: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM branches WHERE name = ?1",
+                params![new_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if new_exists.is_some() {
+            return Err(anyhow!("branch '{new_name}' is already tracked"));
+        }
+
+        tx.execute(
+            "UPDATE branches SET name = ?1, updated_at = CURRENT_TIMESTAMP WHERE name = ?2",
+            params![new_name, old_name],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn delete_branch(&self, branch_name: &str) -> Result<()> {
         self.conn.execute("UPDATE branches SET parent_branch_id = NULL WHERE parent_branch_id = (SELECT id FROM branches WHERE name = ?1)", params![branch_name])?;
         self.conn
@@ -394,5 +426,39 @@ mod tests {
             ])
             .unwrap_err();
         assert!(err.to_string().contains("cycle"));
+    }
+
+    #[test]
+    fn rename_branch_updates_name_preserves_parent_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("parent", Some("main")).unwrap();
+        db.set_parent("child", Some("parent")).unwrap();
+
+        db.rename_branch("parent", "parent-renamed").unwrap();
+
+        assert!(db.branch_by_name("parent").unwrap().is_none());
+        let renamed = db.branch_by_name("parent-renamed").unwrap().unwrap();
+        let child = db.branch_by_name("child").unwrap().unwrap();
+        assert_eq!(child.parent_branch_id, Some(renamed.id));
+    }
+
+    #[test]
+    fn rename_branch_fails_when_old_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        let err = db.rename_branch("missing", "new-name").unwrap_err();
+        assert!(err.to_string().contains("not tracked"));
+    }
+
+    #[test]
+    fn rename_branch_fails_when_new_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("old", Some("main")).unwrap();
+        db.set_parent("existing", Some("main")).unwrap();
+
+        let err = db.rename_branch("old", "existing").unwrap_err();
+        assert!(err.to_string().contains("already tracked"));
     }
 }

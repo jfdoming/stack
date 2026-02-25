@@ -129,3 +129,4 @@ include!("cli/delete.rs");
 include!("cli/doctor.rs");
 include!("cli/untrack.rs");
 include!("cli/track.rs");
+include!("cli/rename.rs");

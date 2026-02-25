@@ -83,6 +83,10 @@ impl Git {
         self.run(["branch", "-D", branch])
     }
 
+    pub fn rename_local_branch(&self, old: &str, new: &str) -> Result<()> {
+        self.run(["branch", "-m", old, new])
+    }
+
     pub fn push_branch(&self, remote: &str, branch: &str) -> Result<()> {
         self.run(["push", "--set-upstream", remote, branch])
     }
@@ -95,6 +99,10 @@ impl Git {
             remote,
             branch,
         ])
+    }
+
+    pub fn delete_remote_branch(&self, remote: &str, branch: &str) -> Result<()> {
+        self.run(["push", remote, "--delete", branch])
     }
 
     pub fn head_sha(&self, branch: &str) -> Result<String> {
@@ -219,6 +227,26 @@ impl Git {
         Ok(self
             .remote_for_branch(base_branch)?
             .unwrap_or_else(|| "origin".to_string()))
+    }
+
+    pub fn branch_upstream(&self, branch: &str) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args([
+                "for-each-ref",
+                "--format=%(upstream:short)",
+                &format!("refs/heads/{branch}"),
+            ])
+            .output()
+            .with_context(|| format!("failed to resolve upstream for branch {branch}"))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let upstream = String::from_utf8(output.stdout)?.trim().to_string();
+        if upstream.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(upstream))
     }
 
     pub fn supports_replay(&self) -> bool {

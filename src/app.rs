@@ -125,6 +125,15 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             ctx.cli.global.yes,
             &ctx.base_branch,
         ),
+        Some(Commands::Rename(args)) => commands::rename::run(
+            &ctx.db,
+            &ctx.git,
+            &ctx.provider,
+            args,
+            ctx.cli.global.porcelain,
+            ctx.cli.global.yes,
+            &ctx.base_branch,
+        ),
         Some(Commands::Pr(args)) => commands::pr::run(
             &ctx.db,
             &ctx.git,
