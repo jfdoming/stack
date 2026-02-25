@@ -3,6 +3,9 @@
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
 ## Unreleased
+- Switched batched PR metadata lookup to GraphQL head-alias queries (`gh api graphql`), reducing redundant repository-wide `gh pr list` calls during sync/track/cache refresh flows.
+- Fixed sync planning to skip restacks for branches already marked merged when parent/base SHA changes, preventing stale restack prompts after updating the base branch.
+- Fixed sync planning to suppress `update_base` when the base branch already contains the merged commit SHA, avoiding repeated no-op base-update prompts.
 
 ## 0.14.1 - 2026-02-22
 - Fixed a sync planning regression where descendants could be re-restacked when a merged parent branch was tracked but missing locally.
