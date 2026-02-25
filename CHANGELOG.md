@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.15.0 - 2026-02-25
+- Added `stack rename <old> <new>` to rename tracked branches while migrating stack metadata in-place.
+
 ## 0.14.2 - 2026-02-25
 - Switched batched PR metadata lookup to GraphQL head-alias queries (`gh api graphql`), reducing redundant repository-wide `gh pr list` calls during sync/track/cache refresh flows.
 - Fixed sync planning to skip restacks for branches already marked merged when parent/base SHA changes, preventing stale restack prompts after updating the base branch.
