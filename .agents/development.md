@@ -74,7 +74,9 @@
 - `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
 - `stack rename <old> <new>` renames tracked metadata and the local branch in one command.
 - `stack move [target] --parent <parent>` reparents a tracked subtree without changing child links below the moved target.
-- Omitting `stack move` target defaults to the current branch when it is tracked; in TTY mode, missing target/parent values prompt for selection.
+- `stack move` can also adopt untracked local branches into the stack by attaching them under a parent branch, tracking any newly linked branches as needed.
+- Omitting `stack move` target preselects the current local non-base branch in the TTY picker; in non-interactive mode it defaults only when the current branch is a viable target.
+- After `stack move` updates parent links, it immediately runs the sync planner/executor so branch history is restacked to match the new stack shape.
 - Rename only pushes/deletes remote refs when the source branch already has an upstream configured.
 - If rename will delete an upstream branch with an open PR, stack warns that deleting the branch may close that PR.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.

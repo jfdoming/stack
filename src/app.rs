@@ -137,9 +137,11 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
         Some(Commands::Move(args)) => commands::r#move::run(
             &ctx.db,
             &ctx.git,
+            &ctx.provider,
             args,
             ctx.cli.global.porcelain,
             &ctx.base_branch,
+            &ctx.base_remote,
         ),
         Some(Commands::Pr(args)) => commands::pr::run(
             &ctx.db,

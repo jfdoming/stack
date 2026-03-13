@@ -59,9 +59,11 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - If an open PR is detected and upstream deletion is planned, rename warns that deleting the remote branch may close that PR.
 
 ## Move behaviour
-- `stack move [target] --parent <parent>` reparents a tracked target branch under a new parent while preserving the target subtree beneath it.
-- Missing target/parent arguments prompt in TTY mode; when omitted outside TTY, target defaults only to the current tracked branch and parent remains required.
+- `stack move [target] --parent <parent>` reparents a target branch under a new parent while preserving the target subtree beneath it.
+- When target and/or parent are local but untracked, move records the new parent link and thereby brings those branches into stack metadata.
+- Missing target/parent arguments prompt in TTY mode; when omitted outside TTY, target defaults only when the current local non-base branch is a viable target and parent remains required.
 - Move rejects parents inside the target subtree so longer descendant cycles cannot be introduced.
+- After updating stack metadata, move immediately builds and applies a sync plan so the git branch ancestry is restacked onto the new parent relationship.
 
 ## PR behaviour
 - `stack pr` uses the tracked parent branch as PR base.

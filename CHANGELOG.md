@@ -3,6 +3,9 @@
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
 ## Unreleased
+- `stack move` can now attach untracked local branches under a parent branch, automatically bringing newly linked branches into stack metadata.
+- `stack move` now immediately runs sync after updating parent links, so git branch history is restacked to match the new stack relationship.
+- In interactive TTY mode, omitting the `stack move` target now opens the picker with the current branch preselected instead of silently auto-choosing it.
 
 ## 0.16.0 - 2026-03-13
 - Added `stack move [target] --parent <parent>` to reparent a tracked subtree under a new parent while preserving descendants.
