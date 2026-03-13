@@ -7,6 +7,8 @@ All notable changes to this repository are documented here. Each version in `Car
 - `stack move` now immediately runs sync after updating parent links, so git branch history is restacked to match the new stack relationship.
 - In interactive TTY mode, omitting the `stack move` target now opens the picker with the current branch preselected instead of silently auto-choosing it.
 - `stack sync` now corrects open PR base branches to match each branch’s tracked parent, alongside the existing managed PR-body refresh.
+- `stack pr` and `stack push` now prefer the tracked parent/base branch remote for branches that do not yet have an explicit upstream, keeping new stacked branches in one repo by default.
+- `stack sync` now skips impossible cross-repo PR-base corrections with a warning instead of failing `gh pr edit --base`.
 
 ## 0.16.0 - 2026-03-13
 - Added `stack move [target] --parent <parent>` to reparent a tracked subtree under a new parent while preserving descendants.

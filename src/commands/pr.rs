@@ -166,10 +166,7 @@ pub fn run(
 
     let head = payload["head"].as_str().unwrap_or_default();
     let base_ref = payload["base"].as_str().unwrap_or_default();
-    let push_remote = git
-        .remote_for_branch(head)?
-        .or_else(|| git.remote_for_branch(base_ref).ok().flatten())
-        .unwrap_or_else(|| "origin".to_string());
+    let push_remote = git.preferred_remote_for_branch(head, base_ref)?;
     git.push_branch(&push_remote, head)?;
     let url = build_pr_open_url(
         git,

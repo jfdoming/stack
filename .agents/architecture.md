@@ -38,6 +38,8 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - For open PRs discovered during sync, updates both the PR base branch and the managed stack-flow section so GitHub metadata stays aligned with the tracked stack shape.
+- For branches without an explicit upstream yet, PR/push remote selection inherits the tracked parent/base branch remote to keep a stack in one repo by default.
+- Sync skips PR-base correction when the expected base branch resolves to a different GitHub repository than the PR itself, warning instead of issuing an impossible `gh pr edit --base`.
 - Stops on conflict and warns on stash restore failures.
 - In interactive TTY mode after successful apply, offers a follow-up push step for tracked non-base branches.
 

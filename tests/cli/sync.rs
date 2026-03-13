@@ -1504,6 +1504,76 @@ fn sync_updates_existing_pr_base_branch_when_it_drifted() {
 }
 
 #[test]
+fn sync_skips_pr_base_update_when_target_branch_is_in_different_repo() {
+    let repo = init_repo_without_origin();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:alice/stack-test.git",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+    run_git(repo.path(), &["config", "branch.main.remote", "upstream"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/parent.remote", "origin"],
+    );
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-cross-repo-base");
+    let gh_log = repo.path().join("gh-cross-repo-base.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"alice\"}},\"url\":\"https://github.com/acme/stack-test/pull/42\",\"body\":\"Existing reviewer notes\"}}]}},\"h1\":{{\"nodes\":[]}}}}}}}}'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            gh_log.display()
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let test_path = format!("{}:{}", fake_bin.display(), current_path);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "skipping PR base update for 'feat/child'",
+        ));
+
+    let gh_calls = fs::read_to_string(&gh_log).expect("read gh log");
+    assert!(
+        !gh_calls.contains("pr edit 42 --base feat/parent"),
+        "expected cross-repo base update to be skipped, got: {gh_calls}"
+    );
+}
+
+#[test]
 fn sync_yes_does_not_push_in_non_interactive_mode() {
     let repo = init_repo_without_origin();
     let bare = repo.path().join("origin.git");

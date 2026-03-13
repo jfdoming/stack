@@ -33,10 +33,7 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Resu
             continue;
         }
 
-        let remote = git
-            .remote_for_branch(&branch)?
-            .or_else(|| git.remote_for_branch(base_branch).ok().flatten())
-            .unwrap_or_else(|| "origin".to_string());
+        let remote = git.preferred_remote_for_branch(&branch, base_branch)?;
         git.push_branch_force_with_lease(&remote, &branch)?;
         pushed.push((branch, remote));
     }

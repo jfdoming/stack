@@ -192,6 +192,13 @@ impl Git {
     }
 
     pub fn remote_for_branch(&self, branch: &str) -> Result<Option<String>> {
+        if let Some(remote) = self.configured_remote_for_branch(branch)? {
+            return Ok(Some(remote));
+        }
+        Ok(Some("origin".to_string()))
+    }
+
+    pub fn configured_remote_for_branch(&self, branch: &str) -> Result<Option<String>> {
         let config_key = format!("branch.{branch}.remote");
         let output = Command::new("git")
             .current_dir(&self.root)
@@ -220,7 +227,18 @@ impl Git {
             return Ok(Some(remote.to_string()));
         }
 
-        Ok(Some("origin".to_string()))
+        Ok(None)
+    }
+
+    pub fn preferred_remote_for_branch(
+        &self,
+        branch: &str,
+        fallback_branch: &str,
+    ) -> Result<String> {
+        Ok(self
+            .configured_remote_for_branch(branch)?
+            .or(self.configured_remote_for_branch(fallback_branch)?)
+            .unwrap_or_else(|| "origin".to_string()))
     }
 
     pub fn base_remote_for_stack(&self, base_branch: &str) -> Result<String> {

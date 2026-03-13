@@ -160,3 +160,72 @@ fn push_skips_merged_branches() {
         .expect("verify feat/b push");
     assert!(feat_b_exists.success(), "expected feat/b on remote");
 }
+
+#[test]
+fn push_prefers_parent_remote_for_branches_without_upstream() {
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:alice/stack-test.git",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+    run_git(repo.path(), &["config", "branch.main.remote", "upstream"]);
+
+    let upstream_push = repo.path().join("upstream-push.git");
+    run_git(
+        repo.path(),
+        &[
+            "init",
+            "--bare",
+            upstream_push.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "upstream",
+            upstream_push.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(repo.path(), &["push", "upstream", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    run_git(repo.path(), &["checkout", "feat/a"]);
+    std::fs::write(repo.path().join("a.txt"), "a\n").expect("write a");
+    run_git(repo.path(), &["add", "a.txt"]);
+    run_git(repo.path(), &["commit", "-m", "a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["push"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pushed 'feat/a' to 'upstream'"));
+
+    let feat_a_exists = Command::new("git")
+        .current_dir(&upstream_push)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/a"])
+        .status()
+        .expect("verify feat/a push");
+    assert!(feat_a_exists.success(), "expected feat/a on upstream remote");
+}

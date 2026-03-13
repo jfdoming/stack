@@ -7,6 +7,7 @@ use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
 use crate::provider::{PrState, Provider};
 use crate::util::pr_body::{ManagedBranchRef, managed_pr_section, merge_managed_pr_section};
+use crate::util::url::github_repo_slug_from_web_url;
 use crate::views::{OperationView, SyncPlanView};
 
 #[derive(Debug, Clone)]
@@ -512,11 +513,18 @@ pub fn build_sync_plan(
                 .map(|parent| parent.name.clone())
                 .unwrap_or_else(|| base_branch.to_string());
             if pr.base_ref_name.as_deref() != Some(expected_pr_base.as_str()) {
-                ops.push(SyncOp::UpdatePrBase {
-                    branch: branch.name.clone(),
-                    pr_number: pr.number,
-                    base: expected_pr_base,
-                });
+                if can_update_pr_base(git, &branch.name, &expected_pr_base, pr.url.as_deref()) {
+                    ops.push(SyncOp::UpdatePrBase {
+                        branch: branch.name.clone(),
+                        pr_number: pr.number,
+                        base: expected_pr_base,
+                    });
+                } else {
+                    eprintln!(
+                        "warning: skipping PR base update for '{}' because '{}' is not in the PR repository",
+                        branch.name, expected_pr_base
+                    );
+                }
             }
             let pr_root = pr
                 .url
@@ -765,6 +773,28 @@ fn conflicted_branch_from_sync_error(msg: &str) -> Option<&str> {
     let after_second = &after_first[second + marker.len()..];
     let third = after_second.find(marker)?;
     Some(&after_second[..third])
+}
+
+fn can_update_pr_base(git: &Git, branch: &str, expected_base: &str, pr_url: Option<&str>) -> bool {
+    let Some(pr_url) = pr_url else {
+        return true;
+    };
+    let Some(pr_repo_slug) = github_repo_slug_from_web_url(pr_url) else {
+        return true;
+    };
+    let Ok(base_remote) = git.preferred_remote_for_branch(expected_base, branch) else {
+        return true;
+    };
+    let Ok(base_url) = git.remote_web_url(&base_remote) else {
+        return true;
+    };
+    let Some(base_url) = base_url else {
+        return true;
+    };
+    let Some(base_repo_slug) = github_repo_slug_from_web_url(&base_url) else {
+        return true;
+    };
+    pr_repo_slug == base_repo_slug
 }
 
 #[cfg(test)]
