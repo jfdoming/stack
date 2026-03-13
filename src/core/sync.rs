@@ -635,11 +635,16 @@ pub fn execute_sync_plan(
     }
 
     let result = match (op_result, restore_branch_result) {
-        (Err(op_err), Err(restore_err)) => Err(anyhow!(
-            "{op_err}; additionally failed to restore prior branch '{}': {restore_err}",
-            starting_branch
-        )),
-        (Err(op_err), Ok(())) => Err(op_err),
+        (Err(op_err), Err(restore_err)) => Err(anyhow!(format_sync_failure(
+            &op_err,
+            Some(&restore_err),
+            &starting_branch
+        ))),
+        (Err(op_err), Ok(())) => Err(anyhow!(format_sync_failure(
+            &op_err,
+            None,
+            &starting_branch
+        ))),
         (Ok(()), Err(restore_err)) => Err(anyhow!(
             "failed to restore prior branch '{}': {restore_err}",
             starting_branch
@@ -687,11 +692,56 @@ fn summarize_replay_error(err: &anyhow::Error) -> String {
     msg
 }
 
+fn format_sync_failure(
+    op_err: &anyhow::Error,
+    restore_err: Option<&anyhow::Error>,
+    starting_branch: &str,
+) -> String {
+    let op_msg = op_err.to_string();
+    if is_merge_conflict_error(&op_msg) {
+        return format_merge_conflict_guidance(&op_msg);
+    }
+
+    if let Some(restore_err) = restore_err {
+        return format!(
+            "{op_msg}; additionally failed to restore prior branch '{}': {}",
+            starting_branch, restore_err
+        );
+    }
+
+    op_msg
+}
+
+fn is_merge_conflict_error(msg: &str) -> bool {
+    msg.contains("Resolve all conflicts manually")
+        || msg.contains("git rebase --continue")
+        || msg.contains("could not apply")
+}
+
+fn format_merge_conflict_guidance(op_msg: &str) -> String {
+    let branch = conflicted_branch_from_sync_error(op_msg).unwrap_or("the branch");
+    format!(
+        "sync stopped due to merge conflicts while restacking '{branch}'. Resolve the conflicts, run `git rebase --continue`, then rerun `stack sync` if additional restacks remain. Use `git rebase --abort` to cancel the in-progress restack."
+    )
+}
+
+fn conflicted_branch_from_sync_error(msg: &str) -> Option<&str> {
+    let marker = "\", \"";
+    let rebase_idx = msg.find("[\"rebase\", \"--onto\", \"")?;
+    let tail = &msg[rebase_idx..];
+    let first = tail.find(marker)?;
+    let after_first = &tail[first + marker.len()..];
+    let second = after_first.find(marker)?;
+    let after_second = &after_first[second + marker.len()..];
+    let third = after_second.find(marker)?;
+    Some(&after_second[..third])
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::anyhow;
 
-    use super::summarize_replay_error;
+    use super::{format_sync_failure, summarize_replay_error};
 
     #[test]
     fn summarize_replay_error_root_commit_case_is_human_readable() {
@@ -707,5 +757,34 @@ mod tests {
         let err = anyhow!("git command failed [\"replay\"]: fatal: something broke");
         let got = summarize_replay_error(&err);
         assert_eq!(got, "git replay command failed");
+    }
+
+    #[test]
+    fn format_sync_failure_simplifies_rebase_conflict_guidance() {
+        let op_err = anyhow!(
+            "git command failed [\"rebase\", \"--onto\", \"parent\", \"base\", \"branch\"]: error: could not apply abc123\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\"."
+        );
+        let restore_err = anyhow!(
+            "git command failed [\"checkout\", \"main\"]: error: you need to resolve your current index first"
+        );
+
+        let got = format_sync_failure(&op_err, Some(&restore_err), "main");
+
+        assert!(got.contains("sync stopped due to merge conflicts"));
+        assert!(got.contains("git rebase --continue"));
+        assert!(got.contains("git rebase --abort"));
+        assert!(!got.contains("failed to restore prior branch"));
+    }
+
+    #[test]
+    fn format_sync_failure_keeps_restore_error_for_non_conflict_failures() {
+        let op_err = anyhow!("git command failed [\"fetch\"]: fatal: bad remote");
+        let restore_err =
+            anyhow!("git command failed [\"checkout\", \"main\"]: some restore failure");
+
+        let got = format_sync_failure(&op_err, Some(&restore_err), "main");
+
+        assert!(got.contains("failed to restore prior branch 'main'"));
+        assert!(got.contains("fatal: bad remote"));
     }
 }
