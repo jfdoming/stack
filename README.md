@@ -44,6 +44,7 @@ stack track feat/child
 stack track --all --dry-run
 stack untrack <branch>
 stack rename <old> <new>
+stack move [target] --parent <parent>
 stack --yes delete <branch>
 stack pr --dry-run
 stack pr

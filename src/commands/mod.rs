@@ -2,6 +2,7 @@ pub mod completions;
 pub mod create;
 pub mod delete;
 pub mod doctor;
+pub mod r#move;
 pub mod nav;
 pub mod pr;
 pub mod push;

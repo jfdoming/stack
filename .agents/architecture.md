@@ -58,6 +58,11 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Rename only updates remotes (push new branch + delete old branch) when the source branch already has an upstream configured.
 - If an open PR is detected and upstream deletion is planned, rename warns that deleting the remote branch may close that PR.
 
+## Move behaviour
+- `stack move [target] --parent <parent>` reparents a tracked target branch under a new parent while preserving the target subtree beneath it.
+- Missing target/parent arguments prompt in TTY mode; when omitted outside TTY, target defaults only to the current tracked branch and parent remains required.
+- Move rejects parents inside the target subtree so longer descendant cycles cannot be introduced.
+
 ## PR behaviour
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.

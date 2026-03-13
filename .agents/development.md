@@ -15,6 +15,7 @@
 - `cargo run -- track --all --dry-run`: preview inferred relationships for all local non-base branches.
 - `cargo run -- untrack feat/branch`: remove a tracked branch record and splice children to its former parent.
 - `cargo run -- rename feat/old feat/new`: rename a tracked branch and migrate stack metadata.
+- `cargo run -- move feat/child --parent feat/new-parent`: move a tracked branch and its descendants under a new parent branch.
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
@@ -72,6 +73,8 @@
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
 - `stack rename <old> <new>` renames tracked metadata and the local branch in one command.
+- `stack move [target] --parent <parent>` reparents a tracked subtree without changing child links below the moved target.
+- Omitting `stack move` target defaults to the current branch when it is tracked; in TTY mode, missing target/parent values prompt for selection.
 - Rename only pushes/deletes remote refs when the source branch already has an upstream configured.
 - If rename will delete an upstream branch with an open PR, stack warns that deleting the branch may close that PR.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.

@@ -3,6 +3,9 @@
 All notable changes to this repository are documented here. Each version in `Cargo.toml` is treated as a release.
 
 ## Unreleased
+- Added `stack move [target] --parent <parent>` to reparent a tracked subtree under a new parent while preserving descendants.
+- Omitted `stack move` targets now default to the current tracked branch, and interactive runs prompt for any missing target or parent selection.
+- Added coverage to reject direct and multi-branch descendant cycles during `stack move`.
 
 ## 0.15.0 - 2026-02-25
 - Added `stack rename <old> <new>` to rename tracked branches while migrating stack metadata in-place.

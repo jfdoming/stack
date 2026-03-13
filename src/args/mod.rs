@@ -52,6 +52,8 @@ pub enum Commands {
     Delete(DeleteArgs),
     /// Rename a tracked branch and update stack metadata
     Rename(RenameArgs),
+    /// Move a tracked subtree under a new parent branch
+    Move(MoveArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
     /// Push tracked branches with force-with-lease
@@ -146,6 +148,14 @@ pub struct RenameArgs {
         help = "Preview rename without mutating git, DB, or remotes"
     )]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MoveArgs {
+    #[arg(help = "Tracked branch to move (defaults to the current branch)")]
+    pub target: Option<String>,
+    #[arg(short = 'p', long, help = "New parent branch name")]
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Args)]
