@@ -45,6 +45,7 @@ pub trait Provider {
         Ok(out)
     }
     fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()>;
+    fn update_pr_base(&self, pr_number: i64, base: &str) -> Result<()>;
     fn delete_pr(&self, pr_number: i64) -> Result<()>;
 }
 
@@ -454,6 +455,13 @@ impl Provider for GithubProvider {
     fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()> {
         let num = pr_number.to_string();
         let args = ["pr", "edit", &num, "--body", body];
+        let _ = self.run_gh_required(&args)?;
+        Ok(())
+    }
+
+    fn update_pr_base(&self, pr_number: i64, base: &str) -> Result<()> {
+        let num = pr_number.to_string();
+        let args = ["pr", "edit", &num, "--base", base];
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }

@@ -33,6 +33,11 @@ pub enum SyncOp {
         pr_number: i64,
         body: String,
     },
+    UpdatePrBase {
+        branch: String,
+        pr_number: i64,
+        base: String,
+    },
     PruneMergedBranch {
         branch: String,
     },
@@ -95,6 +100,16 @@ impl SyncPlan {
                     branch: branch.clone(),
                     onto: None,
                     details: format!("pr #{pr_number}"),
+                }),
+                SyncOp::UpdatePrBase {
+                    branch,
+                    pr_number,
+                    base,
+                } => operations.push(OperationView {
+                    kind: "update_pr_base".to_string(),
+                    branch: branch.clone(),
+                    onto: Some(base.clone()),
+                    details: format!("pr #{pr_number} -> {base}"),
                 }),
                 SyncOp::PruneMergedBranch { branch } => operations.push(OperationView {
                     kind: "prune_merged".to_string(),
@@ -491,6 +506,18 @@ pub fn build_sync_plan(
                     })
                     .min_by(|a, b| a.branch.cmp(&b.branch))
             });
+            let expected_pr_base = branch
+                .parent_branch_id
+                .and_then(|parent_id| by_id.get(&parent_id))
+                .map(|parent| parent.name.clone())
+                .unwrap_or_else(|| base_branch.to_string());
+            if pr.base_ref_name.as_deref() != Some(expected_pr_base.as_str()) {
+                ops.push(SyncOp::UpdatePrBase {
+                    branch: branch.name.clone(),
+                    pr_number: pr.number,
+                    base: expected_pr_base,
+                });
+            }
             let pr_root = pr
                 .url
                 .as_deref()
@@ -607,6 +634,9 @@ pub fn execute_sync_plan(
                 SyncOp::UpdatePrBody {
                     pr_number, body, ..
                 } => provider.update_pr_body(*pr_number, body)?,
+                SyncOp::UpdatePrBase {
+                    pr_number, base, ..
+                } => provider.update_pr_base(*pr_number, base)?,
                 SyncOp::PruneMergedBranch { branch } => {
                     if git.branch_exists(branch)? {
                         if git.current_branch()? == *branch {

@@ -37,6 +37,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
+- For open PRs discovered during sync, updates both the PR base branch and the managed stack-flow section so GitHub metadata stays aligned with the tracked stack shape.
 - Stops on conflict and warns on stash restore failures.
 - In interactive TTY mode after successful apply, offers a follow-up push step for tracked non-base branches.
 
