@@ -131,3 +131,4 @@ include!("cli/untrack.rs");
 include!("cli/track.rs");
 include!("cli/rename.rs");
 include!("cli/move.rs");
+include!("cli/split.rs");

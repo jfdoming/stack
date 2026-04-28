@@ -54,6 +54,8 @@ pub enum Commands {
     Rename(RenameArgs),
     /// Move a tracked subtree under a new parent branch
     Move(MoveArgs),
+    /// Split current branch history into a tracked stack
+    Split(SplitArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
     /// Push tracked branches with force-with-lease
@@ -156,6 +158,28 @@ pub struct MoveArgs {
     pub target: Option<String>,
     #[arg(short = 'p', long, help = "New parent branch name")]
     pub parent: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SplitArgs {
+    #[arg(
+        long = "at",
+        value_name = "COMMIT",
+        help = "Commit that becomes the tip of a new lower stack branch"
+    )]
+    pub at: Vec<String>,
+    #[arg(
+        long = "name",
+        value_name = "BRANCH",
+        help = "Branch name for the matching --at commit"
+    )]
+    pub name: Vec<String>,
+    #[arg(long, value_name = "BRANCH", help = "Rename the current top branch")]
+    pub top_name: Option<String>,
+    #[arg(short = 'p', long, help = "Branch below the first split branch")]
+    pub parent: Option<String>,
+    #[arg(short = 'n', long, help = "Preview split without mutating git or DB")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]

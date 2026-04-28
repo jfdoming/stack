@@ -143,6 +143,14 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             &ctx.base_branch,
             &ctx.base_remote,
         ),
+        Some(Commands::Split(args)) => commands::split::run(
+            &ctx.db,
+            &ctx.git,
+            args,
+            ctx.cli.global.porcelain,
+            ctx.cli.global.yes,
+            &ctx.base_branch,
+        ),
         Some(Commands::Pr(args)) => commands::pr::run(
             &ctx.db,
             &ctx.git,

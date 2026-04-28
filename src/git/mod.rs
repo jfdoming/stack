@@ -110,6 +110,42 @@ impl Git {
             .map(|s| s.trim().to_string())
     }
 
+    pub fn resolve_commit(&self, rev: &str) -> Result<String> {
+        self.capture(["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+            .map(|s| s.trim().to_string())
+    }
+
+    pub fn rev_list_reverse(&self, base: &str, head: &str) -> Result<Vec<String>> {
+        let range = format!("{base}..{head}");
+        let out = self.capture(["rev-list", "--reverse", &range])?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    pub fn has_merge_commits(&self, base: &str, head: &str) -> Result<bool> {
+        let range = format!("{base}..{head}");
+        let out = self.capture(["rev-list", "--merges", &range])?;
+        Ok(out.lines().any(|line| !line.trim().is_empty()))
+    }
+
+    pub fn commit_oneline(&self, rev: &str) -> Result<String> {
+        self.capture(["show", "-s", "--format=%h %s", rev])
+            .map(|s| s.trim().to_string())
+    }
+
+    pub fn is_valid_branch_name(&self, name: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["check-ref-format", "--branch", name])
+            .output()
+            .with_context(|| format!("failed to validate branch name {name}"))?;
+        Ok(output.status.success())
+    }
+
     pub fn is_worktree_dirty(&self) -> Result<bool> {
         let status = Command::new("git")
             .current_dir(&self.root)

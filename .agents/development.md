@@ -16,6 +16,7 @@
 - `cargo run -- untrack feat/branch`: remove a tracked branch record and splice children to its former parent.
 - `cargo run -- rename feat/old feat/new`: rename a tracked branch and migrate stack metadata.
 - `cargo run -- move feat/child --parent feat/new-parent`: move a tracked branch and its descendants under a new parent branch.
+- `cargo run -- split --at <commit> --name feat/part-1 --top-name feat/top`: split the current branch's committed linear history into lower tracked stack branches without rewriting commits.
 - `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
@@ -80,6 +81,11 @@
 - `stack move` can also adopt untracked local branches into the stack by attaching them under a parent branch, tracking any newly linked branches as needed.
 - Omitting `stack move` target preselects the current local non-base branch in the TTY picker; in non-interactive mode it defaults only when the current branch is a viable target.
 - After `stack move` updates parent links, it immediately runs the sync planner/executor so branch history is restacked to match the new stack shape.
+- `stack split` turns the current branch's committed linear history into a tracked stack without rewriting commits; each selected `--at` commit becomes the tip of a new lower branch, later commits remain above it, and the current branch remains checked out as the top branch.
+- `stack split --top-name <branch>` renames the current branch while keeping it as the top branch; interactive runs prompt for the top branch name with the next non-conflicting `<current>-part-N` name as the default.
+- `stack split --parent <branch>` overrides the branch below the first split branch; otherwise split uses the current tracked parent or the repo base branch.
+- Before applying, non-porcelain `stack split` prints one planned stack with commits grouped under each branch; non-dry-run splits require confirmation unless `--yes` is passed.
+- `stack split --dry-run --porcelain` reports planned branch refs and parent links without mutating git or stack metadata.
 - Rename only pushes/deletes remote refs when the source branch already has an upstream configured.
 - If rename will delete an upstream branch with an open PR, stack warns that deleting the branch may close that PR.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.

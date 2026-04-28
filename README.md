@@ -45,6 +45,7 @@ stack track --all --dry-run
 stack untrack <branch>
 stack rename <old> <new>
 stack move [target] --parent <parent>
+stack split --at <commit> --name feat/part-1 --top-name feat/top
 stack --yes delete <branch>
 stack pr --dry-run
 stack pr

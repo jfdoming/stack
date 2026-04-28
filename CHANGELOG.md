@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.17.0 - 2026-04-28
+- Added `stack split` to split the current branch's committed linear history into tracked stack branches without rewriting commits.
+- Added `stack split --top-name <branch>` to rename the current top branch while splitting.
+- Added dry-run and porcelain output for split planning, non-porcelain planned stack previews with commits grouped under each branch, confirmation before applying unless `--yes` is passed, plus validation for parent ancestry, duplicate or invalid split points, branch-name conflicts, `HEAD` split points, and merge commits.
+
 ## 0.16.1 - 2026-03-13
 - `stack move` can now attach untracked local branches under a parent branch, automatically bringing newly linked branches into stack metadata.
 - `stack move` now immediately runs sync after updating parent links, so git branch history is restacked to match the new stack relationship.
