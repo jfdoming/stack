@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.7 - 2026-07-22
+- Passed branch names to batched GitHub GraphQL lookups as raw string fields so leading `@` characters cannot trigger GitHub CLI file substitution.
+
 ## 0.18.6 - 2026-07-22
 - Removed HTTPS remote credentials, query strings, and fragments from terminal links, browser targets, and generated PR content while retaining the original remote URL for authenticated Git operations.
 

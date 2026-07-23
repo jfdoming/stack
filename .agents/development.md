@@ -77,6 +77,7 @@
 - When every tracked non-base branch in the stack is merged, `stack sync` prunes leaf-first only when every present local tip is contained in fresh merged-PR `headRefOid` metadata; missing local refs can still have their metadata pruned.
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows.
+- Batched PR metadata lookup binds branch-name GraphQL variables with GitHub CLI raw string fields, preserving leading `@` characters without file substitution.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - After non-dry-run `stack track`, PR cache metadata is refreshed for newly tracked branches so `stack` view immediately reflects current PR links/states.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.

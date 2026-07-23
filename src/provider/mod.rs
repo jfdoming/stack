@@ -576,7 +576,7 @@ fn build_head_lookup_query(heads: &[String]) -> (String, Vec<String>) {
 
     let mut fields = Vec::with_capacity(heads.len() * 2);
     for (idx, head) in heads.iter().enumerate() {
-        fields.push("-F".to_string());
+        fields.push("-f".to_string());
         fields.push(format!("h{idx}={head}"));
     }
     (query, fields)
@@ -762,7 +762,14 @@ mod tests {
         assert!(query.contains("$h0:String!"));
         assert!(query.contains("$h1:String!"));
         assert!(query.contains("headRefOid"));
-        assert_eq!(fields, vec!["-F", "h0=feat/a", "-F", "h1=feat/b"]);
+        assert_eq!(fields, vec!["-f", "h0=feat/a", "-f", "h1=feat/b"]);
+    }
+
+    #[test]
+    fn build_head_lookup_query_uses_raw_fields_for_file_like_heads() {
+        let heads = vec!["@branch-name".to_string()];
+        let (_, fields) = build_head_lookup_query(&heads);
+        assert_eq!(fields, vec!["-f", "h0=@branch-name"]);
     }
 
     #[test]

@@ -112,6 +112,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitised before display to avoid terminal control-character injection; rendered HTTP(S) links are structurally parsed and stripped of user information, query strings, and fragments before they reach terminal, browser, or PR-body output.
+- Batched GitHub GraphQL lookups pass branch names as raw string fields so GitHub CLI cannot apply `@file` or typed-value substitution to ref names.
 - Generated markdown link labels and branch path segments in stack-managed PR/compare content are escaped/URL-encoded to reduce malformed-link and markdown-injection risks.
 
 ## Doctor behaviour
