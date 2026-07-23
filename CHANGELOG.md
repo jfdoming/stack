@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.24 - 2026-07-22
+- Anchored open-descendant restacks to the freshly resolved merged PR head, preserving commits inherited from a parent after its PR merged while still dropping commits already represented by a squash merge.
+- Refused ambiguous descendant rewrites when fresh merged-head metadata is missing, cannot be resolved locally, or is not contained in the child; cached merged state alone no longer supplies a destructive replay boundary, and a missing merge commit can fall back only to a freshly advertised remote-base commit.
+
 ## 0.18.23 - 2026-07-22
 - Batched merge commits from every freshly merged direct child and advanced the local base once to the unique newest commit containing all of them, independent of branch-name order.
 - Failed before moving the base when merged-child commits were incomparable or the local base could not fast-forward to their common newest candidate.

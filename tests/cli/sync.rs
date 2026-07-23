@@ -1130,7 +1130,7 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute(
         "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
-        [local_main_before_pull],
+        [&local_main_before_pull],
     )
     .expect("seed main last synced sha");
 
@@ -1190,8 +1190,8 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
-            merged_sha
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            local_main_before_pull, merged_sha
         ),
     )
     .expect("write fake gh");
@@ -1521,6 +1521,8 @@ fn sync_rebase_fallback_drops_merged_parent_commits_after_squash_merge() {
     fs::write(repo.path().join("parent.txt"), "p1\np2\n").expect("write parent p2");
     run_git(repo.path(), &["add", "parent.txt"]);
     run_git(repo.path(), &["commit", "-m", "parent 2"]);
+    let merged_parent_head =
+        git_ref_sha(repo.path(), "feat/parent").expect("merged parent head");
 
     stack_cmd(repo.path())
         .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
@@ -1580,8 +1582,8 @@ fn sync_rebase_fallback_drops_merged_parent_commits_after_squash_merge() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
-            merged_sha
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            merged_parent_head, merged_sha
         ),
     )
     .expect("write fake gh");
@@ -1625,6 +1627,186 @@ fn sync_rebase_fallback_drops_merged_parent_commits_after_squash_merge() {
     assert!(
         !child_subjects.contains("parent 2"),
         "expected merged parent commit to be dropped after sync: {child_subjects}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_preserves_inherited_parent_commits_added_after_the_parent_pr_merged() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("merged.txt"), "merged parent\n")
+        .expect("write merged parent content");
+    run_git(repo.path(), &["add", "merged.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merged parent work"]);
+    let merged_parent_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/parent").expect("merged parent head");
+
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["merge", "--squash", "feat/parent"]);
+    run_git(repo.path(), &["commit", "-m", "squash merged parent"]);
+    let merge_commit = git_ref_sha(repo.path(), "HEAD").expect("parent merge commit");
+
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    fs::write(repo.path().join("post-merge.txt"), "post-merge parent work\n")
+        .expect("write post-merge parent content");
+    run_git(repo.path(), &["add", "post-merge.txt"]);
+    run_git(
+        repo.path(),
+        &["commit", "-m", "post-merge parent work"],
+    );
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/parent",
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "open child work\n")
+        .expect("write child content");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "open child work"]);
+    let child_head = git_ref_sha(repo.path(), "HEAD").expect("open child head");
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-post-merge-parent-work");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"headRefOid\":\"{}\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            child_head, merged_parent_head, merge_commit
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let child_subjects = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "log",
+            "--format=%s",
+            &format!("{merge_commit}..feat/child"),
+        ])
+        .output()
+        .expect("read restacked child log");
+    assert!(child_subjects.status.success());
+    let child_subjects = String::from_utf8(child_subjects.stdout).expect("utf8 child log");
+    assert!(child_subjects.contains("post-merge parent work"));
+    assert!(child_subjects.contains("open child work"));
+    assert!(!child_subjects.contains("merged parent work"));
+
+    let repeat = stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run repeated sync dry-run");
+    assert!(
+        repeat.status.success(),
+        "repeated sync dry-run failed: {}",
+        String::from_utf8_lossy(&repeat.stderr)
+    );
+    let repeat_json: Value = serde_json::from_slice(&repeat.stdout).expect("valid repeat json");
+    let repeat_ops = repeat_json["operations"]
+        .as_array()
+        .expect("repeat operations array");
+    assert!(
+        !repeat_ops
+            .iter()
+            .any(|op| op["kind"] == "restack" && op["branch"] == "feat/child"),
+        "expected no repeated restack after preserving inherited parent commits"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_merged_parent_restack_without_an_authoritative_target() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("parent.txt"), "merged parent\n").expect("write parent");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merged parent"]);
+    let merged_parent_head = git_ref_sha(repo.path(), "HEAD").expect("merged parent head");
+
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/parent",
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "open child\n").expect("write child");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "open child"]);
+    let child_head = git_ref_sha(repo.path(), "HEAD").expect("child head");
+
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["checkout", "-b", "stale-remote-main"]);
+    fs::write(repo.path().join("stale.txt"), "stale remote state\n").expect("write stale");
+    run_git(repo.path(), &["add", "stale.txt"]);
+    run_git(repo.path(), &["commit", "-m", "stale remote state"]);
+    let stale_remote = git_ref_sha(repo.path(), "HEAD").expect("stale remote head");
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/origin/main", &stale_remote],
+    );
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-missing-merged-target");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"headRefOid\":\"{}\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRefOid\":\"{}\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            child_head, merged_parent_head
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "the merged target is unavailable",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "feat/child").as_deref(),
+        Some(child_head.as_str())
     );
 }
 
@@ -1684,12 +1866,24 @@ fn sync_skips_cached_merged_branch_when_pr_metadata_missing() {
     );
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     let ops = json["operations"].as_array().expect("operations array");
-    let parent_restack = ops.iter().any(|op| {
-        op["kind"] == "restack" && op["branch"] == "feat/parent" && op["onto"] == "main"
-    });
+    let parent_restack = ops
+        .iter()
+        .any(|op| op["kind"] == "restack" && op["branch"] == "feat/parent");
+    let child_restack = ops
+        .iter()
+        .any(|op| op["kind"] == "restack" && op["branch"] == "feat/child");
     assert!(
         !parent_restack,
         "expected merged parent branch to be skipped from restack operations"
+    );
+    assert!(
+        !child_restack,
+        "expected no destructive descendant restack from cached merged state"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("fresh merged PR head metadata is unavailable"),
+        "expected cached-only merged state warning"
     );
 }
 

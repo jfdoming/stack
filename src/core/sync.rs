@@ -191,6 +191,11 @@ pub fn build_sync_plan(
     let mut needs_fetch = remote_base_needs_fetch;
     let mut sha_updates = Vec::new();
     let mut current_sha_by_branch: HashMap<String, String> = HashMap::new();
+    for branch in &tracked {
+        if branch_exists.get(&branch.name).copied().unwrap_or(false) {
+            current_sha_by_branch.insert(branch.name.clone(), git.head_sha(&branch.name)?);
+        }
+    }
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
     let mut base_merge_commits = Vec::new();
@@ -207,14 +212,9 @@ pub fn build_sync_plan(
 
     for branch in &tracked {
         let branch_is_local = branch_exists.get(&branch.name).copied().unwrap_or(false);
-        let current_sha = if branch_is_local {
-            let sha = git.head_sha(&branch.name)?;
-            current_sha_by_branch.insert(branch.name.clone(), sha.clone());
-            Some(sha)
-        } else {
-            None
-        };
-        let mut merged_restack_base: Option<String> = None;
+        let current_sha = current_sha_by_branch.get(&branch.name).cloned();
+        let mut fresh_merged_target: Option<Option<String>> = None;
+        let mut fresh_merged_head_oid: Option<Option<String>> = None;
 
         let mut is_merged_pr = branch
             .cached_pr_state
@@ -231,11 +231,12 @@ pub fn build_sync_plan(
             is_merged_pr = matches!(pr.state, PrState::Merged);
 
             if matches!(pr.state, PrState::Merged) {
+                fresh_merged_head_oid = Some(pr.head_ref_oid.clone());
                 let merge_commit_oid = pr.merge_commit_oid.clone();
-                merged_restack_base = Some(
+                fresh_merged_target = Some(
                     merge_commit_oid
                         .clone()
-                        .unwrap_or_else(|| remote_base_target.clone()),
+                        .or_else(|| advertised_remote_base.clone()),
                 );
 
                 let is_direct_child_of_base = branch
@@ -259,39 +260,73 @@ pub fn build_sync_plan(
         }
         let current_sha = current_sha.expect("local branch SHA should be available");
 
-        if is_merged_pr {
-            let new_base = merged_restack_base.unwrap_or_else(|| remote_base_target.clone());
-            if let Some(children_ids) = children.get(&branch.id) {
-                for child_id in children_ids {
-                    if let Some(child) = by_id.get(child_id) {
-                        if !branch_exists.get(&child.name).copied().unwrap_or(false) {
-                            continue;
+        if is_merged_pr && let Some(children_ids) = children.get(&branch.id) {
+            for child_id in children_ids {
+                if let Some(child) = by_id.get(child_id) {
+                    if !branch_exists.get(&child.name).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let child_merged = pr_by_branch
+                        .get(&child.name)
+                        .map(|pr| matches!(pr.state, PrState::Merged))
+                        .unwrap_or_else(|| {
+                            child
+                                .cached_pr_state
+                                .as_deref()
+                                .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                        });
+                    if child_merged {
+                        continue;
+                    }
+                    let new_base = match fresh_merged_target.as_ref() {
+                        Some(Some(target)) => target.clone(),
+                        Some(None) => {
+                            return Err(anyhow!(
+                                "cannot safely restack '{}' after merged parent '{}': the merged target is unavailable",
+                                child.name,
+                                branch.name
+                            ));
                         }
-                        let should_restack = if git.ref_exists(&new_base)? {
-                            !git.is_ancestor(&new_base, &child.name)?
-                        } else {
-                            true
-                        };
-                        if should_restack {
-                            let child_merged = pr_by_branch
-                                .get(&child.name)
-                                .map(|pr| matches!(pr.state, PrState::Merged))
-                                .unwrap_or_else(|| {
-                                    child
-                                        .cached_pr_state
-                                        .as_deref()
-                                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
-                                });
-                            if child_merged {
+                        None => remote_base_target.clone(),
+                    };
+                    let child_head = current_sha_by_branch
+                        .get(&child.name)
+                        .ok_or_else(|| anyhow!("missing planned head for '{}'", child.name))?;
+                    let should_restack = if git.ref_exists(&new_base)? {
+                        !git.is_ancestor(&new_base, child_head)?
+                    } else {
+                        true
+                    };
+                    if should_restack {
+                        needs_fetch = true;
+                        let old_base = match fresh_merged_head_oid.as_ref() {
+                            Some(Some(merged_head_oid)) => merged_parent_restack_old_base(
+                                git,
+                                &branch.name,
+                                &child.name,
+                                merged_head_oid,
+                                child_head,
+                            )?,
+                            Some(None) => {
+                                return Err(anyhow!(
+                                    "cannot safely restack '{}' after merged parent '{}': the merged PR head is unavailable",
+                                    child.name,
+                                    branch.name
+                                ));
+                            }
+                            None => {
+                                eprintln!(
+                                    "warning: skipping restack of '{}' after cached merged parent '{}': fresh merged PR head metadata is unavailable",
+                                    child.name, branch.name
+                                );
                                 continue;
                             }
-                            needs_fetch = true;
-                            queue.push_back(RestackCandidate {
-                                branch: child.name.clone(),
-                                onto: new_base.clone(),
-                                old_base: safe_restack_old_base(git, &branch.name, &child.name)?,
-                            });
-                        }
+                        };
+                        queue.push_back(RestackCandidate {
+                            branch: child.name.clone(),
+                            onto: new_base.clone(),
+                            old_base,
+                        });
                     }
                 }
             }
@@ -312,17 +347,33 @@ pub fn build_sync_plan(
                         .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
                 });
             if !parent_is_merged {
+                let parent_head = current_sha_by_branch
+                    .get(&parent.name)
+                    .ok_or_else(|| anyhow!("missing planned head for '{}'", parent.name))?;
                 let parent_onto = if parent.name == base_branch {
                     remote_base_target.clone()
                 } else {
                     parent.name.clone()
                 };
+                let parent_onto_commit = if parent.name == base_branch {
+                    parent_onto.as_str()
+                } else {
+                    parent_head.as_str()
+                };
                 let parent_onto_is_local = git.ref_exists(&parent_onto)?;
-                if !parent_onto_is_local || !git.is_ancestor(&parent_onto, &branch.name)? {
+                if !parent_onto_is_local
+                    || !git.is_ancestor(parent_onto_commit, current_sha.as_str())?
+                {
                     queue.push_back(RestackCandidate {
                         branch: branch.name.clone(),
                         onto: parent_onto,
-                        old_base: safe_restack_old_base(git, &parent.name, &branch.name)?,
+                        old_base: safe_restack_old_base(
+                            git,
+                            &parent.name,
+                            parent_head,
+                            &branch.name,
+                            &current_sha,
+                        )?,
                     });
                 }
             }
@@ -426,7 +477,17 @@ pub fn build_sync_plan(
                     queue.push_back(RestackCandidate {
                         branch: child.name.clone(),
                         onto: item.branch.clone(),
-                        old_base: safe_restack_old_base(git, &item.branch, &child.name)?,
+                        old_base: safe_restack_old_base(
+                            git,
+                            &item.branch,
+                            current_sha_by_branch.get(&item.branch).ok_or_else(|| {
+                                anyhow!("missing planned head for '{}'", item.branch)
+                            })?,
+                            &child.name,
+                            current_sha_by_branch.get(&child.name).ok_or_else(|| {
+                                anyhow!("missing planned head for '{}'", child.name)
+                            })?,
+                        )?,
                     });
                 }
             }
@@ -708,20 +769,49 @@ fn newest_merged_base_commit(
     Ok(Some(target.clone()))
 }
 
-fn safe_restack_old_base(git: &Git, parent: &str, child: &str) -> Result<String> {
-    let parent_sha = git.head_sha(parent)?;
-    if git.is_ancestor(&parent_sha, child)? {
-        return Ok(parent_sha);
+fn merged_parent_restack_old_base(
+    git: &Git,
+    parent: &str,
+    child: &str,
+    merged_head_oid: &str,
+    child_head: &str,
+) -> Result<String> {
+    let merged_head = git.resolve_commit(merged_head_oid).map_err(|_| {
+        anyhow!(
+            "cannot safely restack '{}' after merged parent '{}': the merged PR head is unavailable locally",
+            child,
+            parent
+        )
+    })?;
+    if !git.is_ancestor(&merged_head, child_head)? {
+        return Err(anyhow!(
+            "cannot safely restack '{}' after merged parent '{}': the child does not contain the merged PR head",
+            child,
+            parent
+        ));
+    }
+    Ok(merged_head)
+}
+
+fn safe_restack_old_base(
+    git: &Git,
+    parent: &str,
+    parent_head: &str,
+    child: &str,
+    child_head: &str,
+) -> Result<String> {
+    if git.is_ancestor(parent_head, child_head)? {
+        return Ok(parent_head.to_string());
     }
 
-    let fork_point = git.merge_base_fork_point(parent, child)?.ok_or_else(|| {
+    let fork_point = git.merge_base_fork_point(parent, child_head)?.ok_or_else(|| {
         anyhow!(
             "cannot safely restack '{}' onto rewritten parent '{}': the prior fork point is unavailable",
             child,
             parent
         )
     })?;
-    if !git.ref_exists(&fork_point)? || !git.is_ancestor(&fork_point, child)? {
+    if !git.ref_exists(&fork_point)? || !git.is_ancestor(&fork_point, child_head)? {
         return Err(anyhow!(
             "cannot safely restack '{}' onto rewritten parent '{}': the prior fork point is invalid",
             child,
