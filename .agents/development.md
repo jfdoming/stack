@@ -17,7 +17,7 @@
 - `cargo run -- rename feat/old feat/new`: rename a tracked branch and migrate stack metadata.
 - `cargo run -- move feat/child --parent feat/new-parent`: move a tracked branch and its descendants under a new parent branch.
 - `cargo run -- split --at <commit> --name feat/part-1 --top-name feat/top`: split the current branch's committed linear history into lower tracked stack branches without rewriting commits.
-- `cargo run -- completions zsh`: print shell completion script (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
+- `cargo run -- completions zsh`: print a shell completion script from any directory, including outside Git repositories (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
 - `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
 - `cargo run -- --debug sync --dry-run`: include sync timing metrics in debug output.

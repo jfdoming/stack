@@ -22,8 +22,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    fn build() -> Result<Self> {
-        let cli = Cli::parse();
+    fn build(cli: Cli) -> Result<Self> {
         let git = Git::discover()?;
         let db_path = prepare_stack_db_path(&git)?;
         let db = Database::open(&db_path)?;
@@ -105,7 +104,12 @@ pub fn run() -> Result<()> {
         .compact()
         .init();
 
-    let ctx = AppContext::build()?;
+    let cli = Cli::parse();
+    if let Some(Commands::Completions(args)) = &cli.command {
+        return commands::completions::run(args.shell);
+    }
+
+    let ctx = AppContext::build(cli)?;
     dispatch(&ctx)
 }
 

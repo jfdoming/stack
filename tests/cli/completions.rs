@@ -1,7 +1,7 @@
 #[test]
 fn completions_command_generates_script() {
-    let repo = init_repo();
-    stack_cmd(repo.path())
+    let dir = tempfile::tempdir().expect("tempdir");
+    stack_cmd(dir.path())
         .args(["completions", "zsh"])
         .assert()
         .success()
@@ -9,8 +9,8 @@ fn completions_command_generates_script() {
 }
 #[test]
 fn completions_without_shell_in_non_interactive_mode_requires_argument() {
-    let repo = init_repo();
-    stack_cmd(repo.path())
+    let dir = tempfile::tempdir().expect("tempdir");
+    stack_cmd(dir.path())
         .args(["completions"])
         .assert()
         .failure()

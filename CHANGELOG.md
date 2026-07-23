@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.12 - 2026-07-22
+- Allowed shell completion generation and shell-argument validation to run outside Git repositories without initialising repository state.
+
 ## 0.18.11 - 2026-07-22
 - Made `stack doctor --fix` detach only actual cycle members, preserving valid descendant links that merely lead into a cycle.
 

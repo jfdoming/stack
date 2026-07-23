@@ -15,6 +15,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `src/ui/`: interactive terminal UX helpers and the ratatui `stack` view.
 - `src/views/`: JSON-serializable views for porcelain output.
 - `src/util/`: shared PR body, URL, and terminal utilities.
+- Application bootstrap dispatches repository-independent completion generation before discovering Git or opening stack metadata; all other commands receive the repository-bound application context.
 
 ## Persistence
 - DB location: `<git-common-dir>/stack.db` (repo-scoped and shared across linked worktrees; normally `.git/stack.db`).
