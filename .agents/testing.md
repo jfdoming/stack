@@ -28,5 +28,6 @@ Use this file for test strategy, scope, and execution expectations.
 ## Quality Bar
 - New behaviour should be covered by at least one new or updated test.
 - Prefer deterministic tests (no network dependency assumptions).
+- Git fixture commands disable commit and tag signing per invocation so developer-level signing configuration cannot make tests interactive.
 - Keep tests task-scoped; avoid unrelated refactors in test-only commits.
 - Keep test files as short as possible without reducing behavioural coverage.

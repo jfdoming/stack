@@ -114,6 +114,7 @@ fn install_fake_browser_openers(fake_bin: &Path, log_path: &Path) {
 fn run_git(repo: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(repo)
+        .args(["-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"])
         .args(args)
         .output()
         .expect("run git");

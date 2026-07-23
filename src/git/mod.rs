@@ -1294,6 +1294,7 @@ mod tests {
     fn run_test_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
             .current_dir(root)
+            .args(["-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"])
             .args(args)
             .output()
             .expect("run test git command");
