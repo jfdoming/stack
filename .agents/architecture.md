@@ -23,12 +23,14 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Integrity: cycle prevention is validated before parent updates.
 
 ## Sync behaviour
-- Builds a plan (`fetch`, `restack`, metadata updates).
+- Builds a plan (`fetch`, `restack`, metadata updates) after comparing the preferred remote's advertised base head with the local remote-tracking ref.
 - Prefers `upstream` as the sync fetch remote when configured; otherwise uses the configured base remote.
+- Pins the advertised remote-base commit in the plan and verifies the fetched tracking ref still matches it before applying dependent restacks.
 - Prefers `git replay`; falls back to `git rebase --onto` with warning.
 - Executes replay using revision ranges (`old_base..branch`) and applies replay-emitted ref updates.
 - For restacks with zero commits to replay, uses `git rebase --onto` to fast-forward branch tips to the tracked parent.
-- For tracked parent-child restacks, execution prefers the parent’s pre-sync SHA as the replay/rebase `old_base` anchor to avoid duplicate empty commits after parent history rewrites.
+- For tracked parent-child restacks, planning captures an immutable `old_base`: the current parent tip when it is still an ancestor, otherwise a validated reflog fork point. Missing rewrite evidence fails closed instead of replaying ambiguous commits.
+- Applies restacks parent-first and persists their sync SHAs only after every planned operation succeeds.
 - For merged-parent child restacks, execution uses the merged parent branch tip as `old_base` so parent commits are not replayed again over squash-merged base history.
 - When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
 - Branches marked merged (from fresh PR metadata or cached merged state) are excluded from direct sync restack/update operations; only descendants are considered for follow-up restacks.

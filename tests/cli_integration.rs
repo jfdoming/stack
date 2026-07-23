@@ -58,20 +58,21 @@ fn configure_test_fixture_excludes(repo: &Path) {
 
 fn init_repo_with_named_remote(remote: &str) -> TempDir {
     let dir = init_repo_without_origin();
+    let bare = dir.path().join(format!("{remote}.git"));
+    run_git(
+        dir.path(),
+        &["init", "--bare", bare.to_str().expect("bare remote path")],
+    );
     run_git(
         dir.path(),
         &[
             "remote",
             "add",
             remote,
-            "git@github.com:acme/stack-test.git",
+            bare.to_str().expect("bare remote path"),
         ],
     );
-    run_git(dir.path(), &["config", "branch.main.remote", remote]);
-    run_git(
-        dir.path(),
-        &["config", "branch.main.merge", "refs/heads/main"],
-    );
+    run_git(dir.path(), &["push", "--set-upstream", remote, "main"]);
     dir
 }
 

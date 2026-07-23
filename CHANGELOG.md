@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.5 - 2026-07-22
+- Made sync discover an advanced remote base before planning, pin and verify the advertised commit across fetch, and restack roots onto that remote state without moving the local base branch.
+- Made rewritten-parent restacks use validated reflog fork points, apply parent restacks before descendants, and defer sync metadata updates until the full plan succeeds so obsolete parent commits are not duplicated.
+
 ## 0.18.4 - 2026-07-22
 - Made merged-stack pruning fail closed unless every present local branch is contained in its fresh merged PR head, with a second safety check immediately before deletion.
 - Prevented sync auto-stashes from being restored on the wrong branch; sync now refuses to prune a dirty checked-out branch before stashing and retains the stash if the original branch cannot be restored.

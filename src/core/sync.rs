@@ -14,6 +14,8 @@ use crate::views::{OperationView, SyncPlanView};
 pub enum SyncOp {
     Fetch {
         remote: String,
+        expected_base_ref: Option<String>,
+        expected_base_sha: Option<String>,
     },
     UpdateBaseToMergeCommit {
         branch: String,
@@ -22,7 +24,7 @@ pub enum SyncOp {
     Restack {
         branch: String,
         onto: String,
-        old_base: Option<String>,
+        old_base: String,
         reason: String,
     },
     UpdateSha {
@@ -63,7 +65,7 @@ impl SyncPlan {
         let mut operations = Vec::new();
         for op in &self.ops {
             match op {
-                SyncOp::Fetch { remote } => operations.push(OperationView {
+                SyncOp::Fetch { remote, .. } => operations.push(OperationView {
                     kind: "fetch".to_string(),
                     branch: remote.clone(),
                     onto: None,
@@ -139,7 +141,7 @@ pub fn build_sync_plan(
     struct RestackCandidate {
         branch: String,
         onto: String,
-        old_base: Option<String>,
+        old_base: String,
     }
 
     let setup_started = Instant::now();
@@ -149,6 +151,28 @@ pub fn build_sync_plan(
     for branch in &tracked {
         branch_exists.insert(branch.name.clone(), git.branch_exists(&branch.name)?);
     }
+    let remote_base_ref = format!("{sync_remote}/{base_branch}");
+    let full_remote_base_ref = format!("refs/remotes/{sync_remote}/{base_branch}");
+    let base_upstream = git.branch_upstream(base_branch)?;
+    let should_inspect_remote_base = git.has_remote(&sync_remote)?
+        && (git.ref_exists(&remote_base_ref)?
+            || base_upstream.as_deref() == Some(remote_base_ref.as_str())
+            || sync_remote == "upstream");
+    let advertised_remote_base = should_inspect_remote_base
+        .then(|| git.advertised_remote_branch_sha(&sync_remote, base_branch))
+        .transpose()?
+        .flatten();
+    let tracked_remote_base = git
+        .ref_exists(&remote_base_ref)?
+        .then(|| git.resolve_commit(&remote_base_ref))
+        .transpose()?;
+    let remote_base_needs_fetch = advertised_remote_base
+        .as_ref()
+        .is_some_and(|advertised| tracked_remote_base.as_deref() != Some(advertised.as_str()));
+    let remote_base_target = advertised_remote_base
+        .clone()
+        .or_else(|| tracked_remote_base.clone())
+        .unwrap_or_else(|| base_branch.to_string());
     let setup_elapsed = setup_started.elapsed();
 
     let pr_lookup_started = Instant::now();
@@ -163,7 +187,8 @@ pub fn build_sync_plan(
     let assemble_started = Instant::now();
 
     let mut ops = Vec::new();
-    let mut needs_fetch = false;
+    let mut needs_fetch = remote_base_needs_fetch;
+    let mut sha_updates = Vec::new();
     let mut current_sha_by_branch: HashMap<String, String> = HashMap::new();
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
@@ -209,7 +234,7 @@ pub fn build_sync_plan(
                 merged_restack_base = Some(
                     merge_commit_oid
                         .clone()
-                        .unwrap_or_else(|| format!("{sync_remote}/{base_branch}")),
+                        .unwrap_or_else(|| remote_base_target.clone()),
                 );
 
                 let is_direct_child_of_base = branch
@@ -235,8 +260,7 @@ pub fn build_sync_plan(
         let current_sha = current_sha.expect("local branch SHA should be available");
 
         if is_merged_pr {
-            let new_base =
-                merged_restack_base.unwrap_or_else(|| format!("{sync_remote}/{base_branch}"));
+            let new_base = merged_restack_base.unwrap_or_else(|| remote_base_target.clone());
             if let Some(children_ids) = children.get(&branch.id) {
                 for child_id in children_ids {
                     if let Some(child) = by_id.get(child_id) {
@@ -265,7 +289,7 @@ pub fn build_sync_plan(
                             queue.push_back(RestackCandidate {
                                 branch: child.name.clone(),
                                 onto: new_base.clone(),
-                                old_base: Some(current_sha.clone()),
+                                old_base: safe_restack_old_base(git, &branch.name, &child.name)?,
                             });
                         }
                     }
@@ -273,67 +297,33 @@ pub fn build_sync_plan(
             }
         }
 
-        if !is_merged_pr {
-            if let Some(parent_id) = branch.parent_branch_id
-                && let Some(parent) = by_id.get(&parent_id)
-                && branch_exists.get(&parent.name).copied().unwrap_or(false)
-            {
-                let parent_is_merged = pr_by_branch
-                    .get(&parent.name)
-                    .map(|pr| matches!(pr.state, PrState::Merged))
-                    .unwrap_or_else(|| {
-                        parent
-                            .cached_pr_state
-                            .as_deref()
-                            .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+        if !is_merged_pr
+            && let Some(parent_id) = branch.parent_branch_id
+            && let Some(parent) = by_id.get(&parent_id)
+            && branch_exists.get(&parent.name).copied().unwrap_or(false)
+        {
+            let parent_is_merged = pr_by_branch
+                .get(&parent.name)
+                .map(|pr| matches!(pr.state, PrState::Merged))
+                .unwrap_or_else(|| {
+                    parent
+                        .cached_pr_state
+                        .as_deref()
+                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                });
+            if !parent_is_merged {
+                let parent_onto = if parent.name == base_branch {
+                    remote_base_target.clone()
+                } else {
+                    parent.name.clone()
+                };
+                let parent_onto_is_local = git.ref_exists(&parent_onto)?;
+                if !parent_onto_is_local || !git.is_ancestor(&parent_onto, &branch.name)? {
+                    queue.push_back(RestackCandidate {
+                        branch: branch.name.clone(),
+                        onto: parent_onto,
+                        old_base: safe_restack_old_base(git, &parent.name, &branch.name)?,
                     });
-                if !parent_is_merged {
-                    let parent_onto = if parent.name == base_branch {
-                        let remote_base_ref = format!("{sync_remote}/{base_branch}");
-                        if git.ref_exists(&remote_base_ref)? {
-                            remote_base_ref
-                        } else {
-                            parent.name.clone()
-                        }
-                    } else {
-                        parent.name.clone()
-                    };
-                    if !git.is_ancestor(&parent_onto, &branch.name)? {
-                        queue.push_back(RestackCandidate {
-                            branch: branch.name.clone(),
-                            onto: parent.name.clone(),
-                            old_base: None,
-                        });
-                    }
-                }
-            }
-            if let Some(previous_sha) = &branch.last_synced_head_sha
-                && previous_sha != &current_sha
-                && let Some(children_ids) = children.get(&branch.id)
-            {
-                for child_id in children_ids {
-                    if let Some(child) = by_id.get(child_id) {
-                        if !branch_exists.get(&child.name).copied().unwrap_or(false) {
-                            continue;
-                        }
-                        let child_merged = pr_by_branch
-                            .get(&child.name)
-                            .map(|pr| matches!(pr.state, PrState::Merged))
-                            .unwrap_or_else(|| {
-                                child
-                                    .cached_pr_state
-                                    .as_deref()
-                                    .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
-                            });
-                        if child_merged {
-                            continue;
-                        }
-                        queue.push_back(RestackCandidate {
-                            branch: child.name.clone(),
-                            onto: branch.name.clone(),
-                            old_base: None,
-                        });
-                    }
                 }
             }
         }
@@ -341,7 +331,7 @@ pub fn build_sync_plan(
             && branch.name != base_branch
             && branch.last_synced_head_sha.as_deref() != Some(current_sha.as_str())
         {
-            ops.push(SyncOp::UpdateSha {
+            sha_updates.push(SyncOp::UpdateSha {
                 branch: branch.name.clone(),
                 sha: current_sha,
             });
@@ -379,13 +369,13 @@ pub fn build_sync_plan(
         && let Some(base) = tracked.iter().find(|branch| branch.name == base_branch)
         && base.last_synced_head_sha.as_deref() != Some(base_sha.as_str())
     {
-        ops.push(SyncOp::UpdateSha {
+        sha_updates.push(SyncOp::UpdateSha {
             branch: base_branch.to_string(),
             sha: base_sha,
         });
     }
 
-    let mut seen_restack = HashSet::new();
+    let mut restack_by_branch: HashMap<String, RestackCandidate> = HashMap::new();
     while let Some(item) = queue.pop_front() {
         if !branch_exists.get(&item.branch).copied().unwrap_or(false) {
             continue;
@@ -397,18 +387,10 @@ pub fn build_sync_plan(
         {
             continue;
         }
-        if !seen_restack.insert(item.branch.clone()) {
+        if restack_by_branch.contains_key(&item.branch) {
             continue;
         }
-        needs_fetch = true;
-        ops.push(SyncOp::Restack {
-            branch: item.branch.clone(),
-            onto: item.onto.clone(),
-            old_base: item
-                .old_base
-                .or_else(|| current_sha_by_branch.get(&item.onto).cloned()),
-            reason: "parent updated or merged".to_string(),
-        });
+        restack_by_branch.insert(item.branch.clone(), item.clone());
         if let Some(node) = tracked.iter().find(|b| b.name == item.branch)
             && let Some(children_ids) = children.get(&node.id)
         {
@@ -432,12 +414,37 @@ pub fn build_sync_plan(
                     queue.push_back(RestackCandidate {
                         branch: child.name.clone(),
                         onto: item.branch.clone(),
-                        old_base: None,
+                        old_base: safe_restack_old_base(git, &item.branch, &child.name)?,
                     });
                 }
             }
         }
     }
+    let mut restack_candidates: Vec<RestackCandidate> = restack_by_branch.into_values().collect();
+    restack_candidates.sort_by(|a, b| {
+        branch_depth(&a.branch, &tracked, &by_id)
+            .cmp(&branch_depth(&b.branch, &tracked, &by_id))
+            .then(a.branch.cmp(&b.branch))
+    });
+    let restacked_branches: HashSet<String> = restack_candidates
+        .iter()
+        .map(|candidate| candidate.branch.clone())
+        .collect();
+    for item in restack_candidates {
+        needs_fetch = true;
+        ops.push(SyncOp::Restack {
+            branch: item.branch,
+            onto: item.onto,
+            old_base: item.old_base,
+            reason: "parent updated or merged".to_string(),
+        });
+    }
+    ops.extend(sha_updates.into_iter().filter(|update| {
+        !matches!(
+            update,
+            SyncOp::UpdateSha { branch, .. } if restacked_branches.contains(branch)
+        )
+    }));
 
     let stack_fully_merged = tracked
         .iter()
@@ -607,6 +614,10 @@ pub fn build_sync_plan(
             0,
             SyncOp::Fetch {
                 remote: sync_remote.clone(),
+                expected_base_ref: advertised_remote_base
+                    .as_ref()
+                    .map(|_| full_remote_base_ref),
+                expected_base_sha: advertised_remote_base,
             },
         );
     }
@@ -621,6 +632,48 @@ pub fn build_sync_plan(
         assemble: assemble_started.elapsed(),
     };
     Ok((plan, timing))
+}
+
+fn safe_restack_old_base(git: &Git, parent: &str, child: &str) -> Result<String> {
+    let parent_sha = git.head_sha(parent)?;
+    if git.is_ancestor(&parent_sha, child)? {
+        return Ok(parent_sha);
+    }
+
+    let fork_point = git.merge_base_fork_point(parent, child)?.ok_or_else(|| {
+        anyhow!(
+            "cannot safely restack '{}' onto rewritten parent '{}': the prior fork point is unavailable",
+            child,
+            parent
+        )
+    })?;
+    if !git.ref_exists(&fork_point)? || !git.is_ancestor(&fork_point, child)? {
+        return Err(anyhow!(
+            "cannot safely restack '{}' onto rewritten parent '{}': the prior fork point is invalid",
+            child,
+            parent
+        ));
+    }
+    Ok(fork_point)
+}
+
+fn branch_depth(
+    branch_name: &str,
+    tracked: &[BranchRecord],
+    by_id: &HashMap<i64, BranchRecord>,
+) -> usize {
+    let mut depth = 0;
+    let mut cursor = tracked
+        .iter()
+        .find(|branch| branch.name == branch_name)
+        .and_then(|branch| branch.parent_branch_id);
+    while let Some(parent_id) = cursor {
+        depth += 1;
+        cursor = by_id
+            .get(&parent_id)
+            .and_then(|parent| parent.parent_branch_id);
+    }
+    depth
 }
 
 pub fn execute_sync_plan(
@@ -653,18 +706,35 @@ pub fn execute_sync_plan(
     let mut status = "success";
     let mut summary = None;
     let replay_supported = git.supports_replay();
+    let mut pending_sync_shas: HashMap<String, String> = HashMap::new();
 
     let op_result: Result<()> = (|| {
         for op in &plan.ops {
             match op {
-                SyncOp::Fetch { remote } => git.fetch_remote(remote)?,
+                SyncOp::Fetch {
+                    remote,
+                    expected_base_ref,
+                    expected_base_sha,
+                } => {
+                    git.fetch_remote(remote)?;
+                    if let (Some(reference), Some(expected)) =
+                        (expected_base_ref.as_deref(), expected_base_sha.as_deref())
+                    {
+                        let actual = git.resolve_commit(reference)?;
+                        if actual != expected {
+                            return Err(anyhow!(
+                                "remote base changed while sync was being applied; rerun sync to build a fresh plan"
+                            ));
+                        }
+                    }
+                }
                 SyncOp::UpdateBaseToMergeCommit {
                     branch,
                     merge_commit,
                 } => {
                     git.fast_forward_branch(branch, merge_commit)?;
                     let sha = git.head_sha(branch)?;
-                    db.set_sync_sha(branch, &sha)?;
+                    pending_sync_shas.insert(branch.clone(), sha);
                 }
                 SyncOp::Restack {
                     branch,
@@ -672,33 +742,30 @@ pub fn execute_sync_plan(
                     old_base,
                     ..
                 } => {
-                    let old_base = if let Some(old_base) = old_base {
-                        old_base.clone()
-                    } else {
-                        git.merge_base(branch, onto)?
-                    };
-                    if git.commit_distance(&old_base, branch)? == 0 {
-                        git.rebase_onto(branch, &old_base, onto)?;
+                    if git.commit_distance(old_base, branch)? == 0 {
+                        git.rebase_onto(branch, old_base, onto)?;
                         let sha = git.head_sha(branch)?;
-                        db.set_sync_sha(branch, &sha)?;
+                        pending_sync_shas.insert(branch.clone(), sha);
                         continue;
                     }
                     if replay_supported {
-                        if let Err(err) = git.replay_onto(branch, &old_base, onto) {
+                        if let Err(err) = git.replay_onto(branch, old_base, onto) {
                             let reason = summarize_replay_error(&err);
                             eprintln!(
                                 "warning: git replay is unavailable for '{branch}' ({reason}); falling back to rebase"
                             );
-                            git.rebase_onto(branch, &old_base, onto)?;
+                            git.rebase_onto(branch, old_base, onto)?;
                         }
                     } else {
                         eprintln!("warning: git replay unavailable; using rebase for {branch}");
-                        git.rebase_onto(branch, &old_base, onto)?;
+                        git.rebase_onto(branch, old_base, onto)?;
                     }
                     let sha = git.head_sha(branch)?;
-                    db.set_sync_sha(branch, &sha)?;
+                    pending_sync_shas.insert(branch.clone(), sha);
                 }
-                SyncOp::UpdateSha { branch, sha } => db.set_sync_sha(branch, sha)?,
+                SyncOp::UpdateSha { branch, sha } => {
+                    pending_sync_shas.insert(branch.clone(), sha.clone());
+                }
                 SyncOp::UpdatePrBody {
                     pr_number, body, ..
                 } => provider.update_pr_body(*pr_number, body)?,
@@ -735,6 +802,11 @@ pub fn execute_sync_plan(
                         db.splice_out_branch(branch)?;
                     }
                 }
+            }
+        }
+        for (branch, sha) in &pending_sync_shas {
+            if db.branch_by_name(branch)?.is_some() {
+                db.set_sync_sha(branch, sha)?;
             }
         }
         Ok(())

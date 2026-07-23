@@ -143,6 +143,231 @@ fn sync_restack_when_parent_not_ancestor_even_without_sha_delta_plans_and_applie
 }
 
 #[test]
+fn sync_fetches_and_restacks_onto_an_advanced_remote_base_in_one_run() {
+    let repo = init_repo_without_origin();
+    let upstream_bare = repo.path().join("upstream.git");
+    run_git(
+        repo.path(),
+        &[
+            "init",
+            "--bare",
+            upstream_bare.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            upstream_bare.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["push", "--set-upstream", "upstream", "main"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("root.txt"), "root work\n").expect("write root work");
+    run_git(repo.path(), &["add", "root.txt"]);
+    run_git(repo.path(), &["commit", "-m", "root work"]);
+    run_git(repo.path(), &["checkout", "main"]);
+    let local_main = git_ref_sha(repo.path(), "refs/heads/main").expect("local main");
+
+    let upstream_work = repo.path().join(".git/test-upstream-work");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            "--branch",
+            "main",
+            upstream_bare.to_str().expect("upstream bare path"),
+            upstream_work.to_str().expect("upstream work path"),
+        ],
+    );
+    run_git(
+        &upstream_work,
+        &["config", "user.email", "upstream@example.com"],
+    );
+    run_git(&upstream_work, &["config", "user.name", "Upstream Bot"]);
+    run_git(&upstream_work, &["config", "commit.gpgsign", "false"]);
+    fs::write(upstream_work.join("base.txt"), "advanced base\n").expect("write base change");
+    run_git(&upstream_work, &["add", "base.txt"]);
+    run_git(&upstream_work, &["commit", "-m", "advance remote base"]);
+    let remote_main = git_ref_sha(&upstream_work, "HEAD").expect("remote main");
+    run_git(&upstream_work, &["push", "origin", "main"]);
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/remotes/upstream/main"),
+        Some(local_main.clone()),
+        "test requires a stale remote-tracking ref"
+    );
+
+    let dry_run = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("plan sync against advanced remote base");
+    assert!(
+        dry_run.status.success(),
+        "sync planning failed: {}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    let plan: Value = serde_json::from_slice(&dry_run.stdout).expect("valid sync plan");
+    let operations = plan["operations"].as_array().expect("operations array");
+    assert!(
+        operations
+            .iter()
+            .any(|op| op["kind"] == "fetch" && op["branch"] == "upstream"),
+        "expected the stale upstream ref to be fetched: {operations:?}"
+    );
+    assert!(
+        operations.iter().any(|op| {
+            op["kind"] == "restack"
+                && op["branch"] == "feat/root"
+                && op["onto"] == remote_main
+        }),
+        "expected the root branch to target the advertised remote base: {operations:?}"
+    );
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let contains_remote_base = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            &remote_main,
+            "feat/root",
+        ])
+        .status()
+        .expect("check remote base ancestry");
+    assert!(
+        contains_remote_base.success(),
+        "expected feat/root to contain the advertised remote base"
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(local_main),
+        "an unmerged remote advance must not move local main"
+    );
+
+    let repeated = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("plan repeated sync");
+    assert!(repeated.status.success());
+    let repeated_plan: Value =
+        serde_json::from_slice(&repeated.stdout).expect("valid repeated sync plan");
+    let repeated_operations = repeated_plan["operations"]
+        .as_array()
+        .expect("repeated operations array");
+    assert!(
+        !repeated_operations
+            .iter()
+            .any(|op| op["kind"] == "restack" && op["branch"] == "feat/root"),
+        "expected the remote-base restack to be idempotent: {repeated_operations:?}"
+    );
+}
+
+#[test]
+fn sync_drops_obsolete_parent_commits_after_parent_rewrite() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("old-parent.txt"), "obsolete parent\n")
+        .expect("write old parent work");
+    run_git(repo.path(), &["add", "old-parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "obsolete parent commit"]);
+
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/parent",
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "child work\n").expect("write child work");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child commit"]);
+
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    run_git(repo.path(), &["reset", "--hard", "main"]);
+    fs::write(repo.path().join("new-parent.txt"), "replacement parent\n")
+        .expect("write replacement parent work");
+    run_git(repo.path(), &["add", "new-parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "replacement parent commit"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let parent_is_ancestor = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            "feat/parent",
+            "feat/child",
+        ])
+        .status()
+        .expect("check rewritten parent ancestry");
+    assert!(parent_is_ancestor.success());
+
+    let child_log = Command::new("git")
+        .current_dir(repo.path())
+        .args(["log", "--format=%s", "feat/parent..feat/child"])
+        .output()
+        .expect("read child-only commits");
+    assert!(child_log.status.success());
+    let child_subjects = String::from_utf8(child_log.stdout).expect("utf8 child log");
+    assert!(child_subjects.contains("child commit"));
+    assert!(
+        !child_subjects.contains("obsolete parent commit"),
+        "obsolete parent history was duplicated into the child: {child_subjects}"
+    );
+
+    let old_parent_file = Command::new("git")
+        .current_dir(repo.path())
+        .args(["cat-file", "-e", "feat/child:old-parent.txt"])
+        .output()
+        .expect("inspect child tree");
+    assert!(
+        !old_parent_file.status.success(),
+        "obsolete parent content must not be replayed into the child"
+    );
+
+    let repeated = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("plan repeated parent-rewrite sync");
+    assert!(repeated.status.success());
+    let repeated_plan: Value =
+        serde_json::from_slice(&repeated.stdout).expect("valid repeated sync plan");
+    assert!(
+        !repeated_plan["operations"]
+            .as_array()
+            .expect("repeated operations array")
+            .iter()
+            .any(|op| op["kind"] == "restack" && op["branch"] == "feat/child")
+    );
+}
+
+#[test]
 fn sync_fast_forwards_inherited_only_child_without_creating_empty_commit() {
     let repo = init_repo_without_origin();
 
@@ -1768,6 +1993,26 @@ fn sync_skips_pr_base_update_when_target_branch_is_in_different_repo() {
     let fake_bin = repo.path().join("fake-bin-cross-repo-base");
     let gh_log = repo.path().join("gh-cross-repo-base.log");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let real_git = Command::new("sh")
+        .args(["-lc", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let main_sha = git_ref_sha(repo.path(), "refs/heads/main").expect("main sha");
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"ls-remote\" ]]; then\n  printf '{}\\trefs/heads/main\\n'\n  exit 0\nfi\nif [[ \"$1\" == \"fetch\" && \"$2\" == \"upstream\" ]]; then\n  exec '{}' update-ref refs/remotes/upstream/main '{}'\nfi\nexec '{}' \"$@\"\n",
+            main_sha, real_git, main_sha, real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,

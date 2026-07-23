@@ -63,7 +63,9 @@
 - After non-dry-run `stack sync` in interactive TTY mode, stack offers a follow-up prompt to run `stack push`; `--yes` auto-accepts that prompt in TTY mode.
 - During restack execution, `stack sync` uses `git replay --onto <new-base> <old-base>..<branch>` and applies replay-emitted ref updates.
 - When a restack target has zero commits beyond the computed merge-base, sync uses `git rebase --onto` to fast-forward the branch onto its parent.
-- For child restacks onto a tracked parent branch, sync uses the parent’s pre-sync SHA as `old-base` to avoid generating duplicate empty commits when parent commits are rewritten.
+- Sync queries the preferred remote's advertised base head without mutating refs during planning; when it differs locally, the plan fetches and restacks roots onto that pinned commit in one run.
+- For child restacks onto a tracked parent branch, sync uses the current parent tip when it remains in the child history, otherwise a validated reflog fork point. If rewrite evidence is unavailable, sync refuses the ambiguous restack.
+- Parent restacks run before descendants, and sync SHAs are persisted only after the complete plan succeeds.
 - For child restacks after a merged parent PR (including squash merges), sync anchors replay/rebase `old-base` to the merged parent branch tip so parent commits are dropped and only child commits are replayed.
 - In fork workflows, `stack sync` fetches `upstream` when present (instead of `origin`) so merged-parent commit SHAs can be resolved locally before replay/rebase.
 - `stack sync` only advances the local base branch when a direct child PR is marked merged and includes a merge commit SHA; the base branch is fast-forwarded to that exact merge commit (not beyond later base-branch commits).

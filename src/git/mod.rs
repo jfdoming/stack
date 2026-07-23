@@ -460,7 +460,7 @@ impl Git {
         self.run(["merge", "--ff-only", "--", &onto])
     }
 
-    fn has_remote(&self, name: &str) -> Result<bool> {
+    pub fn has_remote(&self, name: &str) -> Result<bool> {
         let output = Command::new("git")
             .current_dir(&self.root)
             .args(["remote"])
@@ -471,6 +471,69 @@ impl Git {
         }
         let remotes = String::from_utf8(output.stdout)?;
         Ok(remotes.lines().any(|line| line.trim() == name))
+    }
+
+    pub fn advertised_remote_branch_sha(
+        &self,
+        remote: &str,
+        branch: &str,
+    ) -> Result<Option<String>> {
+        if !self.has_remote(remote)? {
+            return Ok(None);
+        }
+
+        let branch_ref = local_branch_ref(branch);
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args([
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                "--refs",
+                "--",
+                remote,
+                &branch_ref,
+            ])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to inspect branch '{}' on remote '{}'",
+                    sanitize_terminal_text(branch),
+                    sanitize_terminal_text(remote)
+                )
+            })?;
+        if output.status.code() == Some(2) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err(anyhow!(
+                "could not inspect branch '{}' on remote '{}'",
+                sanitize_terminal_text(branch),
+                sanitize_terminal_text(remote)
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)?;
+        let sha = stdout
+            .lines()
+            .filter_map(|line| line.split_once(char::is_whitespace))
+            .find_map(|(sha, reference)| (reference.trim() == branch_ref).then(|| sha.trim()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "remote '{}' returned no object ID for branch '{}'",
+                    sanitize_terminal_text(remote),
+                    sanitize_terminal_text(branch)
+                )
+            })?;
+        if !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(anyhow!(
+                "remote '{}' returned an invalid object ID for branch '{}'",
+                sanitize_terminal_text(remote),
+                sanitize_terminal_text(branch)
+            ));
+        }
+        Ok(Some(sha.to_ascii_lowercase()))
     }
 
     pub fn replay_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
@@ -533,6 +596,31 @@ impl Git {
         let onto = self.resolve_commit(onto)?;
         self.capture(["merge-base", "--", &branch, &onto])
             .map(|s| s.trim().to_string())
+    }
+
+    pub fn merge_base_fork_point(&self, parent: &str, child: &str) -> Result<Option<String>> {
+        let parent_ref = local_branch_ref(parent);
+        let child = self.resolve_commit(child)?;
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["merge-base", "--fork-point", &parent_ref, &child])
+            .output()
+            .with_context(|| format!("failed to find fork point for {parent} -> {child}"))?;
+        match output.status.code() {
+            Some(0) => {
+                let fork_point = String::from_utf8(output.stdout)?.trim().to_string();
+                if fork_point.is_empty() {
+                    return Err(anyhow!(
+                        "git returned an empty fork point for {parent} -> {child}"
+                    ));
+                }
+                Ok(Some(fork_point))
+            }
+            Some(1) => Ok(None),
+            _ => Err(anyhow!(
+                "git could not determine a fork point for {parent} -> {child}"
+            )),
+        }
     }
 
     pub fn is_ancestor(&self, ancestor: &str, branch: &str) -> Result<bool> {
