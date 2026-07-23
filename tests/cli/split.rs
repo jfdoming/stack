@@ -316,6 +316,38 @@ fn split_dry_run_porcelain_reports_without_mutating() {
 }
 
 #[test]
+fn split_treats_a_full_oid_named_parent_as_a_branch() {
+    let repo = init_repo_without_origin();
+    let original = branch_tip(repo.path(), "main");
+    run_git(repo.path(), &["checkout", "-b", "build-parent"]);
+    let parent_tip = commit_file(repo.path(), "parent.txt", "parent\n", "parent");
+    run_git(repo.path(), &["branch", &original, &parent_tip]);
+    let parent_ref = format!("refs/heads/{original}");
+    run_git(
+        repo.path(),
+        &["checkout", "-b", "feat/top", &parent_ref],
+    );
+    commit_file(repo.path(), "one.txt", "one\n", "one");
+    commit_file(repo.path(), "two.txt", "two\n", "two");
+
+    stack_cmd(repo.path())
+        .args([
+            "split",
+            "--parent",
+            &original,
+            "--at",
+            &parent_tip,
+            "--name",
+            "feat/invalid",
+            "--dry-run",
+            "--porcelain",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is outside"));
+}
+
+#[test]
 fn split_dry_run_plain_shows_planned_stack_and_commits() {
     let repo = init_repo_without_origin();
     run_git(repo.path(), &["checkout", "-b", "feat/all"]);

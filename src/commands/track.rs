@@ -494,10 +494,10 @@ fn infer_parent_from_git(
         if candidate == branch {
             continue;
         }
-        if !git.is_ancestor(candidate, branch)? {
+        if !git.is_branch_ancestor(candidate, branch)? {
             continue;
         }
-        let distance = git.commit_distance(candidate, branch)?;
+        let distance = git.branch_commit_distance(candidate, branch)?;
         if distance < best_distance {
             best_parent = Some(candidate.clone());
             best_distance = distance;

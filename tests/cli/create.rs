@@ -48,6 +48,35 @@ fn create_command_creates_branch_and_persists_parent_link() {
         .expect("parent name");
     assert_eq!(parent_name, "main");
 }
+
+#[test]
+fn create_uses_the_tip_of_a_full_oid_named_parent_branch() {
+    let repo = init_repo();
+    let original = git_ref_sha(repo.path(), "refs/heads/main").expect("original commit");
+    fs::write(repo.path().join("later.txt"), "later\n").expect("write later file");
+    run_git(repo.path(), &["add", "later.txt"]);
+    run_git(repo.path(), &["commit", "-m", "later"]);
+    let parent_head = git_ref_sha(repo.path(), "refs/heads/main").expect("new main head");
+    run_git(repo.path(), &["branch", &original]);
+
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            &original,
+            "--name",
+            "feat/child",
+            "--porcelain",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/child").as_deref(),
+        Some(parent_head.as_str())
+    );
+}
+
 #[test]
 fn create_without_parent_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();

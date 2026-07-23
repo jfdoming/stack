@@ -118,7 +118,7 @@ pub fn run(
         ));
     }
 
-    git.create_branch_from(&child, &parent)
+    git.create_branch_from_branch(&child, &parent)
         .with_context(|| format!("failed to create branch {child} from {parent}"))?;
     git.checkout_branch(&child)
         .with_context(|| format!("failed to switch to new branch {child}"))?;

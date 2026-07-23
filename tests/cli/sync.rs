@@ -143,6 +143,258 @@ fn sync_restack_when_parent_not_ancestor_even_without_sha_delta_plans_and_applie
 }
 
 #[test]
+fn sync_restacks_onto_the_tip_of_a_full_oid_named_parent_branch() {
+    let repo = init_repo_without_origin();
+    let original = git_ref_sha(repo.path(), "refs/heads/main").expect("initial main");
+    run_git(repo.path(), &["checkout", "-b", "build-parent"]);
+    fs::write(repo.path().join("parent.txt"), "parent\n").expect("write parent");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent"]);
+    let parent_tip = git_ref_sha(repo.path(), "HEAD").expect("parent tip");
+    run_git(repo.path(), &["branch", &original, &parent_tip]);
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["branch", "-D", "build-parent"]);
+
+    stack_cmd(repo.path())
+        .args(["track", &original, "--parent", "main", "--porcelain"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            &original,
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "child\n").expect("write child");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child"]);
+
+    run_git(repo.path(), &["checkout", &original]);
+    fs::write(repo.path().join("later-parent.txt"), "later\n").expect("write later parent");
+    run_git(repo.path(), &["add", "later-parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "advance parent"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let parent_ref = format!("refs/heads/{original}");
+    let contains_parent = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            "--",
+            &parent_ref,
+            "refs/heads/feat/child",
+        ])
+        .status()
+        .expect("check hash-named parent ancestry");
+    assert!(
+        contains_parent.success(),
+        "expected child to be restacked onto the hash-named parent tip"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_a_parent_target_that_changes_after_planning() {
+    let repo = init_repo_without_origin();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("parent.txt"), "parent\n").expect("write parent");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent"]);
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/parent",
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "child\n").expect("write child");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child"]);
+    let child_head = git_ref_sha(repo.path(), "refs/heads/feat/child").expect("child head");
+
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    fs::write(repo.path().join("planned.txt"), "planned\n").expect("write planned parent");
+    run_git(repo.path(), &["add", "planned.txt"]);
+    run_git(repo.path(), &["commit", "-m", "planned parent"]);
+    fs::write(repo.path().join("concurrent.txt"), "concurrent\n")
+        .expect("write concurrent parent");
+    run_git(repo.path(), &["add", "concurrent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "concurrent parent"]);
+    let concurrent_parent =
+        git_ref_sha(repo.path(), "refs/heads/feat/parent").expect("concurrent parent head");
+    run_git(repo.path(), &["reset", "--hard", "HEAD^"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-parent-target-race");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"help\" && \"$2\" == \"-a\" ]]; then\n  '{}' update-ref refs/heads/feat/parent '{}'\nfi\nexec '{}' \"$@\"\n",
+            real_git, concurrent_parent, real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "target branch 'feat/parent' changed after the sync plan was built",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/parent"),
+        Some(concurrent_parent)
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/child"),
+        Some(child_head)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_a_restacked_target_that_changes_before_its_child() {
+    let repo = init_repo_without_origin();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("parent.txt"), "parent\n").expect("write parent");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent"]);
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/parent",
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "child\n").expect("write child");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child"]);
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/child",
+            "--name",
+            "feat/grandchild",
+        ])
+        .assert()
+        .success();
+    fs::write(repo.path().join("grandchild.txt"), "grandchild\n")
+        .expect("write grandchild");
+    run_git(repo.path(), &["add", "grandchild.txt"]);
+    run_git(repo.path(), &["commit", "-m", "grandchild"]);
+    let grandchild_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/grandchild").expect("grandchild head");
+
+    run_git(repo.path(), &["checkout", "feat/child"]);
+    fs::write(repo.path().join("concurrent-child.txt"), "concurrent\n")
+        .expect("write concurrent child");
+    run_git(repo.path(), &["add", "concurrent-child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "concurrent child"]);
+    let concurrent_child =
+        git_ref_sha(repo.path(), "refs/heads/feat/child").expect("concurrent child head");
+    run_git(repo.path(), &["reset", "--hard", "HEAD^"]);
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    fs::write(repo.path().join("later-parent.txt"), "later\n").expect("write later parent");
+    run_git(repo.path(), &["add", "later-parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "advance parent"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-applied-target-race");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let marker = repo.path().join("child-restack-finished.marker");
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"replay\" || \"$1\" == \"rebase\" ]]; then\n  '{}' \"$@\"\n  status=$?\n  if [[ $status -eq 0 ]]; then : > '{}'; fi\n  exit $status\nfi\nif [[ \"$1\" == \"switch\" && \"${{@: -1}}\" == \"feat/child\" && -f '{}' ]]; then\n  '{}' \"$@\"\n  status=$?\n  if [[ $status -eq 0 ]]; then\n    '{}' update-ref refs/heads/feat/child '{}'\n    rm -f '{}'\n  fi\n  exit $status\nfi\nexec '{}' \"$@\"\n",
+            real_git,
+            marker.display(),
+            marker.display(),
+            real_git,
+            real_git,
+            concurrent_child,
+            marker.display(),
+            real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "target branch 'feat/child' changed after its planned restack",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/child"),
+        Some(concurrent_child)
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/grandchild"),
+        Some(grandchild_head)
+    );
+}
+
+#[test]
 fn sync_fetches_and_restacks_onto_an_advanced_remote_base_in_one_run() {
     let repo = init_repo_without_origin();
     let upstream_bare = repo.path().join("upstream.git");
@@ -1380,6 +1632,122 @@ fn sync_advances_base_to_the_newest_of_all_merged_direct_children() {
     assert!(
         !operations.iter().any(|op| op["kind"] == "update_base"),
         "expected no repeated base advance after all merged roots were applied: {operations:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_a_base_that_changes_during_fast_forward() {
+    let repo = init_repo_without_origin();
+    run_git(repo.path(), &["checkout", "-b", "remote-main"]);
+    fs::write(repo.path().join("merged.txt"), "merged\n").expect("write merged commit");
+    run_git(repo.path(), &["add", "merged.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merged commit"]);
+    let merged_commit = git_ref_sha(repo.path(), "HEAD").expect("merged commit");
+    fs::write(repo.path().join("concurrent-base.txt"), "concurrent\n")
+        .expect("write concurrent base");
+    run_git(repo.path(), &["add", "concurrent-base.txt"]);
+    run_git(repo.path(), &["commit", "-m", "concurrent base"]);
+    let concurrent_base = git_ref_sha(repo.path(), "HEAD").expect("concurrent base");
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "alpha"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "zeta"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    let test_path = install_two_merged_root_provider(repo.path(), &merged_commit, &merged_commit);
+    let fake_bin = repo.path().join("fake-bin-multiple-merged-roots");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"merge\" && \"$2\" == \"--ff-only\" ]]; then\n  '{}' \"$@\"\n  status=$?\n  if [[ $status -eq 0 ]]; then '{}' update-ref refs/heads/main '{}'; fi\n  exit $status\nfi\nexec '{}' \"$@\"\n",
+            real_git, real_git, concurrent_base, real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "base branch 'main' changed while it was being fast-forwarded",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(concurrent_base),
+        "sync must preserve the concurrent base advance"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_rejects_an_opposite_format_merge_oid_that_names_a_branch() {
+    let repo = init_repo_without_origin();
+    let original_base = git_ref_sha(repo.path(), "refs/heads/main").expect("original base");
+    run_git(repo.path(), &["checkout", "-b", "merge-source"]);
+    fs::write(repo.path().join("merged.txt"), "merged\n").expect("write merge target");
+    run_git(repo.path(), &["add", "merged.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merge target"]);
+    let merge_target = git_ref_sha(repo.path(), "HEAD").expect("merge target");
+    let false_oid = "a".repeat(64);
+    run_git(repo.path(), &["branch", &false_oid, &merge_target]);
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "alpha"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    let alpha_head = git_ref_sha(repo.path(), "refs/heads/alpha").expect("alpha head");
+
+    let fake_bin = repo.path().join("fake-bin-invalid-merge-oid");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"alpha\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            alpha_head, false_oid
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "full Git object ID does not resolve to that exact commit object",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(original_base),
+        "malformed merge metadata must not advance the base"
     );
 }
 

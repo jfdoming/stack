@@ -181,6 +181,37 @@ fn track_without_parent_in_non_interactive_mode_uses_inference_when_possible() {
 }
 
 #[test]
+fn track_inference_treats_a_full_oid_named_candidate_as_a_branch() {
+    let repo = init_repo_without_origin();
+    let original = git_ref_sha(repo.path(), "refs/heads/main").expect("initial main");
+    run_git(repo.path(), &["checkout", "-b", "build-parent"]);
+    fs::write(repo.path().join("parent.txt"), "parent\n").expect("write parent");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent"]);
+    let parent_tip = git_ref_sha(repo.path(), "HEAD").expect("parent tip");
+    run_git(repo.path(), &["branch", &original, &parent_tip]);
+    let parent_ref = format!("refs/heads/{original}");
+    run_git(repo.path(), &["checkout", "-b", "feat/child", &parent_ref]);
+    fs::write(repo.path().join("child.txt"), "child\n").expect("write child");
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child"]);
+    run_git(repo.path(), &["branch", "-D", "build-parent"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["track", "feat/child", "--dry-run", "--porcelain"])
+        .output()
+        .expect("infer hash-named parent");
+    assert!(
+        output.status.success(),
+        "track failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("valid track JSON");
+    assert_eq!(payload["changes"][0]["new_parent"], original);
+    assert_eq!(payload["changes"][0]["source"], "git_ancestry");
+}
+
+#[test]
 fn track_inference_recurses_to_base_branch_when_reachable() {
     let repo = init_repo();
 

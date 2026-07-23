@@ -108,6 +108,11 @@ impl Git {
         self.run(["branch", "--", name, parent])
     }
 
+    pub fn create_branch_from_branch(&self, name: &str, parent: &str) -> Result<()> {
+        let parent_ref = local_branch_ref(parent);
+        self.run(["branch", "--", name, &parent_ref])
+    }
+
     pub fn checkout_branch(&self, branch: &str) -> Result<()> {
         self.run(["switch", "--", branch])
     }
@@ -290,11 +295,11 @@ impl Git {
     }
 
     pub fn is_first_parent_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
-        if !self.ref_exists(ancestor)? || !self.ref_exists(descendant)? {
+        if !self.object_id_exists(ancestor)? || !self.object_id_exists(descendant)? {
             return Ok(false);
         }
-        let ancestor = self.resolve_commit(ancestor)?;
-        let descendant = self.resolve_commit(descendant)?;
+        let ancestor = self.resolve_object_id(ancestor)?;
+        let descendant = self.resolve_object_id(descendant)?;
         let out = self.capture(["rev-list", "--first-parent", &descendant])?;
         Ok(out.lines().any(|oid| oid.trim() == ancestor))
     }
@@ -306,12 +311,47 @@ impl Git {
             .map(|s| s.trim().to_string())
     }
 
+    pub fn resolve_object_id(&self, oid: &str) -> Result<String> {
+        self.exact_object_id_commit(oid)?.ok_or_else(|| {
+            anyhow!("full Git object ID does not resolve to that exact commit object")
+        })
+    }
+
+    pub fn object_id_exists(&self, oid: &str) -> Result<bool> {
+        Ok(self.exact_object_id_commit(oid)?.is_some())
+    }
+
+    fn exact_object_id_commit(&self, oid: &str) -> Result<Option<String>> {
+        if !valid_object_id(oid) {
+            return Err(anyhow!("invalid full Git object ID"));
+        }
+        let revision = format!("{oid}^{{commit}}");
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &revision,
+            ])
+            .output()
+            .context("failed to resolve full Git object ID")?;
+        match output.status.code() {
+            Some(0) => {
+                let resolved = String::from_utf8(output.stdout)?.trim().to_string();
+                Ok(resolved.eq_ignore_ascii_case(oid).then_some(resolved))
+            }
+            Some(1) => Ok(None),
+            _ => Err(anyhow!(
+                "could not resolve full Git object ID: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
     pub fn rev_list_reverse(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        let range = format!(
-            "{}..{}",
-            self.resolve_commit(base)?,
-            self.resolve_commit(head)?
-        );
+        let range = format!("{}..{}", self.head_sha(base)?, self.head_sha(head)?);
         let out = self.capture(["rev-list", "--reverse", "--end-of-options", &range, "--"])?;
         Ok(out
             .lines()
@@ -322,11 +362,7 @@ impl Git {
     }
 
     pub fn has_merge_commits(&self, base: &str, head: &str) -> Result<bool> {
-        let range = format!(
-            "{}..{}",
-            self.resolve_commit(base)?,
-            self.resolve_commit(head)?
-        );
+        let range = format!("{}..{}", self.head_sha(base)?, self.head_sha(head)?);
         let out = self.capture(["rev-list", "--merges", "--end-of-options", &range, "--"])?;
         Ok(out.lines().any(|line| !line.trim().is_empty()))
     }
@@ -710,10 +746,29 @@ impl Git {
         Ok(output.status.success())
     }
 
-    pub fn fast_forward_branch(&self, branch: &str, onto: &str) -> Result<()> {
-        let onto = self.resolve_commit(onto)?;
+    pub fn fast_forward_branch(
+        &self,
+        branch: &str,
+        expected_head: &str,
+        onto: &str,
+    ) -> Result<String> {
+        let expected_head = self.resolve_object_id(expected_head)?;
+        let onto = self.resolve_object_id(onto)?;
         self.checkout_branch(branch)?;
-        self.run(["merge", "--ff-only", "--", &onto])
+        if self.head_sha(branch)? != expected_head {
+            return Err(anyhow!(
+                "base branch '{}' changed after the sync plan was built; rerun sync to review a fresh plan",
+                sanitize_terminal_text(branch)
+            ));
+        }
+        self.run(["merge", "--ff-only", "--", &onto])?;
+        if self.head_sha(branch)? != onto {
+            return Err(anyhow!(
+                "base branch '{}' changed while it was being fast-forwarded; rerun sync to review a fresh plan",
+                sanitize_terminal_text(branch)
+            ));
+        }
+        Ok(onto)
     }
 
     pub fn has_remote(&self, name: &str) -> Result<bool> {
@@ -798,10 +853,10 @@ impl Git {
         expected_head: &str,
         old_base: &str,
         new_base: &str,
-    ) -> Result<()> {
-        let expected_head = self.resolve_commit(expected_head)?;
-        let old_base = self.resolve_commit(old_base)?;
-        let new_base = self.resolve_commit(new_base)?;
+    ) -> Result<String> {
+        let expected_head = self.resolve_object_id(expected_head)?;
+        let old_base = self.resolve_object_id(old_base)?;
+        let new_base = self.resolve_object_id(new_base)?;
         let branch_ref = local_branch_ref(branch);
         let revision_range = format!("{old_base}..{expected_head}");
 
@@ -853,9 +908,10 @@ impl Git {
             ));
         }
 
-        self.update_local_branch_if_unchanged(branch, fields[2], &expected_head)?;
+        let replayed_head = fields[2].to_string();
+        self.update_local_branch_if_unchanged(branch, &replayed_head, &expected_head)?;
         self.checkout_branch(branch)?;
-        Ok(())
+        Ok(replayed_head)
     }
 
     pub fn rebase_onto(
@@ -864,10 +920,10 @@ impl Git {
         expected_head: &str,
         old_base: &str,
         new_base: &str,
-    ) -> Result<()> {
-        let expected_head = self.resolve_commit(expected_head)?;
-        let old_base = self.resolve_commit(old_base)?;
-        let new_base = self.resolve_commit(new_base)?;
+    ) -> Result<String> {
+        let expected_head = self.resolve_object_id(expected_head)?;
+        let old_base = self.resolve_object_id(old_base)?;
+        let new_base = self.resolve_object_id(new_base)?;
         self.checkout_branch(branch)?;
         if self.head_sha(branch)? != expected_head {
             return Err(branch_changed_after_sync_plan(branch));
@@ -922,7 +978,8 @@ impl Git {
             let _ = self.delete_local_branch_if_unchanged(&temporary_branch, &rebased_head);
         }
         update_result?;
-        self.checkout_branch(branch)
+        self.checkout_branch(branch)?;
+        Ok(rebased_head)
     }
 
     pub fn finish_pending_restack(&self) -> Result<Option<String>> {
@@ -1043,15 +1100,15 @@ impl Git {
     }
 
     pub fn merge_base(&self, branch: &str, onto: &str) -> Result<String> {
-        let branch = self.resolve_commit(branch)?;
-        let onto = self.resolve_commit(onto)?;
+        let branch = self.head_sha(branch)?;
+        let onto = self.head_sha(onto)?;
         self.capture(["merge-base", "--", &branch, &onto])
             .map(|s| s.trim().to_string())
     }
 
     pub fn merge_base_fork_point(&self, parent: &str, child: &str) -> Result<Option<String>> {
         let parent_ref = local_branch_ref(parent);
-        let child = self.resolve_commit(child)?;
+        let child = self.resolve_object_id(child)?;
         let output = Command::new("git")
             .current_dir(&self.root)
             .args(["merge-base", "--fork-point", &parent_ref, &child])
@@ -1085,6 +1142,10 @@ impl Git {
         Ok(status.success())
     }
 
+    pub fn is_branch_ancestor(&self, ancestor: &str, branch: &str) -> Result<bool> {
+        self.is_ancestor(&self.head_sha(ancestor)?, &self.head_sha(branch)?)
+    }
+
     pub fn commit_distance(&self, base: &str, head: &str) -> Result<u32> {
         let range = format!(
             "{}..{}",
@@ -1099,8 +1160,14 @@ impl Git {
         Ok(count)
     }
 
+    pub fn branch_commit_distance(&self, base: &str, head: &str) -> Result<u32> {
+        self.commit_distance(&self.head_sha(base)?, &self.head_sha(head)?)
+    }
+
     fn unambiguous_revision(&self, revision: &str) -> Result<String> {
-        if self.branch_exists(revision)? {
+        if valid_object_id(revision) || revision.starts_with("refs/") {
+            Ok(revision.to_string())
+        } else if self.branch_exists(revision)? {
             Ok(local_branch_ref(revision))
         } else {
             Ok(revision.to_string())
@@ -1246,6 +1313,43 @@ mod tests {
         (repo, git)
     }
 
+    fn init_sha256_test_repo() -> (tempfile::TempDir, Git) {
+        let repo = tempfile::tempdir().expect("test repository");
+        run_test_git(
+            repo.path(),
+            &["init", "--object-format=sha256", "-b", "main"],
+        );
+        let git = Git {
+            root: repo.path().to_path_buf(),
+        };
+        (repo, git)
+    }
+
+    fn assert_full_oid_wins_over_same_named_branch(repo: &Path, git: &Git) {
+        run_test_git(repo, &["config", "user.email", "test@example.com"]);
+        run_test_git(repo, &["config", "user.name", "Stack Test"]);
+        run_test_git(repo, &["commit", "--allow-empty", "-m", "original"]);
+        let original = git.head_sha("main").unwrap();
+        run_test_git(repo, &["commit", "--allow-empty", "-m", "new head"]);
+        run_test_git(repo, &["branch", &original]);
+
+        assert_eq!(git.resolve_commit(&original).unwrap(), original);
+    }
+
+    fn assert_opposite_length_hex_name_resolves_as_branch(repo: &Path, git: &Git, length: usize) {
+        run_test_git(repo, &["config", "user.email", "test@example.com"]);
+        run_test_git(repo, &["config", "user.name", "Stack Test"]);
+        run_test_git(repo, &["commit", "--allow-empty", "-m", "head"]);
+        let head = git.head_sha("main").unwrap();
+        let branch = "a".repeat(length);
+        run_test_git(repo, &["branch", &branch]);
+
+        assert_eq!(git.resolve_commit(&branch).unwrap(), head);
+        assert!(git.resolve_object_id(&branch).is_err());
+        assert!(!git.object_id_exists(&branch).unwrap());
+        assert!(!git.is_first_parent_ancestor(&branch, &head).unwrap());
+    }
+
     #[test]
     fn remote_url_treats_an_option_like_remote_name_as_an_operand() {
         let (repo, git) = init_test_repo();
@@ -1370,6 +1474,105 @@ mod tests {
             git.first_parent_commit_oids("feature")
                 .unwrap()
                 .contains(&feature_head)
+        );
+    }
+
+    #[test]
+    fn full_sha1_oid_wins_over_a_same_named_branch() {
+        let (repo, git) = init_test_repo();
+        assert_full_oid_wins_over_same_named_branch(repo.path(), &git);
+    }
+
+    #[test]
+    fn full_sha256_oid_wins_over_a_same_named_branch() {
+        let (repo, git) = init_sha256_test_repo();
+        assert_full_oid_wins_over_same_named_branch(repo.path(), &git);
+    }
+
+    #[test]
+    fn sha1_repo_still_resolves_a_64_hex_branch_name() {
+        let (repo, git) = init_test_repo();
+        assert_opposite_length_hex_name_resolves_as_branch(repo.path(), &git, 64);
+    }
+
+    #[test]
+    fn sha256_repo_still_resolves_a_40_hex_branch_name() {
+        let (repo, git) = init_sha256_test_repo();
+        assert_opposite_length_hex_name_resolves_as_branch(repo.path(), &git, 40);
+    }
+
+    #[test]
+    fn full_blob_oid_does_not_fall_back_to_a_same_named_branch() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "head"]);
+        std::fs::write(repo.path().join("blob.txt"), "not a commit\n").unwrap();
+        let blob_oid = git
+            .capture(["hash-object", "-w", "blob.txt"])
+            .unwrap()
+            .trim()
+            .to_string();
+        run_test_git(repo.path(), &["branch", &blob_oid]);
+
+        assert!(git.resolve_commit(&blob_oid).is_err());
+        assert!(!git.ref_exists(&blob_oid).unwrap());
+    }
+
+    #[test]
+    fn missing_full_oid_does_not_fall_back_to_a_same_named_branch() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "head"]);
+        let head = git.head_sha("main").unwrap();
+        let missing_oid = "f".repeat(40);
+        run_test_git(repo.path(), &["branch", &missing_oid]);
+
+        assert!(git.resolve_commit(&missing_oid).is_err());
+        assert!(!git.ref_exists(&missing_oid).unwrap());
+        assert_eq!(git.head_sha(&missing_oid).unwrap(), head);
+    }
+
+    #[test]
+    fn merge_base_uses_full_oid_named_branch_tips() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "original"]);
+        let original = git.head_sha("main").unwrap();
+        run_test_git(
+            repo.path(),
+            &["commit", "--allow-empty", "-m", "parent tip"],
+        );
+        let parent_tip = git.head_sha("main").unwrap();
+        run_test_git(repo.path(), &["branch", &original]);
+        run_test_git(repo.path(), &["switch", "-c", "child"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "child"]);
+
+        assert_eq!(git.merge_base(&original, "child").unwrap(), parent_tip);
+    }
+
+    #[test]
+    fn explicit_ref_wins_over_a_same_named_local_branch() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(
+            repo.path(),
+            &["commit", "--allow-empty", "-m", "remote tip"],
+        );
+        let remote_tip = git.head_sha("main").unwrap();
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "local tip"]);
+        run_test_git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/main", &remote_tip],
+        );
+        run_test_git(repo.path(), &["branch", "refs/remotes/origin/main"]);
+
+        assert_eq!(
+            git.resolve_commit("refs/remotes/origin/main").unwrap(),
+            remote_tip
         );
     }
 

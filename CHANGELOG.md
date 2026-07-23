@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.27 - 2026-07-23
+- Gave full SHA-1 and SHA-256 commit IDs immutable-object precedence over same-named local branches during revision resolution, while retaining repository-format-aware handling for opposite-length hexadecimal branch names.
+- Required commit peeling on raw object IDs so a same-named branch cannot substitute for a non-commit object.
+- Preserved exact local-branch and explicit-ref intent for create, split, track, merge-base, and sync operations, represented restack destinations as either expected branch tips or repository-exact immutable object IDs, and rejected target or base advances before and between ordered mutations.
+
 ## 0.18.26 - 2026-07-23
 - Bound merged and closed PR lookup results to the local branch's first-parent incarnation before cached-number or recency selection, while preserving open PRs with unpublished commits and legitimate post-merge branch continuation; terminal name-only matches are rejected when the local ref is missing.
 - Added schema v5 PR-head cache binding, cleared cache identity when recreating a tracked branch name, and stopped stale or legacy unbound merged state from suppressing sync, push, or stack rendering after branch reuse.

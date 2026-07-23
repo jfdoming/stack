@@ -221,7 +221,7 @@ fn validate_parent(git: &Git, parent: &str, current: &str) -> Result<()> {
     if !git.branch_exists(parent)? {
         return Err(anyhow!("parent branch does not exist in git: {parent}"));
     }
-    if !git.is_ancestor(parent, current)? {
+    if !git.is_branch_ancestor(parent, current)? {
         return Err(anyhow!(
             "parent branch '{parent}' is not an ancestor of '{current}'"
         ));

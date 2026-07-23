@@ -11,6 +11,85 @@ use crate::util::url::github_repo_slug_from_web_url;
 use crate::views::{OperationView, SyncPlanView};
 
 #[derive(Debug, Clone)]
+pub enum RestackTarget {
+    LocalBranch { name: String, expected_head: String },
+    ObjectId(String),
+}
+
+impl RestackTarget {
+    fn object_id(oid: String) -> Result<Self> {
+        if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(anyhow!("invalid full Git object ID in sync metadata"));
+        }
+        Ok(Self::ObjectId(oid.to_ascii_lowercase()))
+    }
+
+    fn label(&self) -> &str {
+        match self {
+            Self::LocalBranch { name, .. } | Self::ObjectId(name) => name,
+        }
+    }
+
+    fn exists(&self, git: &Git) -> Result<bool> {
+        match self {
+            Self::LocalBranch { name, .. } => git.branch_exists(name),
+            Self::ObjectId(oid) => git.object_id_exists(oid),
+        }
+    }
+
+    fn resolve(&self, git: &Git) -> Result<String> {
+        match self {
+            Self::LocalBranch {
+                name,
+                expected_head,
+            } => {
+                let actual = git.head_sha(name)?;
+                if actual != *expected_head {
+                    return Err(anyhow!(
+                        "target branch '{}' changed while the sync plan was being built; rerun sync to review a fresh plan",
+                        name
+                    ));
+                }
+                Ok(actual)
+            }
+            Self::ObjectId(oid) => git.resolve_object_id(oid),
+        }
+    }
+
+    fn resolve_for_apply(
+        &self,
+        git: &Git,
+        pending_sync_shas: &HashMap<String, String>,
+    ) -> Result<String> {
+        match self {
+            Self::LocalBranch {
+                name,
+                expected_head,
+            } => {
+                if let Some(applied_head) = pending_sync_shas.get(name) {
+                    if git.head_sha(name)? != *applied_head {
+                        return Err(anyhow!(
+                            "target branch '{}' changed after its planned restack; rerun sync to review a fresh plan",
+                            name
+                        ));
+                    }
+                    return Ok(applied_head.clone());
+                }
+                let actual = git.head_sha(name)?;
+                if actual != *expected_head {
+                    return Err(anyhow!(
+                        "target branch '{}' changed after the sync plan was built; rerun sync to review a fresh plan",
+                        name
+                    ));
+                }
+                Ok(actual)
+            }
+            Self::ObjectId(oid) => git.resolve_object_id(oid),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum SyncOp {
     Fetch {
         remote: String,
@@ -19,11 +98,12 @@ pub enum SyncOp {
     },
     UpdateBaseToMergedCommits {
         branch: String,
+        expected_head: String,
         merge_commits: Vec<String>,
     },
     Restack {
         branch: String,
-        onto: String,
+        onto: RestackTarget,
         old_base: String,
         expected_head: String,
         reason: String,
@@ -75,6 +155,7 @@ impl SyncPlan {
                 SyncOp::UpdateBaseToMergedCommits {
                     branch,
                     merge_commits,
+                    ..
                 } => operations.push(OperationView {
                     kind: "update_base".to_string(),
                     branch: branch.clone(),
@@ -93,8 +174,8 @@ impl SyncPlan {
                 } => operations.push(OperationView {
                     kind: "restack".to_string(),
                     branch: branch.clone(),
-                    onto: Some(onto.clone()),
-                    details: format!("onto {onto}: {reason}"),
+                    onto: Some(onto.label().to_string()),
+                    details: format!("onto {}: {reason}", onto.label()),
                 }),
                 SyncOp::UpdateSha { branch, sha } => operations.push(OperationView {
                     kind: "update_sha".to_string(),
@@ -145,7 +226,7 @@ pub fn build_sync_plan(
     #[derive(Clone)]
     struct RestackCandidate {
         branch: String,
-        onto: String,
+        onto: RestackTarget,
         old_base: String,
     }
 
@@ -156,7 +237,6 @@ pub fn build_sync_plan(
     for branch in &tracked {
         branch_exists.insert(branch.name.clone(), git.branch_exists(&branch.name)?);
     }
-    let remote_base_ref = format!("{sync_remote}/{base_branch}");
     let full_remote_base_ref = format!("refs/remotes/{sync_remote}/{base_branch}");
     let should_inspect_remote_base = git.has_remote(&sync_remote)?;
     let advertised_remote_base = should_inspect_remote_base
@@ -164,16 +244,23 @@ pub fn build_sync_plan(
         .transpose()?
         .flatten();
     let tracked_remote_base = git
-        .ref_exists(&remote_base_ref)?
-        .then(|| git.resolve_commit(&remote_base_ref))
+        .ref_exists(&full_remote_base_ref)?
+        .then(|| git.resolve_commit(&full_remote_base_ref))
         .transpose()?;
     let remote_base_needs_fetch = advertised_remote_base
         .as_ref()
         .is_some_and(|advertised| tracked_remote_base.as_deref() != Some(advertised.as_str()));
-    let remote_base_target = advertised_remote_base
+    let remote_base_target = if let Some(target) = advertised_remote_base
         .clone()
         .or_else(|| tracked_remote_base.clone())
-        .unwrap_or_else(|| base_branch.to_string());
+    {
+        RestackTarget::object_id(target)?
+    } else {
+        RestackTarget::LocalBranch {
+            name: base_branch.to_string(),
+            expected_head: git.head_sha(base_branch)?,
+        }
+    };
     let setup_elapsed = setup_started.elapsed();
 
     let pr_lookup_started = Instant::now();
@@ -250,7 +337,7 @@ pub fn build_sync_plan(
     for branch in &tracked {
         let branch_is_local = branch_exists.get(&branch.name).copied().unwrap_or(false);
         let current_sha = current_sha_by_branch.get(&branch.name).cloned();
-        let mut fresh_merged_target: Option<Option<String>> = None;
+        let mut fresh_merged_target: Option<Option<RestackTarget>> = None;
         let mut fresh_merged_head_oid: Option<Option<String>> = None;
 
         let mut is_merged_pr = cached_merged_by_branch
@@ -278,7 +365,9 @@ pub fn build_sync_plan(
                 fresh_merged_target = Some(
                     merge_commit_oid
                         .clone()
-                        .or_else(|| advertised_remote_base.clone()),
+                        .or_else(|| advertised_remote_base.clone())
+                        .map(RestackTarget::object_id)
+                        .transpose()?,
                 );
 
                 let is_direct_child_of_base = branch
@@ -334,8 +423,8 @@ pub fn build_sync_plan(
                     let child_head = current_sha_by_branch
                         .get(&child.name)
                         .ok_or_else(|| anyhow!("missing planned head for '{}'", child.name))?;
-                    let should_restack = if git.ref_exists(&new_base)? {
-                        !git.is_ancestor(&new_base, child_head)?
+                    let should_restack = if new_base.exists(git)? {
+                        !git.is_ancestor(&new_base.resolve(git)?, child_head)?
                     } else {
                         true
                     };
@@ -395,17 +484,22 @@ pub fn build_sync_plan(
                 let parent_onto = if parent.name == base_branch {
                     remote_base_target.clone()
                 } else {
-                    parent.name.clone()
+                    RestackTarget::LocalBranch {
+                        name: parent.name.clone(),
+                        expected_head: parent_head.clone(),
+                    }
                 };
-                let parent_onto_commit = if parent.name == base_branch {
-                    parent_onto.as_str()
+                let should_restack = if !parent_onto.exists(git)? {
+                    true
                 } else {
-                    parent_head.as_str()
+                    let parent_onto_commit = if parent.name == base_branch {
+                        parent_onto.resolve(git)?
+                    } else {
+                        parent_head.clone()
+                    };
+                    !git.is_ancestor(&parent_onto_commit, current_sha.as_str())?
                 };
-                let parent_onto_is_local = git.ref_exists(&parent_onto)?;
-                if !parent_onto_is_local
-                    || !git.is_ancestor(parent_onto_commit, current_sha.as_str())?
-                {
+                if should_restack {
                     queue.push_back(RestackCandidate {
                         branch: branch.name.clone(),
                         onto: parent_onto,
@@ -436,10 +530,12 @@ pub fn build_sync_plan(
     base_merge_commits.sort();
     base_merge_commits.dedup();
     if !base_merge_commits.is_empty() {
-        let base_already_contains_all = if base_current_sha.is_some() {
+        let base_already_contains_all = if let Some(base_head) = base_current_sha.as_deref() {
             let mut contains_all = true;
             for merge_commit in &base_merge_commits {
-                if !git.ref_exists(merge_commit)? || !git.is_ancestor(merge_commit, base_branch)? {
+                if !git.object_id_exists(merge_commit)?
+                    || !git.is_ancestor(&git.resolve_object_id(merge_commit)?, base_head)?
+                {
                     contains_all = false;
                     break;
                 }
@@ -451,12 +547,19 @@ pub fn build_sync_plan(
         if !base_already_contains_all {
             if base_merge_commits
                 .iter()
-                .map(|commit| git.ref_exists(commit))
+                .map(|commit| git.object_id_exists(commit))
                 .collect::<Result<Vec<_>>>()?
                 .into_iter()
                 .all(|exists| exists)
             {
-                newest_merged_base_commit(git, base_branch, &base_merge_commits)?;
+                newest_merged_base_commit(
+                    git,
+                    base_branch,
+                    base_current_sha.as_deref().ok_or_else(|| {
+                        anyhow!("missing planned head for base branch '{base_branch}'")
+                    })?,
+                    &base_merge_commits,
+                )?;
             }
             base_will_move = true;
             needs_fetch = true;
@@ -464,6 +567,9 @@ pub fn build_sync_plan(
                 0,
                 SyncOp::UpdateBaseToMergedCommits {
                     branch: base_branch.to_string(),
+                    expected_head: base_current_sha.clone().ok_or_else(|| {
+                        anyhow!("missing planned head for base branch '{base_branch}'")
+                    })?,
                     merge_commits: base_merge_commits,
                 },
             );
@@ -513,7 +619,15 @@ pub fn build_sync_plan(
                     }
                     queue.push_back(RestackCandidate {
                         branch: child.name.clone(),
-                        onto: item.branch.clone(),
+                        onto: RestackTarget::LocalBranch {
+                            name: item.branch.clone(),
+                            expected_head: current_sha_by_branch
+                                .get(&item.branch)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    anyhow!("missing planned head for '{}'", item.branch)
+                                })?,
+                        },
                         old_base: safe_restack_old_base(
                             git,
                             &item.branch,
@@ -740,11 +854,12 @@ pub fn build_sync_plan(
 fn newest_merged_base_commit(
     git: &Git,
     base_branch: &str,
+    base_head: &str,
     merge_commits: &[String],
 ) -> Result<Option<String>> {
     let mut commits = merge_commits
         .iter()
-        .map(|commit| git.resolve_commit(commit))
+        .map(|commit| git.resolve_object_id(commit))
         .collect::<Result<Vec<_>>>()?;
     commits.sort();
     commits.dedup();
@@ -752,10 +867,9 @@ fn newest_merged_base_commit(
         return Err(anyhow!("cannot advance base without merged commit IDs"));
     }
 
-    let base_head = git.head_sha(base_branch)?;
     let mut base_contains_all = true;
     for commit in &commits {
-        if !git.is_ancestor(commit, &base_head)? {
+        if !git.is_ancestor(commit, base_head)? {
             base_contains_all = false;
             break;
         }
@@ -786,7 +900,7 @@ fn newest_merged_base_commit(
             ));
         }
     };
-    if !git.is_ancestor(&base_head, target)? {
+    if !git.is_ancestor(base_head, target)? {
         return Err(anyhow!(
             "cannot safely advance '{}': the local base has diverged from the newest merged direct-child commit",
             base_branch
@@ -802,7 +916,7 @@ fn merged_parent_restack_old_base(
     merged_head_oid: &str,
     child_head: &str,
 ) -> Result<String> {
-    let merged_head = git.resolve_commit(merged_head_oid).map_err(|_| {
+    let merged_head = git.resolve_object_id(merged_head_oid).map_err(|_| {
         anyhow!(
             "cannot safely restack '{}' after merged parent '{}': the merged PR head is unavailable locally",
             child,
@@ -920,15 +1034,22 @@ pub fn execute_sync_plan(
                 }
                 SyncOp::UpdateBaseToMergedCommits {
                     branch,
+                    expected_head,
                     merge_commits,
                 } => {
-                    if let Some(merge_commit) =
-                        newest_merged_base_commit(git, branch, merge_commits)?
-                    {
-                        git.fast_forward_branch(branch, &merge_commit)?;
+                    if git.head_sha(branch)? != *expected_head {
+                        return Err(anyhow!(
+                            "base branch '{branch}' changed after the sync plan was built; rerun sync to review a fresh plan"
+                        ));
                     }
-                    let sha = git.head_sha(branch)?;
-                    pending_sync_shas.insert(branch.clone(), sha);
+                    let applied_head = if let Some(merge_commit) =
+                        newest_merged_base_commit(git, branch, expected_head, merge_commits)?
+                    {
+                        git.fast_forward_branch(branch, expected_head, &merge_commit)?
+                    } else {
+                        expected_head.clone()
+                    };
+                    pending_sync_shas.insert(branch.clone(), applied_head);
                 }
                 SyncOp::Restack {
                     branch,
@@ -937,37 +1058,36 @@ pub fn execute_sync_plan(
                     expected_head,
                     ..
                 } => {
+                    let onto = onto.resolve_for_apply(git, &pending_sync_shas)?;
                     let actual_head = git.head_sha(branch)?;
                     if actual_head != *expected_head {
                         return Err(anyhow!(
                             "branch '{branch}' changed after the sync plan was built; rerun sync to review a fresh plan"
                         ));
                     }
-                    if git.commit_distance(old_base, expected_head)? == 0 {
-                        git.rebase_onto(branch, expected_head, old_base, onto)?;
-                        let sha = git.head_sha(branch)?;
-                        pending_sync_shas.insert(branch.clone(), sha);
-                        continue;
-                    }
-                    if replay_supported {
-                        if let Err(err) = git.replay_onto(branch, expected_head, old_base, onto) {
-                            if git.head_sha(branch)? != *expected_head {
-                                return Err(anyhow!(
-                                    "branch '{branch}' changed after the sync plan was built; rerun sync to review a fresh plan"
-                                ));
+                    let new_head = if git.commit_distance(old_base, expected_head)? == 0 {
+                        git.rebase_onto(branch, expected_head, old_base, &onto)?
+                    } else if replay_supported {
+                        match git.replay_onto(branch, expected_head, old_base, &onto) {
+                            Ok(new_head) => new_head,
+                            Err(err) => {
+                                if git.head_sha(branch)? != *expected_head {
+                                    return Err(anyhow!(
+                                        "branch '{branch}' changed after the sync plan was built; rerun sync to review a fresh plan"
+                                    ));
+                                }
+                                let reason = summarize_replay_error(&err);
+                                eprintln!(
+                                    "warning: git replay is unavailable for '{branch}' ({reason}); falling back to rebase"
+                                );
+                                git.rebase_onto(branch, expected_head, old_base, &onto)?
                             }
-                            let reason = summarize_replay_error(&err);
-                            eprintln!(
-                                "warning: git replay is unavailable for '{branch}' ({reason}); falling back to rebase"
-                            );
-                            git.rebase_onto(branch, expected_head, old_base, onto)?;
                         }
                     } else {
                         eprintln!("warning: git replay unavailable; using rebase for {branch}");
-                        git.rebase_onto(branch, expected_head, old_base, onto)?;
-                    }
-                    let sha = git.head_sha(branch)?;
-                    pending_sync_shas.insert(branch.clone(), sha);
+                        git.rebase_onto(branch, expected_head, old_base, &onto)?
+                    };
+                    pending_sync_shas.insert(branch.clone(), new_head);
                 }
                 SyncOp::UpdateSha { branch, sha } => {
                     pending_sync_shas.insert(branch.clone(), sha.clone());
@@ -1217,7 +1337,16 @@ fn can_update_pr_base(
 mod tests {
     use anyhow::anyhow;
 
-    use super::{format_sync_failure, summarize_replay_error};
+    use super::{RestackTarget, format_sync_failure, summarize_replay_error};
+
+    #[test]
+    fn restack_object_targets_require_full_object_ids() {
+        assert!(RestackTarget::object_id("main".to_string()).is_err());
+        assert!(RestackTarget::object_id("refs/heads/main".to_string()).is_err());
+        assert!(RestackTarget::object_id("a".repeat(39)).is_err());
+        assert!(RestackTarget::object_id("a".repeat(40)).is_ok());
+        assert!(RestackTarget::object_id("b".repeat(64)).is_ok());
+    }
 
     #[test]
     fn summarize_replay_error_root_commit_case_is_human_readable() {
