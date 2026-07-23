@@ -320,18 +320,9 @@ impl Provider for GithubProvider {
         let Some((owner, name)) = parse_repo_scope(repo_slug) else {
             return Ok(None);
         };
-        let query = "query($owner:String!, $name:String!) { repository(owner:$owner, name:$name) { nameWithOwner viewerPermission parent { nameWithOwner viewerPermission } } }";
-        let args = [
-            "api",
-            "graphql",
-            "-f",
-            &format!("query={query}"),
-            "-F",
-            &format!("owner={owner}"),
-            "-F",
-            &format!("name={name}"),
-        ];
-        let Some(raw) = self.run_gh_optional(&args)? else {
+        let args = build_repository_info_graphql_args(owner, name);
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let Some(raw) = self.run_gh_optional(&arg_refs)? else {
             return Ok(None);
         };
         parse_repository_info_response(&raw)
@@ -369,18 +360,7 @@ impl Provider for GithubProvider {
             };
 
             for chunk in unique_heads.chunks(HEAD_QUERY_CHUNK_SIZE) {
-                let (query, query_fields) = build_head_lookup_query(chunk);
-                let mut args = vec![
-                    "api".to_string(),
-                    "graphql".to_string(),
-                    "-f".to_string(),
-                    format!("query={query}"),
-                    "-F".to_string(),
-                    format!("owner={owner}"),
-                    "-F".to_string(),
-                    format!("name={repo}"),
-                ];
-                args.extend(query_fields);
+                let args = build_head_lookup_graphql_args(owner, repo, chunk);
                 let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
                 let Some(raw) = self.run_gh_optional(&arg_refs)? else {
                     continue;
@@ -609,6 +589,30 @@ impl Provider for GithubProvider {
 }
 
 const HEAD_QUERY_CHUNK_SIZE: usize = 20;
+const REPOSITORY_INFO_QUERY: &str = "query($owner:String!, $name:String!) { repository(owner:$owner, name:$name) { nameWithOwner viewerPermission parent { nameWithOwner viewerPermission } } }";
+
+fn push_graphql_string_field(args: &mut Vec<String>, name: &str, value: &str) {
+    args.push("-f".to_string());
+    args.push(format!("{name}={value}"));
+}
+
+fn build_repository_info_graphql_args(owner: &str, name: &str) -> Vec<String> {
+    let mut args = vec!["api".to_string(), "graphql".to_string()];
+    push_graphql_string_field(&mut args, "query", REPOSITORY_INFO_QUERY);
+    push_graphql_string_field(&mut args, "owner", owner);
+    push_graphql_string_field(&mut args, "name", name);
+    args
+}
+
+fn build_head_lookup_graphql_args(owner: &str, name: &str, heads: &[String]) -> Vec<String> {
+    let (query, query_fields) = build_head_lookup_query(heads);
+    let mut args = vec!["api".to_string(), "graphql".to_string()];
+    push_graphql_string_field(&mut args, "query", &query);
+    push_graphql_string_field(&mut args, "owner", owner);
+    push_graphql_string_field(&mut args, "name", name);
+    args.extend(query_fields);
+    args
+}
 
 fn parse_repo_scope(scope: &str) -> Option<(&str, &str)> {
     let (owner, repo) = scope.split_once('/')?;
@@ -646,8 +650,7 @@ fn build_head_lookup_query(heads: &[String]) -> (String, Vec<String>) {
 
     let mut fields = Vec::with_capacity(heads.len() * 2);
     for (idx, head) in heads.iter().enumerate() {
-        fields.push("-f".to_string());
-        fields.push(format!("h{idx}={head}"));
+        push_graphql_string_field(&mut fields, &format!("h{idx}"), head);
     }
     (query, fields)
 }
@@ -1014,6 +1017,32 @@ mod tests {
     fn parse_repo_scope_extracts_owner_and_repo() {
         assert_eq!(parse_repo_scope("acme/repo"), Some(("acme", "repo")));
         assert_eq!(parse_repo_scope("acme"), None);
+    }
+
+    #[test]
+    fn repository_info_graphql_args_keep_every_string_raw() {
+        let args = build_repository_info_graphql_args("@owner-file", "true");
+
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-f", "owner=@owner-file"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["-f", "name=true"]));
+        assert!(!args.iter().any(|arg| arg == "-F"));
+    }
+
+    #[test]
+    fn head_lookup_graphql_args_keep_scope_and_heads_raw() {
+        let heads = vec!["@branch-name".to_string()];
+        let args = build_head_lookup_graphql_args("null", "123", &heads);
+
+        assert!(args.windows(2).any(|pair| pair == ["-f", "owner=null"]));
+        assert!(args.windows(2).any(|pair| pair == ["-f", "name=123"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-f", "h0=@branch-name"])
+        );
+        assert!(!args.iter().any(|arg| arg == "-F"));
     }
 
     #[test]

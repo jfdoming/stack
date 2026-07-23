@@ -83,7 +83,7 @@
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows. Merged and closed results must identify a commit on the local branch's first-parent history, while open PRs remain eligible when unpublished local commits advance the tip.
 - Cached PR numbers are only lookup hints. Existing PRs must match the exact head branch and owner, close/edit commands retain the repository scope found during lookup, and schema-v5 terminal cache state is trusted only with its bound PR head OID. Recreating a tracked branch name clears the old PR identity.
-- Batched PR metadata lookup binds branch-name GraphQL variables with GitHub CLI raw string fields, preserving leading `@` characters without file substitution.
+- GitHub GraphQL calls bind every string variable with raw CLI fields, preserving file-like and scalar-like repository scopes and branch names without substitution or type coercion.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - After non-dry-run `stack track`, PR cache metadata is refreshed for newly tracked branches so `stack` view immediately reflects current PR links/states.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.

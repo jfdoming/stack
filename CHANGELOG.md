@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.28 - 2026-07-23
+- Passed every GitHub GraphQL string variable through raw CLI fields, preventing repository owners, repository names, and branch heads that resemble files or scalar values from triggering file substitution or unintended type coercion.
+
 ## 0.18.27 - 2026-07-23
 - Gave full SHA-1 and SHA-256 commit IDs immutable-object precedence over same-named local branches during revision resolution, while retaining repository-format-aware handling for opposite-length hexadecimal branch names.
 - Required commit peeling on raw object IDs so a same-named branch cannot substitute for a non-commit object.

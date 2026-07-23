@@ -124,7 +124,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Full SHA-1 and SHA-256 object IDs and explicit `refs/` paths remain raw during commit resolution so immutable objects and exact refs take precedence over same-named branches; operations that semantically require a local branch qualify it under `refs/heads/`, including hexadecimal branch names.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitised before display to avoid terminal control-character injection; rendered HTTP(S) links are structurally parsed and stripped of user information, query strings, and fragments before they reach terminal, browser, or PR-body output.
-- Batched GitHub GraphQL lookups pass branch names as raw string fields so GitHub CLI cannot apply `@file` or typed-value substitution to ref names.
+- GitHub GraphQL lookups pass every string variable, including repository scopes and branch names, as raw fields so GitHub CLI cannot apply `@file` substitution or typed-value coercion.
 - The privileged draft-release handoff accepts only successful same-repository `main` push runs and downloads artifacts through the triggering run's ID; pull-request runs cannot cross the privilege boundary even when their head branch is named `main`.
 - Generated markdown link labels and branch path segments in stack-managed PR/compare content are escaped/URL-encoded to reduce malformed-link and markdown-injection risks.
 
