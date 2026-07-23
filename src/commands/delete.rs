@@ -72,12 +72,8 @@ pub fn run(
         .unwrap_or(base_branch)
         .to_string();
 
-    let mut pr_number = branch.cached_pr_number;
-    if pr_number.is_none()
-        && let Some(pr) = provider.resolve_pr_by_head(&branch.name, None)?
-    {
-        pr_number = Some(pr.number);
-    }
+    let pr = provider.resolve_pr_by_head(&branch.name, branch.cached_pr_number)?;
+    let pr_number = pr.as_ref().map(|pr| pr.identity.number);
 
     let payload = serde_json::json!({
         "branch": branch.name,
@@ -114,8 +110,8 @@ pub fn run(
         return Ok(());
     }
 
-    if let Some(number) = pr_number {
-        provider.delete_pr(number)?;
+    if let Some(pr) = pr.as_ref() {
+        provider.delete_pr(&pr.identity)?;
     } else {
         eprintln!("warning: no upstream PR found for '{}'", branch.name);
     }

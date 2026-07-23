@@ -126,7 +126,7 @@ fn pr_does_not_create_when_existing_pr_is_found() {
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing\"* ]]; then\n  echo '[{\"number\": 77, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing\"* ]]; then\n  echo '[{\"number\": 77, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"headRefName\": \"feat/existing\", \"headRepositoryOwner\": {\"login\": \"acme\"}, \"mergeCommit\": null}]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
@@ -164,7 +164,7 @@ fn pr_existing_lookup_handles_coloured_gh_json_output() {
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing-colour\"* ]]; then\n  printf '\\033[32m[\\n  {\\n    \"number\": 77,\\n    \"state\": \"OPEN\",\\n    \"baseRefName\": \"main\",\\n    \"mergeCommit\": null\\n  }\\n]\\033[0m\\n'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing-colour\"* ]]; then\n  printf '\\033[32m[\\n  {\\n    \"number\": 77,\\n    \"state\": \"OPEN\",\\n    \"baseRefName\": \"main\",\\n    \"headRefName\": \"feat/existing-colour\",\\n    \"headRepositoryOwner\": {\"login\": \"acme\"},\\n    \"mergeCommit\": null\\n  }\\n]\\033[0m\\n'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
@@ -197,7 +197,7 @@ fn pr_porcelain_reports_existing_pr_without_create() {
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing-json\"* ]]; then\n  echo '[{\"number\": 88, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/existing-json\"* ]]; then\n  echo '[{\"number\": 88, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"headRefName\": \"feat/existing-json\", \"headRepositoryOwner\": {\"login\": \"acme\"}, \"mergeCommit\": null}]'\n  exit 0\nfi\nif [[ \"$*\" == *\"pr create\"* ]]; then\n  echo 'create should not be called' >&2\n  exit 1\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");

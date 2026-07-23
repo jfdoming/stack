@@ -136,7 +136,7 @@ pub fn run(
         "title": args.title,
         "draft": args.draft,
         "dry_run": args.dry_run,
-        "existing_pr_number": existing.as_ref().map(|pr| pr.number),
+        "existing_pr_number": existing.as_ref().map(|pr| pr.identity.number),
         "will_open_link": existing.is_none(),
         "push_target": args.push_target.map(|target| target.as_str()),
     });

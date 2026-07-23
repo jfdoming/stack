@@ -94,6 +94,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.
 - PR creation blocks fork-only child bases that GitHub cannot represent in the canonical repository.
+- PR lookup treats cached numbers as hints, verifies the exact head branch and owner, and retains the base repository scope for any later mutation.
 
 ## Navigation behaviour
 - Stack navigation treats the configured base branch as outside the stack.
@@ -112,6 +113,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
+- Existing PR close/body/base mutations use the repository and verified head identity returned by lookup; bare PR numbers are never mutated outside their repository scope.
 - Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitised before display to avoid terminal control-character injection; rendered HTTP(S) links are structurally parsed and stripped of user information, query strings, and fragments before they reach terminal, browser, or PR-body output.

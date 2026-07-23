@@ -203,11 +203,11 @@ fn create_before_refreshes_open_pr_bodies_for_affected_branches() {
 
     let gh_calls = fs::read_to_string(&gh_log).expect("read gh call log");
     assert!(
-        gh_calls.contains("pr edit 101 --body"),
+        gh_calls.contains("pr edit 101 --repo acme/stack-test --body"),
         "expected parent PR body update, got: {gh_calls}"
     );
     assert!(
-        gh_calls.contains("pr edit 102 --body"),
+        gh_calls.contains("pr edit 102 --repo acme/stack-test --body"),
         "expected child PR body update, got: {gh_calls}"
     );
     assert!(

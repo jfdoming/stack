@@ -1874,7 +1874,7 @@ fn sync_updates_existing_pr_body_with_managed_section() {
 
     let gh_calls = fs::read_to_string(&gh_log).expect("read gh log");
     assert!(
-        gh_calls.contains("pr edit 42 --body"),
+        gh_calls.contains("pr edit 42 --repo acme/stack-test --body"),
         "expected pr edit call for managed body refresh, got: {gh_calls}"
     );
     assert!(
@@ -1954,7 +1954,7 @@ fn sync_updates_existing_pr_base_branch_when_it_drifted() {
 
     let gh_calls = fs::read_to_string(&gh_log).expect("read gh log");
     assert!(
-        gh_calls.contains("pr edit 42 --base feat/parent"),
+        gh_calls.contains("pr edit 42 --repo acme/stack-test --base feat/parent"),
         "expected pr base correction call, got: {gh_calls}"
     );
 }

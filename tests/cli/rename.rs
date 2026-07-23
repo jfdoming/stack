@@ -145,7 +145,7 @@ fn rename_with_open_pr_requires_yes_in_non_interactive_mode() {
     let fake_gh = fake_bin.join("gh");
     std::fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/open-pr\"* ]]; then\n  echo '[{\"number\": 77, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/open-pr\"* ]]; then\n  echo '[{\"number\": 77, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"headRefName\": \"feat/open-pr\", \"headRepositoryOwner\": {\"login\": \"acme\"}, \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     #[cfg(unix)]
@@ -189,7 +189,7 @@ fn rename_with_open_pr_and_yes_warns_and_deletes_old_remote_ref() {
     let fake_gh = fake_bin.join("gh");
     std::fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/open-pr\"* ]]; then\n  echo '[{\"number\": 88, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"pr list\"* ]] && [[ \"$*\" == *\"--head feat/open-pr\"* ]]; then\n  echo '[{\"number\": 88, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"headRefName\": \"feat/open-pr\", \"headRepositoryOwner\": {\"login\": \"acme\"}, \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     #[cfg(unix)]

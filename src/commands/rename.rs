@@ -68,7 +68,7 @@ pub fn run(
     let mut open_pr_number = None;
     match provider.resolve_pr_by_head(&old_branch, tracked.cached_pr_number) {
         Ok(Some(pr)) if matches!(pr.state, PrState::Open) => {
-            open_pr_number = Some(pr.number);
+            open_pr_number = Some(pr.identity.number);
         }
         Ok(_) => {}
         Err(err) => {

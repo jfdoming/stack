@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 
 use crate::db::{BranchRecord, Database};
 use crate::git::{Git, StashHandle};
-use crate::provider::{PrState, Provider};
+use crate::provider::{PrIdentity, PrState, Provider};
 use crate::util::pr_body::{ManagedBranchRef, managed_pr_section, merge_managed_pr_section};
 use crate::util::url::github_repo_slug_from_web_url;
 use crate::views::{OperationView, SyncPlanView};
@@ -33,12 +33,12 @@ pub enum SyncOp {
     },
     UpdatePrBody {
         branch: String,
-        pr_number: i64,
+        identity: PrIdentity,
         body: String,
     },
     UpdatePrBase {
         branch: String,
-        pr_number: i64,
+        identity: PrIdentity,
         base: String,
     },
     PruneMergedBranch {
@@ -98,22 +98,22 @@ impl SyncPlan {
                     details: sha.clone(),
                 }),
                 SyncOp::UpdatePrBody {
-                    branch, pr_number, ..
+                    branch, identity, ..
                 } => operations.push(OperationView {
                     kind: "update_pr_body".to_string(),
                     branch: branch.clone(),
                     onto: None,
-                    details: format!("pr #{pr_number}"),
+                    details: format!("pr #{}", identity.number),
                 }),
                 SyncOp::UpdatePrBase {
                     branch,
-                    pr_number,
+                    identity,
                     base,
                 } => operations.push(OperationView {
                     kind: "update_pr_base".to_string(),
                     branch: branch.clone(),
                     onto: Some(base.clone()),
-                    details: format!("pr #{pr_number} -> {base}"),
+                    details: format!("pr #{} -> {base}", identity.number),
                 }),
                 SyncOp::PruneMergedBranch { branch, .. } => operations.push(OperationView {
                     kind: "prune_merged".to_string(),
@@ -226,7 +226,7 @@ pub fn build_sync_plan(
                 PrState::Closed => "closed",
                 PrState::Unknown => "unknown",
             };
-            db.set_pr_cache(&branch.name, Some(pr.number), Some(state))?;
+            db.set_pr_cache(&branch.name, Some(pr.identity.number), Some(state))?;
             is_merged_pr = matches!(pr.state, PrState::Merged);
 
             if matches!(pr.state, PrState::Merged) {
@@ -541,7 +541,7 @@ pub fn build_sync_plan(
                 .and_then(|parent_id| by_id.get(&parent_id))
                 .map(|parent| ManagedBranchRef {
                     branch: parent.name.clone(),
-                    pr_number: pr_by_branch.get(&parent.name).map(|p| p.number),
+                    pr_number: pr_by_branch.get(&parent.name).map(|p| p.identity.number),
                     pr_url: pr_by_branch.get(&parent.name).and_then(|p| p.url.clone()),
                 });
             let first_child = children.get(&branch.id).and_then(|ids| {
@@ -549,7 +549,7 @@ pub fn build_sync_plan(
                     .filter_map(|id| by_id.get(id))
                     .map(|child| ManagedBranchRef {
                         branch: child.name.clone(),
-                        pr_number: pr_by_branch.get(&child.name).map(|p| p.number),
+                        pr_number: pr_by_branch.get(&child.name).map(|p| p.identity.number),
                         pr_url: pr_by_branch.get(&child.name).and_then(|p| p.url.clone()),
                     })
                     .min_by(|a, b| a.branch.cmp(&b.branch))
@@ -570,7 +570,7 @@ pub fn build_sync_plan(
                 ) {
                     ops.push(SyncOp::UpdatePrBase {
                         branch: branch.name.clone(),
-                        pr_number: pr.number,
+                        identity: pr.identity.clone(),
                         base: expected_pr_base,
                     });
                 } else {
@@ -602,7 +602,7 @@ pub fn build_sync_plan(
             if should_update {
                 ops.push(SyncOp::UpdatePrBody {
                     branch: branch.name.clone(),
-                    pr_number: pr.number,
+                    identity: pr.identity.clone(),
                     body: merged_body,
                 });
             }
@@ -766,12 +766,12 @@ pub fn execute_sync_plan(
                 SyncOp::UpdateSha { branch, sha } => {
                     pending_sync_shas.insert(branch.clone(), sha.clone());
                 }
-                SyncOp::UpdatePrBody {
-                    pr_number, body, ..
-                } => provider.update_pr_body(*pr_number, body)?,
-                SyncOp::UpdatePrBase {
-                    pr_number, base, ..
-                } => provider.update_pr_base(*pr_number, base)?,
+                SyncOp::UpdatePrBody { identity, body, .. } => {
+                    provider.update_pr_body(identity, body)?
+                }
+                SyncOp::UpdatePrBase { identity, base, .. } => {
+                    provider.update_pr_base(identity, base)?
+                }
                 SyncOp::PruneMergedBranch {
                     branch,
                     merged_head_oid,

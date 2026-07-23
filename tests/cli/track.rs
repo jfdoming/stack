@@ -24,7 +24,7 @@ fn track_infer_uses_fork_qualified_head_for_pr_detection() {
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
-        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"--head feat/fork-pr\"* ]]; then\n  echo '[]'\n  exit 0\nfi\nif [[ \"$*\" == *\"--head alice:feat/fork-pr\"* ]]; then\n  echo '[{\"number\": 42, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"--head feat/fork-pr\"* ]]; then\n  echo '[]'\n  exit 0\nfi\nif [[ \"$*\" == *\"--head alice:feat/fork-pr\"* ]]; then\n  echo '[{\"number\": 42, \"state\": \"OPEN\", \"baseRefName\": \"main\", \"headRefName\": \"feat/fork-pr\", \"headRepositoryOwner\": {\"login\": \"alice\"}, \"mergeCommit\": null}]'\n  exit 0\nfi\necho '[]'\n",
     )
     .expect("write fake gh");
     fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");

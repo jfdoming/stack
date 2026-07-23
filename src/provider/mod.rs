@@ -17,8 +17,16 @@ pub enum PrState {
 }
 
 #[derive(Debug, Clone)]
-pub struct PrInfo {
+pub struct PrIdentity {
     pub number: i64,
+    pub repository: String,
+    pub head_ref_name: String,
+    pub head_repository_owner: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrInfo {
+    pub identity: PrIdentity,
     pub state: PrState,
     pub head_ref_oid: Option<String>,
     pub merge_commit_oid: Option<String>,
@@ -56,9 +64,9 @@ pub trait Provider {
         }
         Ok(out)
     }
-    fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()>;
-    fn update_pr_base(&self, pr_number: i64, base: &str) -> Result<()>;
-    fn delete_pr(&self, pr_number: i64) -> Result<()>;
+    fn update_pr_body(&self, identity: &PrIdentity, body: &str) -> Result<()>;
+    fn update_pr_base(&self, identity: &PrIdentity, base: &str) -> Result<()>;
+    fn delete_pr(&self, identity: &PrIdentity) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -120,12 +128,6 @@ impl GithubProvider {
         let mut out = Vec::new();
         let mut seen = HashSet::new();
 
-        if let Some(remote) = self.git.remote_for_branch(branch)?
-            && let Some(slug) = self.repo_slug_for_remote(&remote)?
-            && seen.insert(slug.clone())
-        {
-            out.push(slug);
-        }
         for remote in ["upstream", "origin"] {
             if let Some(slug) = self.repo_slug_for_remote(remote)?
                 && seen.insert(slug.clone())
@@ -144,6 +146,12 @@ impl GithubProvider {
                     out.push(slug);
                 }
             }
+        }
+        if let Some(remote) = self.git.remote_for_branch(branch)?
+            && let Some(slug) = self.repo_slug_for_remote(&remote)?
+            && seen.insert(slug.clone())
+        {
+            out.push(slug);
         }
 
         Ok(out)
@@ -256,6 +264,12 @@ struct GhPr {
     merge_commit: Option<GhMergeCommit>,
 }
 
+#[derive(Debug, Clone)]
+struct ScopedGhPr {
+    repository: String,
+    pr: GhPr,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 struct GhOwner {
     login: String,
@@ -320,7 +334,7 @@ impl Provider for GithubProvider {
             return Ok(out);
         }
 
-        let mut by_head: HashMap<String, Vec<GhPr>> = HashMap::new();
+        let mut by_head: HashMap<String, Vec<ScopedGhPr>> = HashMap::new();
         let mut repo_scopes = self.repo_scope_candidates_for_branches(branches)?;
         if repo_scopes.is_empty() {
             if let Some(scope) = self.default_repo_scope_from_gh()? {
@@ -375,7 +389,13 @@ impl Provider for GithubProvider {
                         if let Some(head) = pr.head_ref_name.as_deref()
                             && !head.is_empty()
                         {
-                            by_head.entry(head.to_string()).or_default().push(pr);
+                            by_head
+                                .entry(head.to_string())
+                                .or_default()
+                                .push(ScopedGhPr {
+                                    repository: scope.clone(),
+                                    pr,
+                                });
                         }
                     }
                 }
@@ -391,31 +411,27 @@ impl Provider for GithubProvider {
 
             if let Some(candidates) = by_head.get(*branch) {
                 let filtered = if let Some(owner) = preferred_owner.as_deref() {
-                    let scoped: Vec<GhPr> = candidates
+                    candidates
                         .iter()
-                        .filter(|pr| {
-                            pr.head_repository_owner
+                        .filter(|candidate| {
+                            candidate
+                                .pr
+                                .head_repository_owner
                                 .as_ref()
                                 .map(|o| o.login.eq_ignore_ascii_case(owner))
                                 .unwrap_or(false)
                         })
                         .cloned()
-                        .collect();
-                    if scoped.is_empty() {
-                        candidates.clone()
-                    } else {
-                        scoped
-                    }
+                        .collect()
                 } else {
                     candidates.clone()
                 };
 
-                if let Some(pr) = select_preferred_pr(filtered) {
-                    let converted = convert_pr(pr);
-                    if cached_number.is_none_or(|cached| cached == converted.number) {
-                        out.insert((*branch).to_string(), converted);
-                        continue;
-                    }
+                if let Some(pr) = select_preferred_scoped_pr(filtered, *cached_number)
+                    && let Some(converted) = convert_pr(pr)
+                {
+                    out.insert((*branch).to_string(), converted);
+                    continue;
                 }
             }
 
@@ -434,57 +450,60 @@ impl Provider for GithubProvider {
         branch: &str,
         cached_number: Option<i64>,
     ) -> Result<Option<PrInfo>> {
-        if let Some(num) = cached_number {
-            let scopes = build_scope_options(self.repo_scope_candidates_for_branch(branch)?);
-            for scope in scopes {
-                let mut args = vec![
+        let preferred_owner = self
+            .git
+            .remote_for_branch(branch)?
+            .and_then(|remote| self.git.remote_web_url(&remote).ok().flatten())
+            .and_then(|url| github_owner_from_web_url(&url));
+        let mut scopes = self.repo_scope_candidates_for_branch(branch)?;
+        if scopes.is_empty()
+            && let Some(scope) = self.default_repo_scope_from_gh()?
+        {
+            scopes.push(scope);
+        }
+
+        for scope in scopes {
+            let mut candidates = Vec::new();
+            if let Some(num) = cached_number {
+                let args = [
                     "pr".to_string(),
                     "view".to_string(),
                     num.to_string(),
                     "--json".to_string(),
-                    "number,state,headRefOid,mergeCommit,baseRefName,url,body".to_string(),
+                    "number,state,headRefOid,mergeCommit,baseRefName,headRefName,headRepositoryOwner,url,body"
+                        .to_string(),
+                    "--repo".to_string(),
+                    scope.clone(),
                 ];
-                if let Some(scope) = scope.as_deref() {
-                    args.push("--repo".to_string());
-                    args.push(scope.to_string());
-                }
                 let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                let Some(out) = self.run_gh_optional(&arg_refs)? else {
-                    continue;
-                };
-                if out.trim().is_empty() {
-                    continue;
+                if let Some(out) = self.run_gh_optional(&arg_refs)?
+                    && !out.trim().is_empty()
+                {
+                    let context = scope.as_str();
+                    let prs = if out.trim().starts_with('[') {
+                        self.parse_gh_pr_list(&out, context)?
+                    } else {
+                        vec![self.parse_gh_pr_view(&out, context)?]
+                    };
+                    candidates.extend(
+                        prs.into_iter()
+                            .filter(|pr| pr_matches_head(pr, branch, preferred_owner.as_deref()))
+                            .map(|pr| ScopedGhPr {
+                                repository: scope.clone(),
+                                pr,
+                            }),
+                    );
                 }
-                let context = scope.as_deref().unwrap_or("default");
-                let trimmed = out.trim();
-                if trimmed.starts_with('[') {
-                    let prs = self.parse_gh_pr_list(&out, context)?;
-                    if let Some(pr) = select_preferred_pr(prs) {
-                        return Ok(Some(convert_pr(pr)));
-                    }
-                    continue;
-                }
-                let pr = self.parse_gh_pr_view(&out, context)?;
-                return Ok(Some(convert_pr(pr)));
             }
-            return Ok(None);
-        }
 
-        let mut head_filters = vec![branch.to_string()];
-        if let Some(remote) = self.git.remote_for_branch(branch)?
-            && let Some(url) = self.git.remote_web_url(&remote)?
-            && let Some(owner) = github_owner_from_web_url(&url)
-        {
-            let qualified = format!("{owner}:{branch}");
-            if !head_filters.iter().any(|h| h == &qualified) {
-                head_filters.push(qualified);
+            let mut head_filters = Vec::new();
+            if let Some(owner) = preferred_owner.as_deref() {
+                head_filters.push(format!("{owner}:{branch}"));
             }
-        }
+            head_filters.push(branch.to_string());
 
-        let scopes = build_scope_options(self.repo_scope_candidates_for_branch(branch)?);
-        for scope in scopes {
             for head_filter in &head_filters {
-                let mut args = vec![
+                let args = vec![
                     "pr".to_string(),
                     "list".to_string(),
                     "--head".to_string(),
@@ -492,12 +511,11 @@ impl Provider for GithubProvider {
                     "--state".to_string(),
                     "all".to_string(),
                     "--json".to_string(),
-                    "number,state,headRefOid,mergeCommit,baseRefName,url,body".to_string(),
+                    "number,state,headRefOid,mergeCommit,baseRefName,headRefName,headRepositoryOwner,url,body"
+                        .to_string(),
+                    "--repo".to_string(),
+                    scope.clone(),
                 ];
-                if let Some(scope) = scope.as_deref() {
-                    args.push("--repo".to_string());
-                    args.push(scope.to_string());
-                }
                 let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
                 let Some(out) = self.run_gh_optional(&arg_refs)? else {
                     continue;
@@ -505,50 +523,73 @@ impl Provider for GithubProvider {
                 if out.trim().is_empty() {
                     continue;
                 }
-                let context = format!(
-                    "--head {} {}",
-                    head_filter,
-                    scope
-                        .as_deref()
-                        .map(|s| format!("--repo {s}"))
-                        .unwrap_or_default()
+                let context = format!("--head {head_filter} --repo {scope}");
+                candidates.extend(
+                    self.parse_gh_pr_list(&out, &context)?
+                        .into_iter()
+                        .filter(|pr| pr_matches_head(pr, branch, preferred_owner.as_deref()))
+                        .map(|pr| ScopedGhPr {
+                            repository: scope.clone(),
+                            pr,
+                        }),
                 );
-                let prs = self.parse_gh_pr_list(&out, &context)?;
-                if let Some(pr) = select_preferred_pr(prs) {
-                    return Ok(Some(convert_pr(pr)));
-                }
+            }
+
+            if let Some(pr) = select_preferred_scoped_pr(candidates, cached_number)
+                && let Some(converted) = convert_pr(pr)
+            {
+                return Ok(Some(converted));
             }
         }
         Ok(None)
     }
 
-    fn delete_pr(&self, pr_number: i64) -> Result<()> {
-        let num = pr_number.to_string();
-        let args = ["pr", "close", &num, "--delete-branch"];
+    fn delete_pr(&self, identity: &PrIdentity) -> Result<()> {
+        validate_pr_identity(identity)?;
+        let num = identity.number.to_string();
+        let args = [
+            "pr",
+            "close",
+            &num,
+            "--repo",
+            &identity.repository,
+            "--delete-branch",
+        ];
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }
 
-    fn update_pr_body(&self, pr_number: i64, body: &str) -> Result<()> {
-        let num = pr_number.to_string();
-        let args = ["pr", "edit", &num, "--body", body];
+    fn update_pr_body(&self, identity: &PrIdentity, body: &str) -> Result<()> {
+        validate_pr_identity(identity)?;
+        let num = identity.number.to_string();
+        let args = [
+            "pr",
+            "edit",
+            &num,
+            "--repo",
+            &identity.repository,
+            "--body",
+            body,
+        ];
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }
 
-    fn update_pr_base(&self, pr_number: i64, base: &str) -> Result<()> {
-        let num = pr_number.to_string();
-        let args = ["pr", "edit", &num, "--base", base];
+    fn update_pr_base(&self, identity: &PrIdentity, base: &str) -> Result<()> {
+        validate_pr_identity(identity)?;
+        let num = identity.number.to_string();
+        let args = [
+            "pr",
+            "edit",
+            &num,
+            "--repo",
+            &identity.repository,
+            "--base",
+            base,
+        ];
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }
-}
-
-fn build_scope_options(scopes: Vec<String>) -> Vec<Option<String>> {
-    if scopes.is_empty() {
-        return vec![None];
-    }
-    scopes.into_iter().map(Some).collect()
 }
 
 const HEAD_QUERY_CHUNK_SIZE: usize = 20;
@@ -559,6 +600,19 @@ fn parse_repo_scope(scope: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((owner, repo))
+}
+
+fn validate_pr_identity(identity: &PrIdentity) -> Result<()> {
+    if identity.number <= 0
+        || parse_repo_scope(&identity.repository).is_none()
+        || identity.head_ref_name.is_empty()
+        || identity.head_repository_owner.is_empty()
+    {
+        return Err(anyhow::anyhow!(
+            "refusing to mutate a pull request without a complete repository and head identity"
+        ));
+    }
+    Ok(())
 }
 
 fn build_head_lookup_query(heads: &[String]) -> (String, Vec<String>) {
@@ -606,22 +660,95 @@ fn parse_graphql_head_lookup_result(raw: &str) -> Result<HashMap<String, Vec<GhP
     Ok(out)
 }
 
-fn convert_pr(pr: GhPr) -> PrInfo {
-    let state = match pr.state.as_str() {
+fn pr_matches_head(pr: &GhPr, branch: &str, expected_owner: Option<&str>) -> bool {
+    if pr.head_ref_name.as_deref() != Some(branch) {
+        return false;
+    }
+    let Some(owner) = pr.head_repository_owner.as_ref() else {
+        return false;
+    };
+    !owner.login.is_empty()
+        && expected_owner.is_none_or(|expected| owner.login.eq_ignore_ascii_case(expected))
+}
+
+fn convert_pr(candidate: ScopedGhPr) -> Option<PrInfo> {
+    let head_ref_name = candidate.pr.head_ref_name?;
+    let head_repository_owner = candidate.pr.head_repository_owner?.login;
+    if head_ref_name.is_empty() || head_repository_owner.is_empty() {
+        return None;
+    }
+    let state = match candidate.pr.state.as_str() {
         "OPEN" => PrState::Open,
         "MERGED" => PrState::Merged,
         "CLOSED" => PrState::Closed,
         _ => PrState::Unknown,
     };
-    PrInfo {
-        number: pr.number,
+    Some(PrInfo {
+        identity: PrIdentity {
+            number: candidate.pr.number,
+            repository: candidate.repository,
+            head_ref_name,
+            head_repository_owner,
+        },
         state,
-        head_ref_oid: pr.head_ref_oid,
-        merge_commit_oid: pr.merge_commit.map(|m| m.oid),
-        base_ref_name: pr.base_ref_name,
-        body: pr.body,
-        url: pr.url,
+        head_ref_oid: candidate.pr.head_ref_oid,
+        merge_commit_oid: candidate.pr.merge_commit.map(|m| m.oid),
+        base_ref_name: candidate.pr.base_ref_name,
+        body: candidate.pr.body,
+        url: candidate.pr.url,
+    })
+}
+
+fn select_preferred_scoped_pr(
+    candidates: Vec<ScopedGhPr>,
+    cached_number: Option<i64>,
+) -> Option<ScopedGhPr> {
+    let mut repositories = Vec::new();
+    let mut seen = HashSet::new();
+    for candidate in &candidates {
+        let key = candidate.repository.to_ascii_lowercase();
+        if seen.insert(key) {
+            repositories.push(candidate.repository.clone());
+        }
     }
+
+    for repository in repositories {
+        let scoped: Vec<ScopedGhPr> = candidates
+            .iter()
+            .filter(|candidate| candidate.repository.eq_ignore_ascii_case(&repository))
+            .cloned()
+            .collect();
+        if let Some(cached) = cached_number
+            && let Some(candidate) = scoped
+                .iter()
+                .find(|candidate| candidate.pr.number == cached && candidate.pr.state == "OPEN")
+        {
+            return Some(candidate.clone());
+        }
+
+        let open: Vec<GhPr> = scoped
+            .iter()
+            .filter(|candidate| candidate.pr.state == "OPEN")
+            .map(|candidate| candidate.pr.clone())
+            .collect();
+        if let Some(pr) = select_preferred_pr(open) {
+            return Some(ScopedGhPr { repository, pr });
+        }
+
+        if let Some(cached) = cached_number
+            && let Some(candidate) = scoped
+                .iter()
+                .find(|candidate| candidate.pr.number == cached)
+        {
+            return Some(candidate.clone());
+        }
+        if let Some(pr) =
+            select_preferred_pr(scoped.into_iter().map(|candidate| candidate.pr).collect())
+        {
+            return Some(ScopedGhPr { repository, pr });
+        }
+    }
+    None
 }
 
 fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
@@ -702,6 +829,25 @@ fn parse_repository_info_response(raw: &str) -> Result<Option<RepositoryInfo>> {
 mod tests {
     use super::*;
 
+    fn scoped_pr(repository: &str, number: i64, branch: &str, owner: &str) -> ScopedGhPr {
+        ScopedGhPr {
+            repository: repository.to_string(),
+            pr: GhPr {
+                number,
+                state: "OPEN".to_string(),
+                base_ref_name: Some("main".to_string()),
+                head_ref_name: Some(branch.to_string()),
+                head_ref_oid: None,
+                head_repository_owner: Some(GhOwner {
+                    login: owner.to_string(),
+                }),
+                body: None,
+                url: None,
+                merge_commit: None,
+            },
+        }
+    }
+
     #[test]
     fn clean_gh_json_output_strips_ansi_and_controls() {
         let raw = "\u{1b}[32m[\n{\"number\":1,\"state\":\"OPEN\",\"baseRefName\":\"main\",\"mergeCommit\":null}\n]\u{1b}[0m";
@@ -742,9 +888,30 @@ mod tests {
     }
 
     #[test]
-    fn build_scope_options_omits_default_when_repo_scopes_exist() {
-        let scopes = build_scope_options(vec!["acme/repo".to_string()]);
-        assert_eq!(scopes, vec![Some("acme/repo".to_string())]);
+    fn scoped_pr_selection_does_not_apply_cached_numbers_across_repositories() {
+        let picked = select_preferred_scoped_pr(
+            vec![
+                scoped_pr("acme/repo", 7, "feat/work", "alice"),
+                scoped_pr("alice/repo", 999, "feat/work", "alice"),
+            ],
+            Some(999),
+        )
+        .expect("selected PR");
+
+        assert_eq!(picked.repository, "acme/repo");
+        assert_eq!(picked.pr.number, 7);
+    }
+
+    #[test]
+    fn pr_head_identity_requires_the_exact_branch_and_owner() {
+        let candidate = scoped_pr("acme/repo", 7, "feat/work", "alice");
+        assert!(pr_matches_head(&candidate.pr, "feat/work", Some("ALICE")));
+        assert!(!pr_matches_head(&candidate.pr, "feat/other", Some("alice")));
+        assert!(!pr_matches_head(
+            &candidate.pr,
+            "feat/work",
+            Some("mallory")
+        ));
     }
 
     #[test]

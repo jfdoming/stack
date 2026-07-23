@@ -595,7 +595,7 @@ fn refresh_pr_cache_for_tracked_branches(
         if let Some(pr) = resolved.get(&name) {
             db.set_pr_cache(
                 &name,
-                Some(pr.number),
+                Some(pr.identity.number),
                 Some(match pr.state {
                     PrState::Open => "open",
                     PrState::Merged => "merged",

@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.10 - 2026-07-22
+- Made cached PR numbers lookup hints only, verified the exact head branch and repository owner, and preserved the base repository identity through close, body-edit, and base-edit mutations.
+
 ## 0.18.9 - 2026-07-22
 - Moved repository metadata to Git's shared common directory so linked worktrees use one stack database, with safe migration when only a legacy per-worktree database exists.
 - Made base discovery prefer existing conventional branches or the current branch when `origin/HEAD` is unavailable, and repair cached bases only when their local ref is missing.

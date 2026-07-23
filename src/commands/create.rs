@@ -296,7 +296,7 @@ fn refresh_managed_pr_bodies(
             .and_then(|parent_id| by_id.get(&parent_id).copied())
             .map(|parent| ManagedBranchRef {
                 branch: parent.name.clone(),
-                pr_number: pr_by_branch.get(&parent.name).map(|p| p.number),
+                pr_number: pr_by_branch.get(&parent.name).map(|p| p.identity.number),
                 pr_url: pr_by_branch.get(&parent.name).and_then(|p| p.url.clone()),
             });
         let first_child = children.get(&record.id).and_then(|items| {
@@ -304,7 +304,7 @@ fn refresh_managed_pr_bodies(
                 .iter()
                 .map(|child| ManagedBranchRef {
                     branch: child.name.clone(),
-                    pr_number: pr_by_branch.get(&child.name).map(|p| p.number),
+                    pr_number: pr_by_branch.get(&child.name).map(|p| p.identity.number),
                     pr_url: pr_by_branch.get(&child.name).and_then(|p| p.url.clone()),
                 })
                 .min_by(|a, b| a.branch.cmp(&b.branch))
@@ -322,7 +322,7 @@ fn refresh_managed_pr_bodies(
         );
         let merged = merge_managed_pr_section(pr.body.as_deref(), &managed);
         if pr.body.as_deref().map(str::trim) != Some(merged.trim()) {
-            provider.update_pr_body(pr.number, &merged)?;
+            provider.update_pr_body(&pr.identity, &merged)?;
         }
     }
 
