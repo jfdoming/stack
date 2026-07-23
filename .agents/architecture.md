@@ -19,9 +19,10 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Persistence
 - DB location: `<git-common-dir>/stack.db` (repo-scoped and shared across linked worktrees; normally `.git/stack.db`).
-- A legacy per-worktree database is moved to the shared path only when no shared database exists. Conflicting databases are preserved without automatic merging and reported for manual reconciliation.
+- A legacy per-worktree database atomically claims the shared path only when no shared database exists. Concurrent/conflicting losers are preserved without automatic merging and reported for manual reconciliation.
 - Key table: `branches` (single parent relationship, cached PR metadata, sync SHA).
 - `repo_meta` schema version 3 stores base-discovery provenance, the push-target policy, cached canonical/fork repository identity, GitHub permission, and detection time.
+- Database schema creation, column migration, and version updates run in one immediate SQLite transaction so concurrent worktrees observe one complete migration.
 - Base discovery prefers a non-dangling `origin/HEAD`, then an existing conventional local base, then the current branch. Provisional current-branch/first-local/default discoveries can yield to a later authoritative remote HEAD; conventional, remote, and legacy bases remain stable while present. Missing cached refs are repaired, with updates conditioned on the exact metadata observed so concurrent linked worktrees cannot overwrite a newer decision.
 - Integrity: cycle prevention is validated before parent updates.
 

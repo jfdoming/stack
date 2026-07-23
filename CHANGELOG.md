@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.16 - 2026-07-22
+- Made linked-worktree legacy database migration claim the shared path atomically without overwriting a concurrent winner, preserving the losing database for manual reconciliation.
+- Serialised schema upgrades in one immediate SQLite transaction so concurrent stack processes cannot race column checks and fail or partially migrate metadata.
+
 ## 0.18.15 - 2026-07-22
 - Passed remote names after Git's option terminator during fetch and URL lookup so names such as `--all` remain single literal operands instead of selecting unrelated remotes or recursive fetch behaviour.
 

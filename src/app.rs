@@ -78,14 +78,32 @@ fn prepare_stack_db_path(git: &Git) -> Result<PathBuf> {
         ));
     }
 
-    fs::rename(&legacy, &shared).with_context(|| {
+    let installed = install_legacy_database(&legacy, &shared).with_context(|| {
         format!(
             "failed to migrate linked-worktree stack metadata from '{}' to shared path '{}'",
             legacy.display(),
             shared.display()
         )
     })?;
+    if !installed && legacy.exists() {
+        eprintln!(
+            "warning: using shared stack metadata at '{}'; legacy linked-worktree metadata remains at '{}' and must be reconciled manually",
+            shared.display(),
+            legacy.display()
+        );
+    }
     Ok(shared)
+}
+
+fn install_legacy_database(legacy: &Path, shared: &Path) -> std::io::Result<bool> {
+    match fs::hard_link(legacy, shared) {
+        Ok(()) => {
+            fs::remove_file(legacy)?;
+            Ok(true)
+        }
+        Err(_) if shared.exists() => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn sqlite_sidecar(path: &Path, suffix: &str) -> PathBuf {
@@ -255,5 +273,76 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             ctx.cli.global.porcelain,
         ),
         Some(Commands::Completions(args)) => commands::completions::run(args.shell),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+
+    #[test]
+    fn legacy_database_install_never_replaces_an_existing_shared_database() {
+        let dir = tempfile::tempdir().expect("metadata directory");
+        let legacy = dir.path().join("legacy.db");
+        let shared = dir.path().join("shared.db");
+        fs::write(&legacy, b"legacy").expect("write legacy database");
+        fs::write(&shared, b"shared").expect("write shared database");
+
+        assert!(!install_legacy_database(&legacy, &shared).expect("install result"));
+        assert_eq!(fs::read(&shared).unwrap(), b"shared");
+        assert_eq!(fs::read(&legacy).unwrap(), b"legacy");
+    }
+
+    #[test]
+    fn legacy_database_install_accepts_a_same_source_concurrent_winner() {
+        let dir = tempfile::tempdir().expect("metadata directory");
+        let legacy = dir.path().join("legacy.db");
+        let shared = dir.path().join("shared.db");
+        fs::write(&shared, b"shared").expect("write shared database");
+
+        assert!(!install_legacy_database(&legacy, &shared).expect("install result"));
+        assert_eq!(fs::read(&shared).unwrap(), b"shared");
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn concurrent_legacy_database_installs_preserve_the_loser() {
+        let dir = tempfile::tempdir().expect("metadata directory");
+        let first = dir.path().join("first.db");
+        let second = dir.path().join("second.db");
+        let shared = dir.path().join("shared.db");
+        fs::write(&first, b"first").expect("write first legacy database");
+        fs::write(&second, b"second").expect("write second legacy database");
+
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = [first.clone(), second.clone()].map(|legacy| {
+            let shared = shared.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                install_legacy_database(&legacy, &shared)
+            })
+        });
+        let results = workers.map(|worker| worker.join().expect("migration worker").unwrap());
+
+        assert_eq!(
+            results.into_iter().filter(|installed| *installed).count(),
+            1
+        );
+        assert_eq!(
+            [first.exists(), second.exists()]
+                .into_iter()
+                .filter(|exists| *exists)
+                .count(),
+            1
+        );
+        let shared_contents = fs::read(&shared).unwrap();
+        match shared_contents.as_slice() {
+            b"first" => assert_eq!([first.exists(), second.exists()], [false, true]),
+            b"second" => assert_eq!([first.exists(), second.exists()], [true, false]),
+            other => panic!("unexpected shared database contents: {other:?}"),
+        }
     }
 }

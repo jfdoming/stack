@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 #[derive(Debug, Clone)]
 pub struct BranchRecord {
@@ -77,15 +77,18 @@ impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
             .with_context(|| format!("failed to open sqlite at {}", path.display()))?;
-        let db = Self { conn };
+        let mut db = Self { conn };
         db.migrate()?;
         Ok(db)
     }
 
-    fn migrate(&self) -> Result<()> {
-        self.conn.execute_batch(
+    fn migrate(&mut self) -> Result<()> {
+        self.conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(
             "
-            PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS branches (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
@@ -125,18 +128,17 @@ impl Database {
             ("push_permission", "TEXT NULL"),
             ("permission_checked_at", "INTEGER NULL"),
         ] {
-            if !self.repo_meta_has_column(name)? {
-                self.conn
-                    .execute(&format!("ALTER TABLE repo_meta ADD COLUMN {name} {ty}"), [])?;
+            if !Self::repo_meta_has_column(&tx, name)? {
+                tx.execute(&format!("ALTER TABLE repo_meta ADD COLUMN {name} {ty}"), [])?;
             }
         }
-        self.conn
-            .execute("UPDATE repo_meta SET schema_version = 3 WHERE id = 1", [])?;
+        tx.execute("UPDATE repo_meta SET schema_version = 3 WHERE id = 1", [])?;
+        tx.commit()?;
         Ok(())
     }
 
-    fn repo_meta_has_column(&self, name: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(repo_meta)")?;
+    fn repo_meta_has_column(conn: &Connection, name: &str) -> Result<bool> {
+        let mut stmt = conn.prepare("PRAGMA table_info(repo_meta)")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let column: String = row.get(1)?;
@@ -556,6 +558,8 @@ fn ensure_temp_id(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
     use super::*;
 
     #[test]
@@ -745,5 +749,41 @@ mod tests {
             )
             .unwrap();
         assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn concurrent_old_schema_opens_are_serialized() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repo_meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_branch TEXT NOT NULL,
+                schema_version INTEGER NOT NULL
+             );
+             INSERT INTO repo_meta(id, base_branch, schema_version) VALUES (1, 'main', 1);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let worker_count = 16;
+        let barrier = Arc::new(Barrier::new(worker_count));
+        let workers = (0..worker_count)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Database::open(&path).and_then(|db| db.repo_meta())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            let meta = worker.join().expect("migration worker").unwrap();
+            assert_eq!(meta.base_branch, "main");
+            assert_eq!(meta.base_branch_source, BaseBranchSource::Legacy);
+        }
     }
 }
