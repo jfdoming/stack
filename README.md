@@ -60,7 +60,7 @@ stack completions zsh > ~/.zsh/completions/_stack
 
 ## Fork and maintainer workflows
 
-`stack` stores a repository-level push target in `.git/stack.db` and treats it separately from the remote tracked by `main`:
+`stack` stores repository metadata in Git's shared common directory (normally `.git/stack.db`, shared by linked worktrees) and treats the push target separately from the remote tracked by the base branch:
 
 - `auto` uses the canonical repository when GitHub reports write access; otherwise it uses the fork.
 - `upstream` always selects the canonical PR repository.

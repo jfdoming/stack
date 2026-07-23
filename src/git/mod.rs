@@ -42,7 +42,19 @@ impl Git {
     }
 
     pub fn git_dir(&self) -> Result<PathBuf> {
-        let out = self.capture(["rev-parse", "--git-dir"])?;
+        self.resolve_git_path(["rev-parse", "--path-format=absolute", "--git-dir"])
+    }
+
+    pub fn common_git_dir(&self) -> Result<PathBuf> {
+        self.resolve_git_path(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    }
+
+    pub fn stack_db_path(&self) -> Result<PathBuf> {
+        Ok(self.common_git_dir()?.join("stack.db"))
+    }
+
+    fn resolve_git_path<const N: usize>(&self, args: [&str; N]) -> Result<PathBuf> {
+        let out = self.capture(args)?;
         let path = PathBuf::from(out.trim());
         if path.is_absolute() {
             Ok(path)
@@ -298,7 +310,21 @@ impl Git {
                 return Ok(branch.to_string());
             }
         }
-        Ok("main".to_string())
+
+        let local = self.local_branches()?;
+        for conventional in ["main", "master", "trunk", "develop"] {
+            if local.iter().any(|branch| branch == conventional) {
+                return Ok(conventional.to_string());
+            }
+        }
+        let current = self.current_branch()?;
+        if !current.is_empty() {
+            return Ok(current);
+        }
+        Ok(local
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "main".to_string()))
     }
 
     pub fn remote_web_url(&self, remote: &str) -> Result<Option<String>> {

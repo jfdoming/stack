@@ -334,5 +334,5 @@ fn repo_root_from_pr_url(url: &str) -> Option<&str> {
 }
 
 fn db_summary_path(git: &Git) -> Result<String> {
-    Ok(git.git_dir()?.join("stack.db").display().to_string())
+    Ok(git.stack_db_path()?.display().to_string())
 }

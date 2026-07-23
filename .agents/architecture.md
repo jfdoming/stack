@@ -17,9 +17,11 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `src/util/`: shared PR body, URL, and terminal utilities.
 
 ## Persistence
-- DB location: `.git/stack.db` (repo-scoped).
+- DB location: `<git-common-dir>/stack.db` (repo-scoped and shared across linked worktrees; normally `.git/stack.db`).
+- A legacy per-worktree database is moved to the shared path only when no shared database exists. Conflicting databases are preserved without automatic merging and reported for manual reconciliation.
 - Key table: `branches` (single parent relationship, cached PR metadata, sync SHA).
 - `repo_meta` schema version 2 stores the push-target policy plus cached canonical/fork repository identity, GitHub permission, and detection time.
+- Base discovery prefers `origin/HEAD`, then an existing conventional local base, then the current branch. A cached base is replaced only when its local ref is missing, preserving valid established stack roots.
 - Integrity: cycle prevention is validated before parent updates.
 
 ## Sync behaviour
@@ -75,6 +77,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - When target and/or parent are local but untracked, move records the new parent link and thereby brings those branches into stack metadata.
 - Missing target/parent arguments prompt in TTY mode; when omitted outside TTY, target defaults only when the current local non-base branch is a viable target and parent remains required.
 - Move rejects parents inside the target subtree so longer descendant cycles cannot be introduced.
+- Move requires the selected parent to have a local Git ref even when stale stack metadata still tracks that name.
 - After updating stack metadata, move immediately builds and applies a sync plan so the git branch ancestry is restacked onto the new parent relationship.
 
 ## Split behaviour

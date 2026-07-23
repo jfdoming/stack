@@ -1,4 +1,8 @@
-use anyhow::{Context, Result};
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
@@ -21,11 +25,14 @@ impl AppContext {
     fn build() -> Result<Self> {
         let cli = Cli::parse();
         let git = Git::discover()?;
-        let git_dir = git.git_dir()?;
-        let db_path = git_dir.join("stack.db");
+        let db_path = prepare_stack_db_path(&git)?;
         let db = Database::open(&db_path)?;
         let default_base = git.default_base_branch()?;
         db.set_base_branch_if_missing(&default_base)?;
+        let cached_base = db.repo_meta()?.base_branch;
+        if cached_base != default_base && !git.branch_exists(&cached_base)? {
+            db.set_base_branch(&default_base)?;
+        }
         let base_branch = db.repo_meta()?.base_branch;
         let base_remote = git.base_remote_for_stack(&base_branch)?;
         let provider = GithubProvider::new(git.clone(), cli.global.debug);
@@ -39,6 +46,49 @@ impl AppContext {
             provider,
         })
     }
+}
+
+fn prepare_stack_db_path(git: &Git) -> Result<PathBuf> {
+    let shared = git.stack_db_path()?;
+    let legacy = git.git_dir()?.join("stack.db");
+    if legacy == shared || !legacy.exists() {
+        return Ok(shared);
+    }
+    if shared.exists() {
+        eprintln!(
+            "warning: using shared stack metadata at '{}'; legacy linked-worktree metadata remains at '{}' and must be reconciled manually",
+            shared.display(),
+            legacy.display()
+        );
+        return Ok(shared);
+    }
+
+    let sidecars = ["-journal", "-wal", "-shm"]
+        .map(|suffix| sqlite_sidecar(&legacy, suffix))
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect::<Vec<_>>();
+    if !sidecars.is_empty() {
+        return Err(anyhow!(
+            "cannot migrate legacy stack metadata from '{}' while SQLite sidecar files exist; close other stack processes and recover that database before retrying",
+            legacy.display()
+        ));
+    }
+
+    fs::rename(&legacy, &shared).with_context(|| {
+        format!(
+            "failed to migrate linked-worktree stack metadata from '{}' to shared path '{}'",
+            legacy.display(),
+            shared.display()
+        )
+    })?;
+    Ok(shared)
+}
+
+fn sqlite_sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = OsString::from(path.as_os_str());
+    value.push(suffix);
+    PathBuf::from(value)
 }
 
 pub fn run() -> Result<()> {

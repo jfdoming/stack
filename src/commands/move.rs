@@ -47,7 +47,6 @@ pub fn run(
         &target,
         &descendants,
         &tracked,
-        &tracked_by_name,
         &local,
     )?;
 
@@ -156,11 +155,10 @@ fn resolve_parent(
     target: &str,
     descendants: &HashSet<String>,
     tracked: &[BranchRecord],
-    tracked_by_name: &HashMap<String, BranchRecord>,
     local: &[String],
 ) -> Result<String> {
     if let Some(parent) = &args.parent {
-        return ensure_parent_candidate(parent.trim(), target, descendants, tracked_by_name, local);
+        return ensure_parent_candidate(parent.trim(), target, descendants, local);
     }
 
     if !is_tty {
@@ -229,7 +227,6 @@ fn ensure_parent_candidate(
     parent: &str,
     target: &str,
     descendants: &HashSet<String>,
-    tracked_by_name: &HashMap<String, BranchRecord>,
     local: &[String],
 ) -> Result<String> {
     if parent.is_empty() {
@@ -241,7 +238,7 @@ fn ensure_parent_candidate(
     if descendants.contains(parent) {
         return Err(anyhow!("link would create a cycle"));
     }
-    if !tracked_by_name.contains_key(parent) && !local.iter().any(|branch| branch == parent) {
+    if !local.iter().any(|branch| branch == parent) {
         return Err(anyhow!("parent branch does not exist in git: {}", parent));
     }
     Ok(parent.to_string())

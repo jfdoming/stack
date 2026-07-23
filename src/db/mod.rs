@@ -115,6 +115,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_base_branch(&self, base_branch: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE repo_meta SET base_branch = ?1 WHERE id = 1",
+            params![base_branch],
+        )?;
+        Ok(())
+    }
+
     pub fn repo_meta(&self) -> Result<RepoMeta> {
         self.conn
             .query_row(

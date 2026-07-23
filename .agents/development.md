@@ -93,6 +93,7 @@
 - `stack rename <old> <new>` renames tracked metadata and the local branch in one command.
 - `stack move [target] --parent <parent>` reparents a tracked subtree without changing child links below the moved target.
 - `stack move` can also adopt untracked local branches into the stack by attaching them under a parent branch, tracking any newly linked branches as needed.
+- `stack move` rejects parent names whose local Git refs are missing, including stale names that remain in stack metadata.
 - Omitting `stack move` target preselects the current local non-base branch in the TTY picker; in non-interactive mode it defaults only when the current branch is a viable target.
 - After `stack move` updates parent links, it immediately runs the sync planner/executor so branch history is restacked to match the new stack shape.
 - `stack split` turns the current branch's committed linear history into a tracked stack without rewriting commits; each selected `--at` commit becomes the tip of a new lower branch, later commits remain above it, and the current branch remains checked out as the top branch.
@@ -122,6 +123,8 @@
 - In stack tree output, branches without a PR show a clickable `[no PR]` compare label.
 - Stack tree output no longer shows a separate `PR:none` badge; `[no PR]` is the single missing-PR indicator.
 - `SYNC:never` means a branch has not yet been synced by `stack sync` (no last-synced SHA recorded).
+- Stack metadata lives in Git's common directory so all linked worktrees share one database. A lone legacy per-worktree database is migrated automatically; conflicting databases are left untouched and reported for manual reconciliation.
+- When `origin/HEAD` is unavailable, initial base discovery prefers an existing `main`, `master`, `trunk`, or `develop` ref and otherwise uses the current branch. A missing cached base is repaired on startup without replacing an existing configured base ref.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.

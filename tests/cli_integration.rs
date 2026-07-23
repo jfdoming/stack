@@ -35,8 +35,12 @@ fn init_repo() -> TempDir {
 }
 
 fn init_repo_without_origin() -> TempDir {
+    init_repo_on_branch("main")
+}
+
+fn init_repo_on_branch(initial_branch: &str) -> TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    run_git(dir.path(), &["init", "-b", "main"]);
+    run_git(dir.path(), &["init", "-b", initial_branch]);
     configure_test_fixture_excludes(dir.path());
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Stack Test"]);

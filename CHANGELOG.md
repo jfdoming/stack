@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.9 - 2026-07-22
+- Moved repository metadata to Git's shared common directory so linked worktrees use one stack database, with safe migration when only a legacy per-worktree database exists.
+- Made base discovery prefer existing conventional branches or the current branch when `origin/HEAD` is unavailable, and repair cached bases only when their local ref is missing.
+- Made `stack move` reject a tracked parent whose local Git ref is missing before changing stack metadata.
+
 ## 0.18.8 - 2026-07-22
 - Restricted draft releases to successful same-repository `main` push runs, kept artifact downloads scoped to the triggering run ID, and made the build workflow token read-only.
 

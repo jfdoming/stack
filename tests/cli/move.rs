@@ -154,6 +154,51 @@ fn move_tracks_untracked_target_and_parent_when_needed() {
 }
 
 #[test]
+fn move_rejects_a_tracked_parent_whose_git_ref_is_missing() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "main",
+            "--name",
+            "feat/missing-parent",
+        ])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/target"])
+        .assert()
+        .success();
+    run_git(
+        repo.path(),
+        &["branch", "-D", "--", "feat/missing-parent"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["move", "feat/target", "--parent", "feat/missing-parent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "parent branch does not exist in git: feat/missing-parent",
+        ));
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let target_parent: String = conn
+        .query_row(
+            "SELECT p.name
+             FROM branches c
+             JOIN branches p ON p.id = c.parent_branch_id
+             WHERE c.name = 'feat/target'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("target parent");
+    assert_eq!(target_parent, "main");
+}
+
+#[test]
 fn move_restacks_target_onto_new_parent_immediately() {
     let repo = init_repo_without_origin();
 
