@@ -59,6 +59,9 @@ pub fn run(
             "branch required in non-interactive mode; pass stack delete <branch>"
         ));
     };
+    if target == base_branch {
+        return Err(anyhow!("cannot delete base branch '{base_branch}'"));
+    }
     let branch = db
         .branch_by_name(&target)?
         .ok_or_else(|| anyhow!("branch '{}' is not tracked", target))?;

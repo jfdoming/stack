@@ -84,6 +84,7 @@
 - Omitting `stack untrack <branch>` follows the same assumption/prompt flow as delete.
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
+- `stack delete` rejects the configured base branch; only tracked non-base branches can be deleted.
 - `stack rename <old> <new>` renames tracked metadata and the local branch in one command.
 - `stack move [target] --parent <parent>` reparents a tracked subtree without changing child links below the moved target.
 - `stack move` can also adopt untracked local branches into the stack by attaching them under a parent branch, tracking any newly linked branches as needed.

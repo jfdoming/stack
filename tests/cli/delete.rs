@@ -52,6 +52,33 @@ fn delete_command_splices_children_and_deletes_local_branch() {
         .expect("query feat/c parent");
     assert_eq!(parent_name, "feat/a");
 }
+
+#[test]
+fn delete_rejects_the_configured_base_branch_without_mutation() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .args(["--yes", "delete", "main"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot delete base branch 'main'"));
+
+    assert!(git_ref_sha(repo.path(), "refs/heads/main").is_some());
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let base_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'main'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count base records");
+    assert_eq!(base_count, 1);
+}
+
 #[test]
 fn delete_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();

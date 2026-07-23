@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.3 - 2026-07-22
+- Prevented `stack delete` from deleting the configured base branch or removing its stack metadata.
+
 ## 0.18.2 - 2026-07-22
 - Prevented option-like branch names from being interpreted as Git flags during branch creation, checkout, rename, deletion, and push operations; create and rename now reject invalid destination names before invoking Git.
 
