@@ -34,6 +34,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Executes replay using revision ranges (`old_base..branch`) and applies replay-emitted ref updates.
 - For restacks with zero commits to replay, uses `git rebase --onto` to fast-forward branch tips to the tracked parent.
 - For tracked parent-child restacks, planning captures an immutable `old_base`: the current parent tip when it is still an ancestor, otherwise a validated reflog fork point. Missing rewrite evidence fails closed instead of replaying ambiguous commits.
+- Every restack operation also captures the child head reviewed during planning. Replay uses that immutable commit range, rebase uses a temporary recovery branch, and the real child ref is finalized with an expected-old compare-and-swap so another process cannot inject or lose commits between review and mutation.
 - Applies restacks parent-first and persists their sync SHAs only after every planned operation succeeds.
 - For merged-parent child restacks, execution uses the merged parent branch tip as `old_base` so parent commits are not replayed again over squash-merged base history.
 - When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
@@ -49,7 +50,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - PR/push placement is resolved independently of base-branch tracking: existing upstreams are preserved, unpushed descendants inherit the nearest published ancestor, and new roots use the repository push-target policy.
 - Canonical/fork topology uses remote fetch and push identities plus a cached GitHub `viewerPermission` lookup. Automatic placement selects upstream for `WRITE`, `MAINTAIN`, or `ADMIN`, otherwise the fork.
 - Sync skips PR-base correction when the expected base branch resolves to a different GitHub repository than the PR itself, warning instead of issuing an impossible `gh pr edit --base`.
-- Stops on conflict and restores an auto-stash by immutable object ID only after verifying that the original branch was restored; otherwise the stash is retained and sync reports an error. Successfully applied auto-stashes remain in the shared stash reflog as recovery entries because reflog-index deletion is unsafe under concurrent linked-worktree updates.
+- Stops fallback rebases on an encoded recovery branch bound to a private, one-time pending ref. After `git rebase --continue`, the next non-dry-run sync atomically consumes that authority while compare-and-swapping the resolved head onto the unchanged target, before planning further work; a matching branch name alone is never trusted. Sync restores an auto-stash by immutable object ID only after verifying that the original branch was restored; otherwise the stash is retained and sync reports an error. Successfully applied auto-stashes remain in the shared stash reflog as recovery entries because reflog-index deletion is unsafe under concurrent linked-worktree updates.
 - In interactive TTY mode after successful apply, offers a follow-up push step for tracked non-base branches.
 
 ## Track behaviour

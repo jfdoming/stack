@@ -26,6 +26,11 @@ pub fn run(
     opts: SyncRunOptions,
 ) -> Result<()> {
     let sync_started = Instant::now();
+    if !opts.dry_run
+        && let Some(branch) = git.finish_pending_restack()?
+    {
+        eprintln!("finished resolved restack for '{branch}'");
+    }
     let plan_started = Instant::now();
     let (plan, plan_timing) = build_sync_plan(db, git, provider, base_branch, base_remote)?;
     let plan_elapsed = plan_started.elapsed();

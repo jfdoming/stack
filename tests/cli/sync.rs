@@ -276,6 +276,340 @@ fn sync_fetches_and_restacks_onto_an_advanced_remote_base_in_one_run() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn sync_refuses_a_restack_when_the_child_changes_after_planning() {
+    let repo = init_repo_without_origin();
+    let upstream_bare = repo.path().join("upstream-race.git");
+    run_git(
+        repo.path(),
+        &[
+            "init",
+            "--bare",
+            upstream_bare.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            upstream_bare.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["push", "--set-upstream", "upstream", "main"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("root.txt"), "root work\n").expect("write root work");
+    run_git(repo.path(), &["add", "root.txt"]);
+    run_git(repo.path(), &["commit", "-m", "root work"]);
+    fs::write(repo.path().join("concurrent.txt"), "concurrent work\n")
+        .expect("write concurrent work");
+    run_git(repo.path(), &["add", "concurrent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "concurrent work"]);
+    let concurrent_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/root").expect("concurrent head");
+    run_git(repo.path(), &["reset", "--hard", "HEAD^"]);
+    let planned_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/root").expect("planned child head");
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let upstream_work = repo.path().join(".git/test-upstream-race-work");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            "--branch",
+            "main",
+            upstream_bare.to_str().expect("upstream bare path"),
+            upstream_work.to_str().expect("upstream work path"),
+        ],
+    );
+    run_git(
+        &upstream_work,
+        &["config", "user.email", "upstream@example.com"],
+    );
+    run_git(&upstream_work, &["config", "user.name", "Upstream Bot"]);
+    run_git(
+        &upstream_work,
+        &["config", "commit.gpgsign", "false"],
+    );
+    fs::write(upstream_work.join("base.txt"), "advanced base\n").expect("write base change");
+    run_git(&upstream_work, &["add", "base.txt"]);
+    run_git(&upstream_work, &["commit", "-m", "advance remote base"]);
+    run_git(&upstream_work, &["push", "origin", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-restack-race");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let replay_supported = Command::new(&real_git)
+        .args(["help", "-a"])
+        .output()
+        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("replay"));
+    let replay_marker = repo.path().join("replay-race.log");
+    let rebase_marker = repo.path().join("rebase-race.log");
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"help\" && \"$2\" == \"-a\" && \"${{STACK_TEST_FORCE_REBASE:-}}\" == \"1\" ]]; then\n  '{}' help -a | sed '/replay/d'\n  exit 0\nfi\nif [[ \"$1\" == \"replay\" ]]; then\n  : > '{}'\n  replay_output=$('{}' \"$@\")\n  status=$?\n  if [[ $status -eq 0 ]]; then\n    '{}' update-ref refs/heads/feat/root '{}'\n  fi\n  printf '%s\\n' \"$replay_output\"\n  exit $status\nfi\nif [[ \"$1\" == \"rebase\" ]]; then\n  : > '{}'\n  '{}' \"$@\"\n  status=$?\n  if [[ $status -eq 0 ]]; then\n    '{}' update-ref refs/heads/feat/root '{}'\n  fi\n  exit $status\nfi\nexec '{}' \"$@\"\n",
+            real_git,
+            replay_marker.display(),
+            real_git,
+            real_git,
+            concurrent_head,
+            rebase_marker.display(),
+            real_git,
+            real_git,
+            concurrent_head,
+            real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "branch 'feat/root' changed after the sync plan was built",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/root"),
+        Some(concurrent_head.clone())
+    );
+    if replay_supported {
+        assert!(
+            replay_marker.exists(),
+            "expected the race to exercise git replay"
+        );
+    }
+
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/heads/feat/root", &planned_head],
+    );
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .env("STACK_TEST_FORCE_REBASE", "1")
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "branch 'feat/root' changed after the sync plan was built",
+        ));
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/root"),
+        Some(concurrent_head)
+    );
+    assert!(
+        rebase_marker.exists(),
+        "expected the race to exercise the rebase fallback"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_finishes_a_conflicted_atomic_restack_after_rebase_continue() {
+    let repo = init_repo_without_origin();
+    let upstream_bare = repo.path().join("upstream-conflict.git");
+    run_git(
+        repo.path(),
+        &[
+            "init",
+            "--bare",
+            upstream_bare.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            upstream_bare.to_str().expect("upstream bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["push", "--set-upstream", "upstream", "main"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("README.md"), "child version\n").expect("write child change");
+    run_git(repo.path(), &["add", "README.md"]);
+    run_git(repo.path(), &["commit", "-m", "change child readme"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let upstream_work = repo.path().join(".git/test-upstream-conflict-work");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            "--branch",
+            "main",
+            upstream_bare.to_str().expect("upstream bare path"),
+            upstream_work.to_str().expect("upstream work path"),
+        ],
+    );
+    run_git(
+        &upstream_work,
+        &["config", "user.email", "upstream@example.com"],
+    );
+    run_git(&upstream_work, &["config", "user.name", "Upstream Bot"]);
+    run_git(
+        &upstream_work,
+        &["config", "commit.gpgsign", "false"],
+    );
+    fs::write(upstream_work.join("README.md"), "upstream version\n")
+        .expect("write upstream change");
+    run_git(&upstream_work, &["add", "README.md"]);
+    run_git(&upstream_work, &["commit", "-m", "change upstream readme"]);
+    run_git(&upstream_work, &["push", "origin", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-conflict-recovery");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let real_git = Command::new("sh")
+        .args(["-lc", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"help\" && \"$2\" == \"-a\" ]]; then\n  '{}' help -a | sed '/replay/d'\n  exit 0\nfi\nexec '{}' \"$@\"\n",
+            real_git, real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "sync stopped due to merge conflicts while restacking 'feat/root'",
+        ));
+
+    fs::write(repo.path().join("README.md"), "resolved version\n")
+        .expect("resolve readme conflict");
+    run_git(repo.path(), &["add", "README.md"]);
+    run_git(
+        repo.path(),
+        &["-c", "core.editor=true", "rebase", "--continue"],
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "finished resolved restack for 'feat/root'",
+        ));
+
+    assert_eq!(
+        fs::read_to_string(repo.path().join("README.md")).expect("read resolved file"),
+        "resolved version\n"
+    );
+    let contains_remote_base = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            "refs/remotes/upstream/main",
+            "feat/root",
+        ])
+        .status()
+        .expect("check restacked ancestry");
+    assert!(contains_remote_base.success());
+    let recovery_branches = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/stack/restack",
+        ])
+        .output()
+        .expect("list recovery branches");
+    assert!(recovery_branches.status.success());
+    assert!(recovery_branches.stdout.is_empty());
+    let pending_refs = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/stack/restacks",
+        ])
+        .output()
+        .expect("list pending restack refs");
+    assert!(pending_refs.status.success());
+    assert!(pending_refs.stdout.is_empty());
+}
+
+#[test]
+fn sync_rejects_a_forged_restack_recovery_branch() {
+    let repo = init_repo_without_origin();
+    let main_head = git_ref_sha(repo.path(), "refs/heads/main").expect("main head");
+    let forged_branch = format!("stack/restack/1-1/{main_head}/main");
+    run_git(repo.path(), &["branch", &forged_branch, "main"]);
+    run_git(repo.path(), &["checkout", &forged_branch]);
+    fs::write(repo.path().join("forged.txt"), "forged recovery\n")
+        .expect("write forged commit");
+    run_git(repo.path(), &["add", "forged.txt"]);
+    run_git(repo.path(), &["commit", "-m", "forged recovery commit"]);
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "refusing to finish untrusted restack recovery branch",
+        ));
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(main_head)
+    );
+}
+
 #[test]
 fn sync_inspects_an_origin_base_without_an_upstream_or_tracking_ref() {
     let repo = init_repo_without_origin();

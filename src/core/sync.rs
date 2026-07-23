@@ -25,6 +25,7 @@ pub enum SyncOp {
         branch: String,
         onto: String,
         old_base: String,
+        expected_head: String,
         reason: String,
     },
     UpdateSha {
@@ -84,6 +85,7 @@ impl SyncPlan {
                     branch,
                     onto,
                     old_base: _,
+                    expected_head: _,
                     reason,
                 } => operations.push(OperationView {
                     kind: "restack".to_string(),
@@ -429,6 +431,10 @@ pub fn build_sync_plan(
     for item in restack_candidates {
         needs_fetch = true;
         ops.push(SyncOp::Restack {
+            expected_head: current_sha_by_branch
+                .get(&item.branch)
+                .cloned()
+                .ok_or_else(|| anyhow!("missing planned head for '{}'", item.branch))?,
             branch: item.branch,
             onto: item.onto,
             old_base: item.old_base,
@@ -736,25 +742,37 @@ pub fn execute_sync_plan(
                     branch,
                     onto,
                     old_base,
+                    expected_head,
                     ..
                 } => {
-                    if git.commit_distance(old_base, branch)? == 0 {
-                        git.rebase_onto(branch, old_base, onto)?;
+                    let actual_head = git.head_sha(branch)?;
+                    if actual_head != *expected_head {
+                        return Err(anyhow!(
+                            "branch '{branch}' changed after the sync plan was built; rerun sync to review a fresh plan"
+                        ));
+                    }
+                    if git.commit_distance(old_base, expected_head)? == 0 {
+                        git.rebase_onto(branch, expected_head, old_base, onto)?;
                         let sha = git.head_sha(branch)?;
                         pending_sync_shas.insert(branch.clone(), sha);
                         continue;
                     }
                     if replay_supported {
-                        if let Err(err) = git.replay_onto(branch, old_base, onto) {
+                        if let Err(err) = git.replay_onto(branch, expected_head, old_base, onto) {
+                            if git.head_sha(branch)? != *expected_head {
+                                return Err(anyhow!(
+                                    "branch '{branch}' changed after the sync plan was built; rerun sync to review a fresh plan"
+                                ));
+                            }
                             let reason = summarize_replay_error(&err);
                             eprintln!(
                                 "warning: git replay is unavailable for '{branch}' ({reason}); falling back to rebase"
                             );
-                            git.rebase_onto(branch, old_base, onto)?;
+                            git.rebase_onto(branch, expected_head, old_base, onto)?;
                         }
                     } else {
                         eprintln!("warning: git replay unavailable; using rebase for {branch}");
-                        git.rebase_onto(branch, old_base, onto)?;
+                        git.rebase_onto(branch, expected_head, old_base, onto)?;
                     }
                     let sha = git.head_sha(branch)?;
                     pending_sync_shas.insert(branch.clone(), sha);
@@ -940,6 +958,11 @@ fn format_merge_conflict_guidance(op_msg: &str) -> String {
 }
 
 fn conflicted_branch_from_sync_error(msg: &str) -> Option<&str> {
+    if let Some(tail) = msg.strip_prefix("restack of '")
+        && let Some((branch, _)) = tail.split_once('\'')
+    {
+        return Some(branch);
+    }
     let marker = "\", \"";
     let rebase_idx = msg.find("[\"rebase\", \"--onto\", \"")?;
     let tail = &msg[rebase_idx..];

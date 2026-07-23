@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.20 - 2026-07-22
+- Pinned replay and rebase inputs to the child head reviewed during planning, then finalized the rewritten branch with an expected-old compare-and-swap so concurrent commits are preserved instead of replayed or overwritten.
+- Kept atomic fallback rebase conflicts recoverable on an encoded temporary branch authenticated by a private one-time ref; after `git rebase --continue`, the next sync atomically consumes that authority while finalizing the unchanged target before planning more work.
+
 ## 0.18.19 - 2026-07-22
 - Deleted pruned local branch refs with an expected-old compare-and-swap after the ancestry proof, so a concurrent branch advance cannot be force-deleted between validation and removal.
 - Preserved Git's linked-worktree safety with pre/post deletion checkout checks and ref restoration, and best-effort removed the exact deleted branch's Git configuration without matching prefix-named siblings.

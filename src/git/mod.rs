@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
@@ -9,6 +9,7 @@ use url::Url;
 use crate::db::BaseBranchSource;
 
 static NEXT_AUTO_STASH_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_RESTACK_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct Git {
@@ -675,59 +676,254 @@ impl Git {
         Ok(Some(sha.to_ascii_lowercase()))
     }
 
-    pub fn replay_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
+    pub fn replay_onto(
+        &self,
+        branch: &str,
+        expected_head: &str,
+        old_base: &str,
+        new_base: &str,
+    ) -> Result<()> {
+        let expected_head = self.resolve_commit(expected_head)?;
         let old_base = self.resolve_commit(old_base)?;
         let new_base = self.resolve_commit(new_base)?;
-        let revision_range = format!("{old_base}..{}", local_branch_ref(branch));
+        let branch_ref = local_branch_ref(branch);
+        let revision_range = format!("{old_base}..{expected_head}");
+
+        self.checkout_branch(branch)?;
+        if self.head_sha(branch)? != expected_head {
+            return Err(branch_changed_after_sync_plan(branch));
+        }
+        self.run(["switch", "--detach", "--", &expected_head])?;
+
         let output = Command::new("git")
             .current_dir(&self.root)
-            .args(["replay", "--onto", &new_base, "--", &revision_range])
+            .args([
+                "replay",
+                "--onto",
+                &new_base,
+                "--ref",
+                &branch_ref,
+                "--ref-action=print",
+                "--",
+                &revision_range,
+            ])
             .output()
-            .with_context(|| {
-                format!(
-                    "failed to run git [\"replay\", \"--onto\", \"{new_base}\", \"{revision_range}\"]"
-                )
-            })?;
+            .with_context(|| format!("failed to replay branch '{branch}' from its planned head"))?;
         if !output.status.success() {
             return Err(anyhow!(
-                "git command failed [\"replay\", \"--onto\", \"{}\", \"{}\"]: {}",
-                new_base,
-                revision_range,
+                "git replay failed for '{}': {}",
+                sanitize_terminal_text(branch),
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        if !output.stdout.is_empty() {
-            let mut apply = Command::new("git")
-                .current_dir(&self.root)
-                .args(["update-ref", "--stdin"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .context("failed to run git update-ref --stdin")?;
-            if let Some(stdin) = apply.stdin.as_mut() {
-                stdin
-                    .write_all(&output.stdout)
-                    .context("failed to write git replay ref updates")?;
+
+        let stdout = String::from_utf8(output.stdout)?;
+        let mut updates = stdout.lines().filter(|line| !line.trim().is_empty());
+        let fields: Vec<&str> = updates
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect();
+        if fields.len() != 4
+            || fields[0] != "update"
+            || fields[1] != branch_ref
+            || fields[3] != expected_head
+            || updates.next().is_some()
+            || !valid_object_id(fields[2])
+        {
+            return Err(anyhow!(
+                "git replay returned an unexpected ref update for '{}'",
+                sanitize_terminal_text(branch)
+            ));
+        }
+
+        self.update_local_branch_if_unchanged(branch, fields[2], &expected_head)?;
+        self.checkout_branch(branch)?;
+        Ok(())
+    }
+
+    pub fn rebase_onto(
+        &self,
+        branch: &str,
+        expected_head: &str,
+        old_base: &str,
+        new_base: &str,
+    ) -> Result<()> {
+        let expected_head = self.resolve_commit(expected_head)?;
+        let old_base = self.resolve_commit(old_base)?;
+        let new_base = self.resolve_commit(new_base)?;
+        self.checkout_branch(branch)?;
+        if self.head_sha(branch)? != expected_head {
+            return Err(branch_changed_after_sync_plan(branch));
+        }
+
+        let (temporary_branch, pending_ref) = loop {
+            let id = NEXT_RESTACK_ID.fetch_add(1, Ordering::Relaxed);
+            let run_id = format!("{}-{id}", std::process::id());
+            let candidate = format!("stack/restack/{run_id}/{expected_head}/{branch}");
+            let candidate_ref = local_branch_ref(&candidate);
+            let pending_ref = restack_pending_ref(&run_id);
+            let commands = format!(
+                "create {candidate_ref} {expected_head}\ncreate {pending_ref} {expected_head}\n"
+            );
+            let create = self.run_update_ref_transaction(&commands)?;
+            if create.status.success() {
+                break (candidate, pending_ref);
             }
-            let apply_output = apply
-                .wait_with_output()
-                .context("failed to apply git replay ref updates")?;
-            if !apply_output.status.success() {
+            if self.exact_ref_oid(&candidate_ref)?.is_none()
+                && self.exact_ref_oid(&pending_ref)?.is_none()
+            {
                 return Err(anyhow!(
-                    "git command failed [\"update-ref\", \"--stdin\"]: {}",
-                    String::from_utf8_lossy(&apply_output.stderr)
+                    "could not create atomic restack recovery state for '{}': {}",
+                    sanitize_terminal_text(&candidate),
+                    String::from_utf8_lossy(&create.stderr).trim()
                 ));
             }
+        };
+
+        self.checkout_branch(&temporary_branch)?;
+        if let Err(err) = self.run(["rebase", "--onto", &new_base, "--", &old_base]) {
+            return Err(anyhow!(
+                "restack of '{branch}' stopped on recovery branch '{temporary_branch}': {err}"
+            ));
+        }
+        let rebased_head = self.head_sha(&temporary_branch)?;
+        self.run(["switch", "--detach", "--", &rebased_head])?;
+
+        let update_result = self.update_local_branch_and_consume_pending(
+            branch,
+            &rebased_head,
+            &expected_head,
+            &pending_ref,
+        );
+        if update_result.is_err() {
+            let temporary_ref = local_branch_ref(&temporary_branch);
+            let cleanup = format!(
+                "delete {temporary_ref} {rebased_head}\ndelete {pending_ref} {expected_head}\n"
+            );
+            let _ = self.run_update_ref_transaction(&cleanup);
+        } else {
+            let _ = self.delete_local_branch_if_unchanged(&temporary_branch, &rebased_head);
+        }
+        update_result?;
+        self.checkout_branch(branch)
+    }
+
+    pub fn finish_pending_restack(&self) -> Result<Option<String>> {
+        let recovery_branch = self.current_branch()?;
+        let Some((run_id, expected_head, target_branch)) =
+            parse_restack_recovery_branch(&recovery_branch)
+        else {
+            return Ok(None);
+        };
+        let pending_ref = restack_pending_ref(run_id);
+        if self.exact_ref_oid(&pending_ref)?.as_deref() != Some(expected_head) {
+            return Err(anyhow!(
+                "refusing to finish untrusted restack recovery branch '{}'",
+                sanitize_terminal_text(&recovery_branch)
+            ));
+        }
+        if !self.branch_exists(target_branch)? {
+            return Err(anyhow!(
+                "cannot finish recovered restack: target branch '{}' no longer exists",
+                sanitize_terminal_text(target_branch)
+            ));
+        }
+
+        let rebased_head = self.head_sha(&recovery_branch)?;
+        self.run(["switch", "--detach", "--", &rebased_head])?;
+        if let Err(err) = self.update_local_branch_and_consume_pending(
+            target_branch,
+            &rebased_head,
+            expected_head,
+            &pending_ref,
+        ) {
+            let _ = self.checkout_branch(&recovery_branch);
+            return Err(err);
+        }
+
+        self.checkout_branch(target_branch)?;
+        let _ = self.delete_local_branch_if_unchanged(&recovery_branch, &rebased_head);
+        Ok(Some(target_branch.to_string()))
+    }
+
+    fn update_local_branch_and_consume_pending(
+        &self,
+        branch: &str,
+        new_head: &str,
+        expected_head: &str,
+        pending_ref: &str,
+    ) -> Result<()> {
+        let branch_ref = local_branch_ref(branch);
+        let commands = format!(
+            "update {branch_ref} {new_head} {expected_head}\ndelete {pending_ref} {expected_head}\n"
+        );
+        let output = self.run_update_ref_transaction(&commands)?;
+        if !output.status.success() {
+            return Err(branch_changed_after_sync_plan(branch));
         }
         Ok(())
     }
 
-    pub fn rebase_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
-        let old_base = self.resolve_commit(old_base)?;
-        let new_base = self.resolve_commit(new_base)?;
-        self.checkout_branch(branch)?;
-        self.run(["rebase", "--onto", &new_base, "--", &old_base])
+    fn run_update_ref_transaction(&self, commands: &str) -> Result<Output> {
+        let mut child = Command::new("git")
+            .current_dir(&self.root)
+            .args(["update-ref", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("failed to start git update-ref transaction")?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("git update-ref stdin was unavailable"))?
+            .write_all(commands.as_bytes())
+            .context("failed to write git update-ref transaction")?;
+        child
+            .wait_with_output()
+            .context("failed to finish git update-ref transaction")
+    }
+
+    fn exact_ref_oid(&self, reference: &str) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &format!("{reference}^{{commit}}"),
+            ])
+            .output()
+            .with_context(|| format!("failed to inspect exact ref {reference}"))?;
+        match output.status.code() {
+            Some(0) => Ok(Some(String::from_utf8(output.stdout)?.trim().to_string())),
+            Some(1) => Ok(None),
+            _ => Err(anyhow!(
+                "could not inspect exact ref '{}': {}",
+                sanitize_terminal_text(reference),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
+    fn update_local_branch_if_unchanged(
+        &self,
+        branch: &str,
+        new_head: &str,
+        expected_head: &str,
+    ) -> Result<()> {
+        let branch_ref = local_branch_ref(branch);
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["update-ref", &branch_ref, new_head, expected_head])
+            .output()
+            .with_context(|| format!("failed to conditionally update branch {branch}"))?;
+        if !output.status.success() {
+            return Err(branch_changed_after_sync_plan(branch));
+        }
+        Ok(())
     }
 
     pub fn merge_base(&self, branch: &str, onto: &str) -> Result<String> {
@@ -830,6 +1026,36 @@ impl Git {
 
 fn local_branch_ref(branch: &str) -> String {
     format!("refs/heads/{branch}")
+}
+
+fn valid_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn branch_changed_after_sync_plan(branch: &str) -> anyhow::Error {
+    anyhow!(
+        "branch '{}' changed after the sync plan was built; rerun sync to review a fresh plan",
+        sanitize_terminal_text(branch)
+    )
+}
+
+fn parse_restack_recovery_branch(branch: &str) -> Option<(&str, &str, &str)> {
+    let tail = branch.strip_prefix("stack/restack/")?;
+    let mut parts = tail.splitn(3, '/');
+    let run_id = parts.next()?;
+    let expected_head = parts.next()?;
+    let target_branch = parts.next()?;
+    (run_id
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'-')
+        && !run_id.is_empty()
+        && valid_object_id(expected_head)
+        && !target_branch.is_empty())
+    .then_some((run_id, expected_head, target_branch))
+}
+
+fn restack_pending_ref(run_id: &str) -> String {
+    format!("refs/stack/restacks/{run_id}")
 }
 
 fn parse_remote_to_web_url(raw: &str) -> Option<String> {
