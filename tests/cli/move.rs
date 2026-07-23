@@ -1,6 +1,6 @@
 #[test]
 fn move_command_reparents_target_and_keeps_descendants_attached() {
-    let repo = init_repo();
+    let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/a"])
@@ -53,7 +53,7 @@ fn move_command_reparents_target_and_keeps_descendants_attached() {
 
 #[test]
 fn move_without_target_defaults_to_current_branch() {
-    let repo = init_repo();
+    let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/a"])
@@ -91,7 +91,7 @@ fn move_without_target_defaults_to_current_branch() {
 
 #[test]
 fn move_without_target_defaults_to_current_untracked_branch() {
-    let repo = init_repo();
+    let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/other"])
@@ -125,7 +125,7 @@ fn move_without_target_defaults_to_current_untracked_branch() {
 
 #[test]
 fn move_tracks_untracked_target_and_parent_when_needed() {
-    let repo = init_repo();
+    let repo = init_repo_without_origin();
 
     run_git(repo.path(), &["checkout", "-b", "feat/parent"]);
     run_git(repo.path(), &["checkout", "main"]);

@@ -153,11 +153,7 @@ pub fn build_sync_plan(
     }
     let remote_base_ref = format!("{sync_remote}/{base_branch}");
     let full_remote_base_ref = format!("refs/remotes/{sync_remote}/{base_branch}");
-    let base_upstream = git.branch_upstream(base_branch)?;
-    let should_inspect_remote_base = git.has_remote(&sync_remote)?
-        && (git.ref_exists(&remote_base_ref)?
-            || base_upstream.as_deref() == Some(remote_base_ref.as_str())
-            || sync_remote == "upstream");
+    let should_inspect_remote_base = git.has_remote(&sync_remote)?;
     let advertised_remote_base = should_inspect_remote_base
         .then(|| git.advertised_remote_branch_sha(&sync_remote, base_branch))
         .transpose()?

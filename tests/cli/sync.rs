@@ -1,6 +1,6 @@
 #[test]
 fn sync_dry_run_porcelain_reports_restack_operation() {
-    let repo = init_repo();
+    let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/parent"])
@@ -273,6 +273,144 @@ fn sync_fetches_and_restacks_onto_an_advanced_remote_base_in_one_run() {
             .iter()
             .any(|op| op["kind"] == "restack" && op["branch"] == "feat/root"),
         "expected the remote-base restack to be idempotent: {repeated_operations:?}"
+    );
+}
+
+#[test]
+fn sync_inspects_an_origin_base_without_an_upstream_or_tracking_ref() {
+    let repo = init_repo_without_origin();
+    let origin_bare = repo.path().join("origin.git");
+    run_git(
+        repo.path(),
+        &[
+            "init",
+            "--bare",
+            origin_bare.to_str().expect("origin bare path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin_bare.to_str().expect("origin bare path"),
+        ],
+    );
+    run_git(repo.path(), &["push", "origin", "main"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "-d", "refs/remotes/origin/main"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("root.txt"), "root work\n").expect("write root work");
+    run_git(repo.path(), &["add", "root.txt"]);
+    run_git(repo.path(), &["commit", "-m", "root work"]);
+    run_git(repo.path(), &["checkout", "main"]);
+    let local_main = git_ref_sha(repo.path(), "refs/heads/main").expect("local main");
+
+    let origin_work = repo.path().join(".git/test-origin-work");
+    run_git(
+        repo.path(),
+        &[
+            "clone",
+            "--branch",
+            "main",
+            origin_bare.to_str().expect("origin bare path"),
+            origin_work.to_str().expect("origin work path"),
+        ],
+    );
+    run_git(
+        &origin_work,
+        &["config", "user.email", "origin@example.com"],
+    );
+    run_git(&origin_work, &["config", "user.name", "Origin Bot"]);
+    run_git(&origin_work, &["config", "commit.gpgsign", "false"]);
+    fs::write(origin_work.join("base.txt"), "advanced base\n").expect("write base change");
+    run_git(&origin_work, &["add", "base.txt"]);
+    run_git(&origin_work, &["commit", "-m", "advance remote base"]);
+    let remote_main = git_ref_sha(&origin_work, "HEAD").expect("remote main");
+    run_git(&origin_work, &["push", "origin", "main"]);
+
+    assert!(
+        git_ref_sha(repo.path(), "refs/remotes/origin/main").is_none(),
+        "test requires the remote-tracking ref to be absent"
+    );
+    let base_upstream = Command::new("git")
+        .current_dir(repo.path())
+        .args(["rev-parse", "--abbrev-ref", "main@{upstream}"])
+        .output()
+        .expect("inspect base upstream");
+    assert!(
+        !base_upstream.status.success(),
+        "test requires main to have no upstream"
+    );
+
+    let dry_run = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("plan sync without local remote-base state");
+    assert!(
+        dry_run.status.success(),
+        "sync planning failed: {}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    let plan: Value = serde_json::from_slice(&dry_run.stdout).expect("valid sync plan");
+    let operations = plan["operations"].as_array().expect("operations array");
+    assert!(
+        operations
+            .iter()
+            .any(|op| op["kind"] == "fetch" && op["branch"] == "origin"),
+        "expected origin to be fetched despite the missing tracking ref: {operations:?}"
+    );
+    assert!(
+        operations.iter().any(|op| {
+            op["kind"] == "restack"
+                && op["branch"] == "feat/root"
+                && op["onto"] == remote_main
+        }),
+        "expected the root branch to target the advertised origin base: {operations:?}"
+    );
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+    let contains_remote_base = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            &remote_main,
+            "feat/root",
+        ])
+        .status()
+        .expect("check remote base ancestry");
+    assert!(contains_remote_base.success());
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(local_main),
+        "an unmerged remote advance must not move local main"
+    );
+
+    let repeated = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("plan repeated sync");
+    assert!(repeated.status.success());
+    let repeated_plan: Value =
+        serde_json::from_slice(&repeated.stdout).expect("valid repeated sync plan");
+    assert!(
+        !repeated_plan["operations"]
+            .as_array()
+            .expect("repeated operations array")
+            .iter()
+            .any(|op| op["kind"] == "restack" && op["branch"] == "feat/root"),
+        "expected the origin-base restack to be idempotent"
     );
 }
 

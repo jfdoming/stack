@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.13 - 2026-07-22
+- Made sync inspect the configured remote base even when no base upstream or remote-tracking ref exists, so first-time remote advances are fetched and restacked in one run.
+
 ## 0.18.12 - 2026-07-22
 - Allowed shell completion generation and shell-argument validation to run outside Git repositories without initialising repository state.
 

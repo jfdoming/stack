@@ -26,7 +26,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Integrity: cycle prevention is validated before parent updates.
 
 ## Sync behaviour
-- Builds a plan (`fetch`, `restack`, metadata updates) after comparing the preferred remote's advertised base head with the local remote-tracking ref.
+- Builds a plan (`fetch`, `restack`, metadata updates) after inspecting the preferred remote's advertised base head and comparing it with the optional local remote-tracking ref.
 - Prefers `upstream` as the sync fetch remote when configured; otherwise uses the configured base remote.
 - Pins the advertised remote-base commit in the plan and verifies the fetched tracking ref still matches it before applying dependent restacks.
 - Prefers `git replay`; falls back to `git rebase --onto` with warning.
