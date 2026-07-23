@@ -144,11 +144,14 @@ fn push_skips_merged_branches() {
     run_git(repo.path(), &["commit", "-m", "b"]);
     run_git(repo.path(), &["checkout", "main"]);
 
+    let feat_a_head = git_ref_sha(repo.path(), "feat/a").expect("feat/a head");
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute(
-        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/a'",
-        [],
+        "UPDATE branches
+         SET cached_pr_number = 11, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/a'",
+        [feat_a_head],
     )
     .expect("seed merged pr cache");
 
@@ -172,6 +175,52 @@ fn push_skips_merged_branches() {
         .status()
         .expect("verify feat/b push");
     assert!(feat_b_exists.success(), "expected feat/b on remote");
+}
+
+#[test]
+fn push_does_not_skip_a_reused_branch_with_stale_merged_cache() {
+    let repo = init_repo();
+    let bare = configure_local_push_url(repo.path());
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/reused"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("old.txt"), "old incarnation\n").expect("write old work");
+    run_git(repo.path(), &["add", "old.txt"]);
+    run_git(repo.path(), &["commit", "-m", "old incarnation"]);
+    let old_head = git_ref_sha(repo.path(), "feat/reused").expect("old branch head");
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    conn.execute(
+        "UPDATE branches
+         SET cached_pr_number = 11, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/reused'",
+        [old_head],
+    )
+    .expect("seed stale merged cache");
+    drop(conn);
+
+    run_git(repo.path(), &["reset", "--hard", "main"]);
+    fs::write(repo.path().join("new.txt"), "new incarnation\n").expect("write new work");
+    run_git(repo.path(), &["add", "new.txt"]);
+    run_git(repo.path(), &["commit", "-m", "new incarnation"]);
+    let new_head = git_ref_sha(repo.path(), "feat/reused").expect("new branch head");
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["push"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "pushed 'feat/reused' to 'origin'",
+        ));
+
+    assert_eq!(
+        git_ref_sha(&bare, "refs/heads/feat/reused").as_deref(),
+        Some(new_head.as_str()),
+        "the new branch incarnation must not be skipped as already merged"
+    );
 }
 
 #[test]
@@ -455,10 +504,13 @@ fn push_target_override_fails_before_push_when_existing_upstream_conflicts() {
         .args(["create", "--parent", "feat/a", "--name", "feat/b"])
         .assert()
         .success();
+    let feat_a_head = git_ref_sha(repo.path(), "feat/a").expect("feat/a head");
     let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
     conn.execute(
-        "UPDATE branches SET cached_pr_number = 1, cached_pr_state = 'merged' WHERE name = 'feat/a'",
-        [],
+        "UPDATE branches
+         SET cached_pr_number = 1, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/a'",
+        [feat_a_head],
     )
     .expect("mark published parent as skipped");
 

@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.26 - 2026-07-23
+- Bound merged and closed PR lookup results to the local branch's first-parent incarnation before cached-number or recency selection, while preserving open PRs with unpublished commits and legitimate post-merge branch continuation; terminal name-only matches are rejected when the local ref is missing.
+- Added schema v5 PR-head cache binding, cleared cache identity when recreating a tracked branch name, and stopped stale or legacy unbound merged state from suppressing sync, push, or stack rendering after branch reuse.
+- Required an exact reviewed PR-head match when planning and applying merged-branch pruning, closing backward-reset and branch-recreation races that ancestry alone could authorise.
+
 ## 0.18.25 - 2026-07-23
 - Discovered authoritative base HEADs from the cached or inferred base branch's configured custom remote, and from a unique branch-configured remote when starting on an untracked non-conventional branch; a valid `origin/HEAD` still takes precedence over unrelated remotes.
 - Persisted the authoritative base remote in schema v4 and included it in atomic reconciliation checks, while retaining `upstream` preference for fork clones whose clone remote has a custom name; migrated existing remote-HEAD provenance to `origin` and now report removed remote or base authority instead of silently switching targets.

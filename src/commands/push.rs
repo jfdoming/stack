@@ -15,31 +15,35 @@ pub fn run(
     base_branch: &str,
 ) -> Result<()> {
     let records = db.list_branches()?;
-    let mut branches: Vec<(String, bool)> = records
+    let mut branches: Vec<_> = records
         .iter()
         .filter(|record| record.name != base_branch)
-        .map(|record| {
-            let is_merged = record
-                .cached_pr_state
-                .as_deref()
-                .is_some_and(|state| state.eq_ignore_ascii_case("merged"));
-            (record.name.clone(), is_merged)
-        })
         .collect();
-    branches.sort_by(|a, b| a.0.cmp(&b.0));
-    branches.dedup();
+    branches.sort_by(|a, b| a.name.cmp(&b.name));
+    branches.dedup_by(|a, b| a.name == b.name);
 
     let mut skipped_missing = Vec::new();
     let mut skipped_merged = Vec::new();
     let mut pushable = Vec::new();
 
-    for (branch, is_merged) in branches {
-        if is_merged {
-            skipped_merged.push(branch);
-            continue;
-        }
+    for record in branches {
+        let branch = record.name.clone();
         if !git.branch_exists(&branch)? {
             skipped_missing.push(branch);
+            continue;
+        }
+        let current_head = git.head_sha(&branch)?;
+        let is_merged = record
+            .cached_pr_state
+            .as_deref()
+            .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+            && if let Some(head_oid) = record.cached_pr_head_oid.as_deref() {
+                git.is_first_parent_ancestor(head_oid, &current_head)?
+            } else {
+                false
+            };
+        if is_merged {
+            skipped_merged.push(branch);
             continue;
         }
 

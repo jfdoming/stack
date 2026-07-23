@@ -51,7 +51,7 @@ fn doctor_fix_clears_incomplete_pr_cache_fields() {
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute(
         "UPDATE branches
-         SET cached_pr_number = 99, cached_pr_state = NULL
+         SET cached_pr_number = 99, cached_pr_state = NULL, cached_pr_head_oid = 'abc123'
          WHERE name = 'feat/a'",
         [],
     )
@@ -68,15 +68,17 @@ fn doctor_fix_clears_incomplete_pr_cache_fields() {
         .assert()
         .success();
 
-    let row: (Option<i64>, Option<String>) = conn
+    let row: (Option<i64>, Option<String>, Option<String>) = conn
         .query_row(
-            "SELECT cached_pr_number, cached_pr_state FROM branches WHERE name = 'feat/a'",
+            "SELECT cached_pr_number, cached_pr_state, cached_pr_head_oid
+             FROM branches WHERE name = 'feat/a'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query pr cache");
     assert_eq!(row.0, None);
     assert_eq!(row.1, None);
+    assert_eq!(row.2, None);
 }
 
 #[test]

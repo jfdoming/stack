@@ -59,6 +59,7 @@ mod tests {
             last_synced_head_sha: None,
             cached_pr_number: Some(10),
             cached_pr_state: Some("open".to_string()),
+            cached_pr_head_oid: None,
         }];
         let ordered = vec![
             "main".to_string(),
@@ -81,6 +82,7 @@ mod tests {
                 last_synced_head_sha: None,
                 cached_pr_number: Some(10),
                 cached_pr_state: Some("open".to_string()),
+                cached_pr_head_oid: None,
             },
             BranchRecord {
                 id: 2,
@@ -89,6 +91,7 @@ mod tests {
                 last_synced_head_sha: None,
                 cached_pr_number: None,
                 cached_pr_state: None,
+                cached_pr_head_oid: None,
             },
         ];
         let names = vec!["feat/a".to_string(), "feat/b".to_string()];

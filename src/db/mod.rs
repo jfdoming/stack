@@ -11,6 +11,7 @@ pub struct BranchRecord {
     pub last_synced_head_sha: Option<String>,
     pub cached_pr_number: Option<i64>,
     pub cached_pr_state: Option<String>,
+    pub cached_pr_head_oid: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,7 @@ impl Database {
                 last_synced_head_sha TEXT NULL,
                 cached_pr_number INTEGER NULL,
                 cached_pr_state TEXT NULL,
+                cached_pr_head_oid TEXT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(parent_branch_id) REFERENCES branches(id) ON DELETE SET NULL
@@ -129,6 +131,12 @@ impl Database {
             );
             ",
         )?;
+        if !Self::branches_has_column(&tx, "cached_pr_head_oid")? {
+            tx.execute(
+                "ALTER TABLE branches ADD COLUMN cached_pr_head_oid TEXT NULL",
+                [],
+            )?;
+        }
         for (name, ty) in [
             ("base_branch_source", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("base_remote", "TEXT NULL"),
@@ -148,13 +156,25 @@ impl Database {
              WHERE id = 1 AND base_branch_source = 'remote_head' AND base_remote IS NULL",
             [],
         )?;
-        tx.execute("UPDATE repo_meta SET schema_version = 4 WHERE id = 1", [])?;
+        tx.execute("UPDATE repo_meta SET schema_version = 5 WHERE id = 1", [])?;
         tx.commit()?;
         Ok(())
     }
 
     fn repo_meta_has_column(conn: &Connection, name: &str) -> Result<bool> {
         let mut stmt = conn.prepare("PRAGMA table_info(repo_meta)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let column: String = row.get(1)?;
+            if column == name {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn branches_has_column(conn: &Connection, name: &str) -> Result<bool> {
+        let mut stmt = conn.prepare("PRAGMA table_info(branches)")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let column: String = row.get(1)?;
@@ -182,7 +202,7 @@ impl Database {
     ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO repo_meta(id, base_branch, base_branch_source, base_remote, schema_version)
-             VALUES (1, ?1, ?2, ?3, 4)
+             VALUES (1, ?1, ?2, ?3, 5)
              ON CONFLICT(id) DO NOTHING",
             params![base_branch, source.as_str(), base_remote],
         )?;
@@ -361,7 +381,7 @@ impl Database {
     pub fn branch_by_name(&self, name: &str) -> Result<Option<BranchRecord>> {
         self.conn
             .query_row(
-                "SELECT id, name, parent_branch_id, last_synced_head_sha, cached_pr_number, cached_pr_state
+                "SELECT id, name, parent_branch_id, last_synced_head_sha, cached_pr_number, cached_pr_state, cached_pr_head_oid
                  FROM branches WHERE name = ?1",
                 params![name],
                 |row| {
@@ -372,6 +392,7 @@ impl Database {
                         last_synced_head_sha: row.get(3)?,
                         cached_pr_number: row.get(4)?,
                         cached_pr_state: row.get(5)?,
+                        cached_pr_head_oid: row.get(6)?,
                     })
                 },
             )
@@ -490,10 +511,14 @@ impl Database {
         branch_name: &str,
         number: Option<i64>,
         state: Option<&str>,
+        head_oid: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE branches SET cached_pr_number = ?1, cached_pr_state = ?2, updated_at = CURRENT_TIMESTAMP WHERE name = ?3",
-            params![number, state, branch_name],
+            "UPDATE branches
+             SET cached_pr_number = ?1, cached_pr_state = ?2, cached_pr_head_oid = ?3,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE name = ?4",
+            params![number, state, head_oid, branch_name],
         )?;
         Ok(())
     }
@@ -595,7 +620,7 @@ fn upsert_branch_on(conn: &Connection, name: &str) -> Result<i64> {
 
 fn list_branches_on(conn: &Connection) -> Result<Vec<BranchRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, parent_branch_id, last_synced_head_sha, cached_pr_number, cached_pr_state
+        "SELECT id, name, parent_branch_id, last_synced_head_sha, cached_pr_number, cached_pr_state, cached_pr_head_oid
          FROM branches ORDER BY name",
     )?;
     let mut rows = stmt.query([])?;
@@ -608,6 +633,7 @@ fn list_branches_on(conn: &Connection) -> Result<Vec<BranchRecord>> {
             last_synced_head_sha: row.get(3)?,
             cached_pr_number: row.get(4)?,
             cached_pr_state: row.get(5)?,
+            cached_pr_head_oid: row.get(6)?,
         });
     }
     Ok(out)
@@ -1023,7 +1049,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(meta.base_remote.is_none());
 
         db.reconcile_base_branch(&meta, "production", BaseBranchSource::RemoteHead, true)
@@ -1062,7 +1088,54 @@ mod tests {
             .unwrap();
 
         assert_eq!(base_remote.as_deref(), Some("origin"));
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
+    }
+
+    #[test]
+    fn opening_schema_v4_adds_an_unbound_pr_head_cache_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE branches (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                parent_branch_id INTEGER NULL,
+                last_synced_head_sha TEXT NULL,
+                cached_pr_number INTEGER NULL,
+                cached_pr_state TEXT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE repo_meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_branch TEXT NOT NULL,
+                base_branch_source TEXT NOT NULL,
+                base_remote TEXT NULL,
+                schema_version INTEGER NOT NULL
+             );
+             INSERT INTO branches(name, cached_pr_number, cached_pr_state)
+             VALUES ('feat/legacy', 11, 'merged');
+             INSERT INTO repo_meta(id, base_branch, base_branch_source, base_remote, schema_version)
+             VALUES (1, 'main', 'remote_head', 'origin', 4);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let db = Database::open(&path).unwrap();
+        let legacy = db.branch_by_name("feat/legacy").unwrap().unwrap();
+        assert_eq!(legacy.cached_pr_number, Some(11));
+        assert_eq!(legacy.cached_pr_state.as_deref(), Some("merged"));
+        assert!(legacy.cached_pr_head_oid.is_none());
+        let version: i64 = db
+            .conn
+            .query_row(
+                "SELECT schema_version FROM repo_meta WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 5);
     }
 
     #[test]

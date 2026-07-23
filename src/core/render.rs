@@ -257,6 +257,7 @@ mod tests {
                 last_synced_head_sha: Some("abc".to_string()),
                 cached_pr_number: None,
                 cached_pr_state: Some("open".to_string()),
+                cached_pr_head_oid: None,
             },
             BranchRecord {
                 id: 2,
@@ -265,6 +266,7 @@ mod tests {
                 last_synced_head_sha: None,
                 cached_pr_number: None,
                 cached_pr_state: Some("merged".to_string()),
+                cached_pr_head_oid: None,
             },
         ];
 
@@ -283,6 +285,7 @@ mod tests {
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: None,
             cached_pr_state: Some("open".to_string()),
+            cached_pr_head_oid: None,
         }];
 
         let rendered = render_tree(&branches, true, None, "main", None);
@@ -298,6 +301,7 @@ mod tests {
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: Some(42),
             cached_pr_state: Some("open".to_string()),
+            cached_pr_head_oid: None,
         }];
 
         let rendered = render_tree(
@@ -319,6 +323,7 @@ mod tests {
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: Some(42),
             cached_pr_state: Some("open".to_string()),
+            cached_pr_head_oid: None,
         }];
         let mut link_targets = HashMap::new();
         link_targets.insert(
@@ -349,6 +354,7 @@ mod tests {
             last_synced_head_sha: None,
             cached_pr_number: Some(123),
             cached_pr_state: Some("open".to_string()),
+            cached_pr_head_oid: None,
         }];
 
         let rendered = render_tree(
@@ -371,6 +377,7 @@ mod tests {
             last_synced_head_sha: None,
             cached_pr_number: None,
             cached_pr_state: Some("none".to_string()),
+            cached_pr_head_oid: None,
         }];
 
         let rendered = render_tree(
@@ -395,6 +402,7 @@ mod tests {
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: None,
             cached_pr_state: None,
+            cached_pr_head_oid: None,
         }];
 
         let rendered = render_tree(
@@ -419,6 +427,7 @@ mod tests {
             last_synced_head_sha: Some("abc".to_string()),
             cached_pr_number: None,
             cached_pr_state: None,
+            cached_pr_head_oid: None,
         }];
 
         let rendered = render_tree(

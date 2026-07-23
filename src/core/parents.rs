@@ -44,6 +44,7 @@ mod tests {
                 last_synced_head_sha: None,
                 cached_pr_number: None,
                 cached_pr_state: None,
+                cached_pr_head_oid: None,
             },
             BranchRecord {
                 id: 2,
@@ -52,6 +53,7 @@ mod tests {
                 last_synced_head_sha: None,
                 cached_pr_number: None,
                 cached_pr_state: None,
+                cached_pr_head_oid: None,
             },
         ];
         let local = vec![

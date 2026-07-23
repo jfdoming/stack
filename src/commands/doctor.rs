@@ -73,12 +73,20 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, fix: bool) -> Result<()> {
 
         let has_pr_number = branch.cached_pr_number.is_some();
         let has_pr_state = branch.cached_pr_state.is_some();
-        if has_pr_number != has_pr_state {
+        let has_pr_head = branch.cached_pr_head_oid.is_some();
+        let terminal_without_head = branch.cached_pr_state.as_deref().is_some_and(|state| {
+            (state.eq_ignore_ascii_case("merged") || state.eq_ignore_ascii_case("closed"))
+                && !has_pr_head
+        });
+        if has_pr_number != has_pr_state
+            || (has_pr_head && !(has_pr_number && has_pr_state))
+            || terminal_without_head
+        {
             issues.push(DoctorIssueView {
                 severity: "warning".to_string(),
                 code: "incomplete_pr_cache".to_string(),
                 message: format!(
-                    "branch '{}' has partial PR cache metadata; both number and state are required",
+                    "branch '{}' has incomplete PR cache metadata; number and state are required, and terminal states require a head OID",
                     branch.name
                 ),
                 branch: Some(branch.name.clone()),
@@ -107,7 +115,7 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, fix: bool) -> Result<()> {
             db.clear_parent(&branch_name)?;
         }
         for branch_name in clear_pr_cache_fixes {
-            db.set_pr_cache(&branch_name, None, None)?;
+            db.set_pr_cache(&branch_name, None, None, None)?;
         }
     }
 

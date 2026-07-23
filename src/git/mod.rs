@@ -278,6 +278,27 @@ impl Git {
             .map(|s| s.trim().to_string())
     }
 
+    pub fn first_parent_commit_oids(&self, branch: &str) -> Result<Vec<String>> {
+        let reference = local_branch_ref(branch);
+        let out = self.capture(["rev-list", "--first-parent", &reference])?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|oid| !oid.is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    pub fn is_first_parent_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        if !self.ref_exists(ancestor)? || !self.ref_exists(descendant)? {
+            return Ok(false);
+        }
+        let ancestor = self.resolve_commit(ancestor)?;
+        let descendant = self.resolve_commit(descendant)?;
+        let out = self.capture(["rev-list", "--first-parent", &descendant])?;
+        Ok(out.lines().any(|oid| oid.trim() == ancestor))
+    }
+
     pub fn resolve_commit(&self, rev: &str) -> Result<String> {
         let rev = self.unambiguous_revision(rev)?;
         let revision = format!("{rev}^{{commit}}");
@@ -1319,6 +1340,37 @@ mod tests {
 
         assert_eq!(git.preferred_sync_remote("origin").unwrap(), "upstream");
         assert_eq!(git.preferred_sync_remote("company").unwrap(), "upstream");
+    }
+
+    #[test]
+    fn first_parent_history_distinguishes_continuation_from_merged_branch_reuse() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "base"]);
+        run_test_git(repo.path(), &["switch", "-c", "feature"]);
+        run_test_git(
+            repo.path(),
+            &["commit", "--allow-empty", "-m", "feature work"],
+        );
+        let feature_head = git.head_sha("feature").unwrap();
+        run_test_git(repo.path(), &["switch", "main"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "main work"]);
+        run_test_git(
+            repo.path(),
+            &["merge", "--no-ff", "feature", "-m", "merge feature"],
+        );
+
+        assert!(
+            !git.first_parent_commit_oids("main")
+                .unwrap()
+                .contains(&feature_head)
+        );
+        assert!(
+            git.first_parent_commit_oids("feature")
+                .unwrap()
+                .contains(&feature_head)
+        );
     }
 
     #[test]

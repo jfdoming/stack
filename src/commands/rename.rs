@@ -142,7 +142,7 @@ pub fn run(
         })?;
     db.rename_branch(&old_branch, &new_branch)
         .with_context(|| format!("failed to update stack metadata for '{}'", old_branch))?;
-    db.set_pr_cache(&new_branch, None, None)?;
+    db.set_pr_cache(&new_branch, None, None, None)?;
 
     if has_upstream {
         git.push_new_branch(&remote, &new_branch)

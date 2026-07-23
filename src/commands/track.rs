@@ -602,9 +602,10 @@ fn refresh_pr_cache_for_tracked_branches(
                     PrState::Closed => "closed",
                     PrState::Unknown => "unknown",
                 }),
+                pr.head_ref_oid.as_deref(),
             )?;
         } else {
-            db.set_pr_cache(&name, None, None)?;
+            db.set_pr_cache(&name, None, None, None)?;
         }
     }
     Ok(())

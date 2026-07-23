@@ -182,7 +182,7 @@ pub fn build_sync_plan(
         .filter(|branch| branch.name != base_branch)
         .map(|branch| (branch.name.as_str(), branch.cached_pr_number))
         .collect();
-    let pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
+    let mut pr_by_branch = provider.resolve_prs_by_head(&metadata_targets)?;
     let pr_lookup_elapsed = pr_lookup_started.elapsed();
 
     let assemble_started = Instant::now();
@@ -195,6 +195,43 @@ pub fn build_sync_plan(
         if branch_exists.get(&branch.name).copied().unwrap_or(false) {
             current_sha_by_branch.insert(branch.name.clone(), git.head_sha(&branch.name)?);
         }
+    }
+    let mut stale_terminal_prs = Vec::new();
+    for (branch, pr) in &pr_by_branch {
+        if matches!(pr.state, PrState::Open) {
+            continue;
+        }
+        let is_current = if let (Some(current), Some(pr_head)) = (
+            current_sha_by_branch.get(branch),
+            pr.head_ref_oid.as_deref(),
+        ) {
+            git.is_first_parent_ancestor(pr_head, current)?
+        } else {
+            false
+        };
+        if !is_current {
+            stale_terminal_prs.push(branch.clone());
+        }
+    }
+    for branch in stale_terminal_prs {
+        pr_by_branch.remove(&branch);
+    }
+    let mut cached_merged_by_branch = HashMap::new();
+    for branch in &tracked {
+        let is_merged = branch
+            .cached_pr_state
+            .as_deref()
+            .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+            && if let Some(cached_head) = branch.cached_pr_head_oid.as_deref() {
+                if let Some(current_head) = current_sha_by_branch.get(&branch.name) {
+                    git.is_first_parent_ancestor(cached_head, current_head)?
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+        cached_merged_by_branch.insert(branch.name.clone(), is_merged);
     }
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
@@ -216,10 +253,10 @@ pub fn build_sync_plan(
         let mut fresh_merged_target: Option<Option<String>> = None;
         let mut fresh_merged_head_oid: Option<Option<String>> = None;
 
-        let mut is_merged_pr = branch
-            .cached_pr_state
-            .as_deref()
-            .is_some_and(|state| state.eq_ignore_ascii_case("merged"));
+        let mut is_merged_pr = cached_merged_by_branch
+            .get(&branch.name)
+            .copied()
+            .unwrap_or(false);
         if let Some(pr) = pr_by_branch.get(&branch.name).cloned() {
             let state = match pr.state {
                 PrState::Open => "open",
@@ -227,7 +264,12 @@ pub fn build_sync_plan(
                 PrState::Closed => "closed",
                 PrState::Unknown => "unknown",
             };
-            db.set_pr_cache(&branch.name, Some(pr.identity.number), Some(state))?;
+            db.set_pr_cache(
+                &branch.name,
+                Some(pr.identity.number),
+                Some(state),
+                pr.head_ref_oid.as_deref(),
+            )?;
             is_merged_pr = matches!(pr.state, PrState::Merged);
 
             if matches!(pr.state, PrState::Merged) {
@@ -256,7 +298,7 @@ pub fn build_sync_plan(
             continue;
         }
         if branch.name == base_branch {
-            db.set_pr_cache(&branch.name, None, None)?;
+            db.set_pr_cache(&branch.name, None, None, None)?;
         }
         let current_sha = current_sha.expect("local branch SHA should be available");
 
@@ -270,10 +312,10 @@ pub fn build_sync_plan(
                         .get(&child.name)
                         .map(|pr| matches!(pr.state, PrState::Merged))
                         .unwrap_or_else(|| {
-                            child
-                                .cached_pr_state
-                                .as_deref()
-                                .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                            cached_merged_by_branch
+                                .get(&child.name)
+                                .copied()
+                                .unwrap_or(false)
                         });
                     if child_merged {
                         continue;
@@ -341,10 +383,10 @@ pub fn build_sync_plan(
                 .get(&parent.name)
                 .map(|pr| matches!(pr.state, PrState::Merged))
                 .unwrap_or_else(|| {
-                    parent
-                        .cached_pr_state
-                        .as_deref()
-                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
+                    cached_merged_by_branch
+                        .get(&parent.name)
+                        .copied()
+                        .unwrap_or(false)
                 });
             if !parent_is_merged {
                 let parent_head = current_sha_by_branch
@@ -465,12 +507,7 @@ pub fn build_sync_plan(
                     if merged_state_by_branch
                         .get(&child.name)
                         .copied()
-                        .unwrap_or_else(|| {
-                            child
-                                .cached_pr_state
-                                .as_deref()
-                                .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
-                        })
+                        .unwrap_or(false)
                     {
                         continue;
                     }
@@ -530,12 +567,7 @@ pub fn build_sync_plan(
             merged_state_by_branch
                 .get(&branch.name)
                 .copied()
-                .unwrap_or_else(|| {
-                    branch
-                        .cached_pr_state
-                        .as_deref()
-                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
-                })
+                .unwrap_or(false)
         });
     let mut all_local_heads_are_prune_safe = true;
     for branch in tracked.iter().filter(|branch| branch.name != base_branch) {
@@ -554,8 +586,7 @@ pub fn build_sync_plan(
             all_local_heads_are_prune_safe = false;
             break;
         };
-        let is_safe = current_sha == merged_head
-            || (git.ref_exists(merged_head)? && git.is_ancestor(current_sha, merged_head)?);
+        let is_safe = current_sha == merged_head;
         if !is_safe {
             all_local_heads_are_prune_safe = false;
             break;
@@ -570,12 +601,7 @@ pub fn build_sync_plan(
             if !merged_state_by_branch
                 .get(&branch.name)
                 .copied()
-                .unwrap_or_else(|| {
-                    branch
-                        .cached_pr_state
-                        .as_deref()
-                        .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
-                })
+                .unwrap_or(false)
             {
                 continue;
             }
@@ -964,9 +990,7 @@ pub fn execute_sync_plan(
                             )
                         })?;
                         let current_head = git.head_sha(branch)?;
-                        let still_safe = current_head == expected_head
-                            || (git.ref_exists(expected_head)?
-                                && git.is_ancestor(&current_head, expected_head)?);
+                        let still_safe = current_head == expected_head;
                         if !still_safe {
                             return Err(anyhow!(
                                 "refusing to prune '{}': branch changed after the sync plan was built",

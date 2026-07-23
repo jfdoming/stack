@@ -20,8 +20,8 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 ## Persistence
 - DB location: `<git-common-dir>/stack.db` (repo-scoped and shared across linked worktrees; normally `.git/stack.db`).
 - A legacy per-worktree database atomically claims the shared path only when no shared database exists. Concurrent/conflicting losers are preserved without automatic merging and reported for manual reconciliation.
-- Key table: `branches` (single parent relationship, cached PR metadata, sync SHA).
-- `repo_meta` schema version 4 stores base-branch and authoritative-remote discovery provenance, the push-target policy, cached canonical/fork repository identity, GitHub permission, and detection time.
+- Key table: `branches` (single parent relationship, PR number/state/head identity cache, sync SHA).
+- `repo_meta` schema version 5 stores base-branch and authoritative-remote discovery provenance, the push-target policy, cached canonical/fork repository identity, GitHub permission, and detection time; schema v5 also binds terminal PR cache state to its PR head OID.
 - Database schema creation, column migration, and version updates run in one immediate SQLite transaction so concurrent worktrees observe one complete migration.
 - Base discovery first honours a persisted authoritative remote, then the cached or locally inferred base branch's configured remote, then a valid `origin/HEAD`, and finally a unique remote HEAD among remotes explicitly configured on local branches. Remote HEAD authority requires a real configured remote, a direct symbolic HEAD target in that remote's namespace, a same-named local branch, and a direct commit-resolvable tracking ref; ambiguous, dangling, or chained candidates are rejected. Any heuristic or migrated legacy discovery can yield to a later verified remote HEAD, including a same-name provenance upgrade; an existing remote-HEAD choice remains authoritative. Base branch, remote provenance, and an existing tracked root are reconciled in one immediate compare-and-swap transaction: the new base becomes parentless, old direct roots move beneath it, and the obsolete inferred base row is removed. A removed persisted remote, or a missing authoritative base without a fresh validated replacement from that remote, fails closed instead of silently selecting another source.
 - Integrity: parent-link updates acquire an immediate writer transaction before reading the graph, then validate and write within that transaction. Rejected updates roll back provisional branch records, and validation terminates safely on pre-existing corrupt cycles.
@@ -107,7 +107,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack push` iterates tracked non-base branches from stack metadata and pushes each branch with `git push --force-with-lease --set-upstream`.
 - Push plans resolve and validate repository placement for every targeted stack before the first push; conflicting existing upstreams fail without migration.
 - Upstream push failures invalidate cached permission and never retry against the fork.
-- Branches marked merged in cached PR state are skipped during push operations.
+- Branches marked merged in OID-bound cache state are skipped during push operations only while the cached PR head remains on the branch's first-parent incarnation.
 - Branches tracked in metadata but missing locally are skipped with a warning.
 
 ## Create behaviour
@@ -117,6 +117,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
 - Existing PR close/body/base mutations use the repository and verified head identity returned by lookup; bare PR numbers are never mutated outside their repository scope.
+- Merged and closed PR lookups require their preserved `headRefOid` to be on the local branch's first-parent history before cached-number or recency selection; terminal name-only matches cannot authorize mutation when the local ref is missing.
 - Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
 - Git fetch, URL lookup, remote inspection, and push commands terminate option parsing before dynamic remote operands, so option-like remote names cannot select command modes.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.

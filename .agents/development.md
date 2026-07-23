@@ -77,11 +77,11 @@
 - When the base branch already contains a merged direct child's merge commit, sync persists the current advanced base SHA so later runs do not re-plan descendant restacks.
 - When no merge/restack/metadata updates are needed, `stack sync --dry-run` now emits an empty operation list (no no-op fetch/update entries).
 - When a non-dry-run sync plan is empty, `stack sync` exits early with `sync already up to date` and skips apply bookkeeping.
-- When every tracked non-base branch in the stack is merged, `stack sync` prunes leaf-first only when every present local tip is contained in fresh merged-PR `headRefOid` metadata; missing local refs can still have their metadata pruned.
+- When every tracked non-base branch in the stack is merged, `stack sync` prunes leaf-first only when every present local tip exactly equals fresh merged-PR `headRefOid` metadata; missing local refs can still have metadata pruned from previously OID-bound cache state.
 - Apply-time pruning deletes each local ref only when it still equals the just-validated tip and refuses branches checked out in any linked worktree; concurrent advances fail without deleting the branch or its metadata, checkout races restore the ref, and successful deletion best-effort removes the exact stale `branch.<name>` section without touching prefix-named siblings.
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
-- PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows.
-- Cached PR numbers are only lookup hints. Existing PRs must match the exact head branch and owner, and close/edit commands retain the repository scope found during lookup.
+- PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows. Merged and closed results must identify a commit on the local branch's first-parent history, while open PRs remain eligible when unpublished local commits advance the tip.
+- Cached PR numbers are only lookup hints. Existing PRs must match the exact head branch and owner, close/edit commands retain the repository scope found during lookup, and schema-v5 terminal cache state is trusted only with its bound PR head OID. Recreating a tracked branch name clears the old PR identity.
 - Batched PR metadata lookup binds branch-name GraphQL variables with GitHub CLI raw string fields, preserving leading `@` characters without file substitution.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
 - After non-dry-run `stack track`, PR cache metadata is refreshed for newly tracked branches so `stack` view immediately reflects current PR links/states.

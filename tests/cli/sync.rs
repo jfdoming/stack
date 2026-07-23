@@ -1432,14 +1432,16 @@ fn sync_preserves_base_when_merged_direct_children_are_incomparable() {
 
 #[cfg(unix)]
 fn install_two_merged_root_provider(repo: &Path, alpha_merge: &str, zeta_merge: &str) -> String {
+    let alpha_head = git_ref_sha(repo, "alpha").expect("alpha head");
+    let zeta_head = git_ref_sha(repo, "zeta").expect("zeta head");
     let fake_bin = repo.join("fake-bin-multiple-merged-roots");
     fs::create_dir_all(&fake_bin).expect("create fake bin");
     let fake_gh = fake_bin.join("gh");
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"alpha\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"zeta\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
-            alpha_merge, zeta_merge
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"alpha\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"zeta\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            alpha_head, alpha_merge, zeta_head, zeta_merge
         ),
     )
     .expect("write fake gh");
@@ -1893,11 +1895,14 @@ fn sync_skips_cached_merged_branch_when_pr_metadata_missing() {
     run_git(repo.path(), &["add", "base.txt"]);
     run_git(repo.path(), &["commit", "-m", "base update"]);
 
+    let parent_head = git_ref_sha(repo.path(), "feat/parent").expect("parent head");
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute(
-        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/parent'",
-        [],
+        "UPDATE branches
+         SET cached_pr_number = 11, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/parent'",
+        [parent_head],
     )
     .expect("seed merged pr cache");
 
@@ -1978,12 +1983,14 @@ fn sync_does_not_restack_cached_merged_direct_child_when_base_sha_changes() {
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute(
         "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
-        [old_main_sha],
+        [&old_main_sha],
     )
     .expect("seed main last synced sha");
     conn.execute(
-        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/parent'",
-        [],
+        "UPDATE branches
+         SET cached_pr_number = 11, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/parent'",
+        [&old_main_sha],
     )
     .expect("seed merged parent cache");
 
@@ -2233,13 +2240,16 @@ fn sync_does_not_restack_child_when_merged_parent_ref_is_missing() {
         .success();
     run_git(repo.path(), &["checkout", "main"]);
 
+    let parent_head = git_ref_sha(repo.path(), "feat/parent").expect("parent head");
     run_git(repo.path(), &["branch", "-D", "feat/parent"]);
 
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute(
-        "UPDATE branches SET cached_pr_number = 11, cached_pr_state = 'merged' WHERE name = 'feat/parent'",
-        [],
+        "UPDATE branches
+         SET cached_pr_number = 11, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/parent'",
+        [parent_head],
     )
     .expect("seed merged parent cache");
 
@@ -2427,6 +2437,113 @@ fn sync_refuses_to_prune_the_dirty_checked_out_branch() {
 
 #[cfg(unix)]
 #[test]
+fn sync_ignores_a_merged_pr_from_a_previous_branch_incarnation() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/reused"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("reused.txt"), "old incarnation\n")
+        .expect("write old branch content");
+    run_git(repo.path(), &["add", "reused.txt"]);
+    run_git(repo.path(), &["commit", "-m", "old branch incarnation"]);
+    let old_head = git_ref_sha(repo.path(), "feat/reused").expect("old branch head");
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open db");
+    conn.execute(
+        "UPDATE branches
+         SET cached_pr_number = 11, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/reused'",
+        [&old_head],
+    )
+    .expect("seed stale merged PR cache");
+    drop(conn);
+
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["branch", "-D", "feat/reused"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/reused"])
+        .assert()
+        .success();
+    let current_head = git_ref_sha(repo.path(), "feat/reused").expect("current branch head");
+    assert_ne!(current_head, old_head);
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open db");
+    let recreated_cache: (Option<i64>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT cached_pr_number, cached_pr_state, cached_pr_head_oid
+             FROM branches WHERE name = 'feat/reused'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read recreated branch cache");
+    assert_eq!(
+        recreated_cache,
+        (None, None, None),
+        "recreating a tracked branch name must clear its old PR identity"
+    );
+    drop(conn);
+
+    let fake_bin = repo.path().join("fake-bin-stale-merged-pr");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/reused\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            old_head, old_head
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .output()
+        .expect("run sync");
+    assert!(
+        output.status.success(),
+        "sync failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        git_ref_sha(repo.path(), "refs/heads/feat/reused").is_some(),
+        "stale merged PR must not delete the recreated branch"
+    );
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open db");
+    let cached: (Option<i64>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT cached_pr_number, cached_pr_state, cached_pr_head_oid
+             FROM branches WHERE name = 'feat/reused'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read PR cache");
+    assert_eq!(
+        cached,
+        (None, None, None),
+        "stale terminal PR must not be cached for the reused branch"
+    );
+    let tracked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/reused'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count reused branch metadata");
+    assert_eq!(tracked, 1, "stale merged PR must not prune metadata");
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_prunes_fully_merged_stack_branches() {
     let repo = init_repo_without_origin();
 
@@ -2536,6 +2653,16 @@ fn sync_prunes_metadata_when_merged_branch_ref_is_already_missing() {
             .trim()
             .to_string()
     };
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    conn.execute(
+        "UPDATE branches
+         SET cached_pr_number = 12, cached_pr_state = 'merged', cached_pr_head_oid = ?1
+         WHERE name = 'feat/child'",
+        [&main_sha],
+    )
+    .expect("seed bound merged cache for missing child ref");
+    drop(conn);
 
     let fake_bin = repo.path().join("fake-bin-prune-missing-ref");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");

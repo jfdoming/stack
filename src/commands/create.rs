@@ -124,6 +124,7 @@ pub fn run(
         .with_context(|| format!("failed to switch to new branch {child}"))?;
 
     db.set_parent(&child, Some(&parent))?;
+    db.set_pr_cache(&child, None, None, None)?;
     if let Some(before) = inserted_before.as_deref() {
         db.set_parent(before, Some(&child))?;
     }

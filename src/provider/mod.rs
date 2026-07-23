@@ -244,6 +244,18 @@ impl GithubProvider {
         }
         Ok(Some(view.name_with_owner))
     }
+
+    fn local_branch_incarnation(&self, branch: &str) -> Result<Option<HashSet<String>>> {
+        if !self.git.branch_exists(branch)? {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.git
+                .first_parent_commit_oids(branch)?
+                .into_iter()
+                .collect(),
+        ))
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -403,6 +415,7 @@ impl Provider for GithubProvider {
         }
 
         for (branch, cached_number) in branches {
+            let local_incarnation = self.local_branch_incarnation(branch)?;
             let preferred_owner = self
                 .git
                 .remote_for_branch(branch)?
@@ -427,7 +440,8 @@ impl Provider for GithubProvider {
                     candidates.clone()
                 };
 
-                if let Some(pr) = select_preferred_scoped_pr(filtered, *cached_number)
+                if let Some(pr) =
+                    select_preferred_scoped_pr(filtered, *cached_number, local_incarnation.as_ref())
                     && let Some(converted) = convert_pr(pr)
                 {
                     out.insert((*branch).to_string(), converted);
@@ -535,7 +549,9 @@ impl Provider for GithubProvider {
                 );
             }
 
-            if let Some(pr) = select_preferred_scoped_pr(candidates, cached_number)
+            let local_incarnation = self.local_branch_incarnation(branch)?;
+            if let Some(pr) =
+                select_preferred_scoped_pr(candidates, cached_number, local_incarnation.as_ref())
                 && let Some(converted) = convert_pr(pr)
             {
                 return Ok(Some(converted));
@@ -702,7 +718,12 @@ fn convert_pr(candidate: ScopedGhPr) -> Option<PrInfo> {
 fn select_preferred_scoped_pr(
     candidates: Vec<ScopedGhPr>,
     cached_number: Option<i64>,
+    local_incarnation: Option<&HashSet<String>>,
 ) -> Option<ScopedGhPr> {
+    let candidates: Vec<ScopedGhPr> = candidates
+        .into_iter()
+        .filter(|candidate| pr_matches_branch_incarnation(&candidate.pr, local_incarnation))
+        .collect();
     let mut repositories = Vec::new();
     let mut seen = HashSet::new();
     for candidate in &candidates {
@@ -749,6 +770,13 @@ fn select_preferred_scoped_pr(
         }
     }
     None
+}
+
+fn pr_matches_branch_incarnation(pr: &GhPr, local_incarnation: Option<&HashSet<String>>) -> bool {
+    pr.state.eq_ignore_ascii_case("OPEN")
+        || pr.head_ref_oid.as_ref().is_some_and(|head_oid| {
+            local_incarnation.is_some_and(|incarnation| incarnation.contains(head_oid))
+        })
 }
 
 fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
@@ -895,11 +923,79 @@ mod tests {
                 scoped_pr("alice/repo", 999, "feat/work", "alice"),
             ],
             Some(999),
+            None,
         )
         .expect("selected PR");
 
         assert_eq!(picked.repository, "acme/repo");
         assert_eq!(picked.pr.number, 7);
+    }
+
+    #[test]
+    fn scoped_pr_selection_ignores_terminal_prs_for_an_old_branch_head() {
+        let mut merged = scoped_pr("acme/repo", 11, "feat/reused", "alice");
+        merged.pr.state = "MERGED".to_string();
+        merged.pr.head_ref_oid = Some("old-head".to_string());
+        let mut closed = scoped_pr("acme/repo", 12, "feat/reused", "alice");
+        closed.pr.state = "CLOSED".to_string();
+        closed.pr.head_ref_oid = Some("old-head".to_string());
+
+        let incarnation = HashSet::from(["current-head".to_string()]);
+        assert!(
+            select_preferred_scoped_pr(vec![merged, closed], Some(11), Some(&incarnation))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn scoped_pr_selection_keeps_matching_merged_and_active_open_prs() {
+        let mut merged = scoped_pr("acme/repo", 11, "feat/reused", "alice");
+        merged.pr.state = "MERGED".to_string();
+        merged.pr.head_ref_oid = Some("current-head".to_string());
+        let mut open = scoped_pr("acme/repo", 12, "feat/reused", "alice");
+        open.pr.head_ref_oid = Some("server-head".to_string());
+
+        let incarnation = HashSet::from(["current-head".to_string()]);
+        let picked = select_preferred_scoped_pr(vec![merged.clone()], None, Some(&incarnation))
+            .expect("matching merged PR");
+        assert_eq!(picked.pr.number, 11);
+
+        let picked = select_preferred_scoped_pr(vec![merged, open], None, Some(&incarnation))
+            .expect("active open PR");
+        assert_eq!(picked.pr.number, 12);
+        assert_eq!(picked.pr.state, "OPEN");
+    }
+
+    #[test]
+    fn terminal_pr_selection_accepts_a_head_on_the_first_parent_incarnation() {
+        let mut merged = scoped_pr("acme/repo", 11, "feat/work", "alice");
+        merged.pr.state = "MERGED".to_string();
+        merged.pr.head_ref_oid = Some("merged-head".to_string());
+        let incarnation = HashSet::from([
+            "current-head".to_string(),
+            "post-merge-head".to_string(),
+            "merged-head".to_string(),
+        ]);
+
+        let picked = select_preferred_scoped_pr(vec![merged], None, Some(&incarnation))
+            .expect("continued branch incarnation");
+        assert_eq!(picked.pr.number, 11);
+    }
+
+    #[test]
+    fn stale_cached_terminal_pr_does_not_mask_a_current_repository_candidate() {
+        let mut stale = scoped_pr("acme/repo", 99, "feat/reused", "alice");
+        stale.pr.state = "MERGED".to_string();
+        stale.pr.head_ref_oid = Some("old-head".to_string());
+        let mut current = scoped_pr("alice/repo", 12, "feat/reused", "alice");
+        current.pr.state = "MERGED".to_string();
+        current.pr.head_ref_oid = Some("current-head".to_string());
+        let incarnation = HashSet::from(["current-head".to_string()]);
+
+        let picked = select_preferred_scoped_pr(vec![stale, current], Some(99), Some(&incarnation))
+            .expect("current terminal PR");
+        assert_eq!(picked.repository, "alice/repo");
+        assert_eq!(picked.pr.number, 12);
     }
 
     #[test]

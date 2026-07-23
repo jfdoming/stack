@@ -148,6 +148,55 @@ fn delete_verifies_cached_pr_head_identity_and_preserves_repository_scope() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn delete_does_not_mutate_a_terminal_pr_when_the_local_branch_is_missing() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/reused"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("old.txt"), "old branch\n").expect("write old branch");
+    run_git(repo.path(), &["add", "old.txt"]);
+    run_git(repo.path(), &["commit", "-m", "old branch incarnation"]);
+    let old_head = git_ref_sha(repo.path(), "feat/reused").expect("old branch head");
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["branch", "-D", "feat/reused"]);
+
+    let fake_bin = repo.path().join("fake-bin-missing-local-pr");
+    let gh_log = repo.path().join("missing-local-pr.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/reused\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"close\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            gh_log.display(),
+            old_head,
+            old_head
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "delete", "feat/reused"])
+        .assert()
+        .failure();
+
+    let calls = fs::read_to_string(&gh_log).expect("read gh calls");
+    assert!(
+        !calls.lines().any(|line| line.starts_with("pr close ")),
+        "a name-only terminal PR match must not authorize remote deletion: {calls}"
+    );
+}
+
 #[test]
 fn delete_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();

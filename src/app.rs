@@ -80,6 +80,7 @@ impl AppContext {
         } else {
             git.base_remote_for_stack(&base_branch)?
         };
+        reconcile_terminal_pr_cache(&db, &git)?;
         let provider = GithubProvider::new(git.clone(), cli.global.debug);
 
         Ok(Self {
@@ -91,6 +92,30 @@ impl AppContext {
             provider,
         })
     }
+}
+
+fn reconcile_terminal_pr_cache(db: &Database, git: &Git) -> Result<()> {
+    for branch in db.list_branches()? {
+        let is_terminal = branch.cached_pr_state.as_deref().is_some_and(|state| {
+            state.eq_ignore_ascii_case("merged") || state.eq_ignore_ascii_case("closed")
+        });
+        if !is_terminal {
+            continue;
+        }
+        let valid = if let Some(head_oid) = branch.cached_pr_head_oid.as_deref() {
+            if git.branch_exists(&branch.name)? {
+                git.is_first_parent_ancestor(head_oid, &git.head_sha(&branch.name)?)?
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+        if !valid {
+            db.set_pr_cache(&branch.name, None, None, None)?;
+        }
+    }
+    Ok(())
 }
 
 fn prepare_stack_db_path(git: &Git) -> Result<PathBuf> {
