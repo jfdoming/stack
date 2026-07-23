@@ -22,6 +22,8 @@
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
 - `cargo run -- --debug sync --dry-run`: include sync timing metrics in debug output.
 - `cargo run -- push`: push all tracked non-base branches with `--force-with-lease`.
+- `cargo run -- config push-target [auto|upstream|fork]`: view or set repository-level placement for new stacks.
+- `cargo run -- push --push-target upstream`: override placement for unpushed branches while validating existing upstreams.
 
 ## CI
 - GitHub Actions workflow `.github/workflows/build.yaml` runs tests unconditionally (pull requests and `main` pushes).
@@ -50,7 +52,11 @@
 - After `stack sync` applies operations, it restores the branch that was checked out before the sync run started.
 - During `stack sync`, open PR bodies are refreshed to keep the managed stack-flow section current; user-written text outside managed markers is preserved.
 - During `stack sync`, open PR base branches are corrected to match each branch’s tracked parent (or the repo base branch when no tracked parent exists).
-- If a tracked branch has no explicit upstream yet, `stack pr` and `stack push` now prefer the tracked parent/base branch remote so new stacked branches stay in one repo unless they are already intentionally split across remotes.
+- Repository push placement is independent of the base branch's Git tracking remote. New stack roots use the configured `auto`, `upstream`, or `fork` policy; descendants inherit their nearest published ancestor's repository.
+- `auto` performs one GitHub topology/permission lookup when placement is first needed, persists the policy in `.git/stack.db`, and caches successful detection for 24 hours. Interactive first pushes prompt; non-interactive/`--yes` pushes persist automatic detection.
+- `stack pr --push-target` and `stack push --push-target` override placement for unpushed branches and fail before pushing when an existing upstream conflicts.
+- Remote resolution compares fetch and push URLs separately and supports custom remote names. Rejected upstream pushes stop without a fork fallback.
+- A fork-hosted root branch can target the canonical base branch, but `stack pr` blocks a child whose parent exists only in the fork because GitHub cannot use that cross-repository base.
 - During `stack sync`, PR base updates are skipped with a warning when the target base branch lives in a different repo from the PR and GitHub cannot accept the cross-repo base.
 - After non-dry-run `stack sync` in interactive TTY mode, stack offers a follow-up prompt to run `stack push`; `--yes` auto-accepts that prompt in TTY mode.
 - During restack execution, `stack sync` uses `git replay --onto <new-base> <old-base>..<branch>` and applies replay-emitted ref updates.

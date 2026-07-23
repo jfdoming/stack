@@ -16,6 +16,11 @@ pub struct BranchRecord {
 #[derive(Debug, Clone)]
 pub struct RepoMeta {
     pub base_branch: String,
+    pub push_target: Option<String>,
+    pub canonical_repo: Option<String>,
+    pub fork_repo: Option<String>,
+    pub push_permission: Option<String>,
+    pub permission_checked_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,7 +60,12 @@ impl Database {
             CREATE TABLE IF NOT EXISTS repo_meta (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 base_branch TEXT NOT NULL,
-                schema_version INTEGER NOT NULL
+                schema_version INTEGER NOT NULL,
+                push_target TEXT NULL,
+                canonical_repo TEXT NULL,
+                fork_repo TEXT NULL,
+                push_permission TEXT NULL,
+                permission_checked_at INTEGER NULL
             );
             CREATE TABLE IF NOT EXISTS sync_runs (
                 id INTEGER PRIMARY KEY,
@@ -66,13 +76,39 @@ impl Database {
             );
             ",
         )?;
+        for (name, ty) in [
+            ("push_target", "TEXT NULL"),
+            ("canonical_repo", "TEXT NULL"),
+            ("fork_repo", "TEXT NULL"),
+            ("push_permission", "TEXT NULL"),
+            ("permission_checked_at", "INTEGER NULL"),
+        ] {
+            if !self.repo_meta_has_column(name)? {
+                self.conn
+                    .execute(&format!("ALTER TABLE repo_meta ADD COLUMN {name} {ty}"), [])?;
+            }
+        }
+        self.conn
+            .execute("UPDATE repo_meta SET schema_version = 2 WHERE id = 1", [])?;
         Ok(())
+    }
+
+    fn repo_meta_has_column(&self, name: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(repo_meta)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let column: String = row.get(1)?;
+            if column == name {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn set_base_branch_if_missing(&self, base_branch: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO repo_meta(id, base_branch, schema_version)
-             VALUES (1, ?1, 1)
+             VALUES (1, ?1, 2)
              ON CONFLICT(id) DO NOTHING",
             params![base_branch],
         )?;
@@ -82,16 +118,70 @@ impl Database {
     pub fn repo_meta(&self) -> Result<RepoMeta> {
         self.conn
             .query_row(
-                "SELECT base_branch FROM repo_meta WHERE id = 1",
+                "SELECT base_branch, push_target, canonical_repo, fork_repo,
+                        push_permission, permission_checked_at
+                 FROM repo_meta WHERE id = 1",
                 [],
                 |row| {
                     Ok(RepoMeta {
                         base_branch: row.get(0)?,
+                        push_target: row.get(1)?,
+                        canonical_repo: row.get(2)?,
+                        fork_repo: row.get(3)?,
+                        push_permission: row.get(4)?,
+                        permission_checked_at: row.get(5)?,
                     })
                 },
             )
             .optional()?
             .ok_or_else(|| anyhow!("repo metadata missing"))
+    }
+
+    pub fn set_push_target(&self, target: &str) -> Result<()> {
+        if !matches!(target, "auto" | "upstream" | "fork") {
+            return Err(anyhow!("invalid push target '{target}'"));
+        }
+        if target == "auto" {
+            self.conn.execute(
+                "UPDATE repo_meta
+                 SET push_target = ?1, push_permission = NULL, permission_checked_at = NULL
+                 WHERE id = 1",
+                params![target],
+            )?;
+        } else {
+            self.conn.execute(
+                "UPDATE repo_meta SET push_target = ?1 WHERE id = 1",
+                params![target],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn set_placement_cache(
+        &self,
+        canonical_repo: &str,
+        fork_repo: Option<&str>,
+        push_permission: Option<&str>,
+        checked_at: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE repo_meta
+             SET canonical_repo = ?1, fork_repo = ?2, push_permission = ?3,
+                 permission_checked_at = ?4
+             WHERE id = 1",
+            params![canonical_repo, fork_repo, push_permission, checked_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_placement_cache(&self) -> Result<()> {
+        self.conn.execute(
+            "UPDATE repo_meta
+             SET push_permission = NULL, permission_checked_at = NULL
+             WHERE id = 1",
+            [],
+        )?;
+        Ok(())
     }
 
     pub fn upsert_branch(&self, name: &str) -> Result<i64> {
@@ -460,5 +550,59 @@ mod tests {
 
         let err = db.rename_branch("old", "existing").unwrap_err();
         assert!(err.to_string().contains("already tracked"));
+    }
+
+    #[test]
+    fn repository_push_configuration_round_trips_and_auto_clears_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_base_branch_if_missing("main").unwrap();
+        db.set_push_target("upstream").unwrap();
+        db.set_placement_cache("acme/repo", Some("alice/repo"), Some("WRITE"), 123)
+            .unwrap();
+
+        let meta = db.repo_meta().unwrap();
+        assert_eq!(meta.push_target.as_deref(), Some("upstream"));
+        assert_eq!(meta.canonical_repo.as_deref(), Some("acme/repo"));
+        assert_eq!(meta.fork_repo.as_deref(), Some("alice/repo"));
+        assert_eq!(meta.push_permission.as_deref(), Some("WRITE"));
+        assert_eq!(meta.permission_checked_at, Some(123));
+
+        db.set_push_target("auto").unwrap();
+        let meta = db.repo_meta().unwrap();
+        assert_eq!(meta.push_target.as_deref(), Some("auto"));
+        assert!(meta.push_permission.is_none());
+        assert!(meta.permission_checked_at.is_none());
+    }
+
+    #[test]
+    fn opening_schema_v1_database_migrates_repository_placement_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repo_meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_branch TEXT NOT NULL,
+                schema_version INTEGER NOT NULL
+             );
+             INSERT INTO repo_meta(id, base_branch, schema_version) VALUES (1, 'main', 1);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let db = Database::open(&path).unwrap();
+        let meta = db.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "main");
+        assert!(meta.push_target.is_none());
+        let version: i64 = db
+            .conn
+            .query_row(
+                "SELECT schema_version FROM repo_meta WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 2);
     }
 }

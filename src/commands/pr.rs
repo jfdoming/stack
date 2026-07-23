@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::style::Stylize;
 
 use crate::args::PrArgs;
+use crate::core::PushTarget;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
@@ -24,6 +25,14 @@ struct ManagedPrSection {
 struct BranchPrRef {
     branch: String,
     pr_number: Option<i64>,
+}
+
+struct PrOpenOptions<'a> {
+    title: Option<&'a str>,
+    body: Option<&'a str>,
+    draft: bool,
+    managed: Option<&'a ManagedPrSection>,
+    canonical_remote: Option<&'a str>,
 }
 
 pub fn run(
@@ -48,13 +57,13 @@ pub fn run(
             {
                 Some(parent) => (parent, record.cached_pr_number, None),
                 None => (
-                    default_base,
+                    default_base.clone(),
                     record.cached_pr_number,
                     Some("branch is tracked but has no parent link".to_string()),
                 ),
             },
             None => (
-                default_base,
+                default_base.clone(),
                 None,
                 Some("branch is not tracked in the stack".to_string()),
             ),
@@ -129,6 +138,7 @@ pub fn run(
         "dry_run": args.dry_run,
         "existing_pr_number": existing.as_ref().map(|pr| pr.number),
         "will_open_link": existing.is_none(),
+        "push_target": args.push_target.map(|target| target.as_str()),
     });
 
     if args.dry_run {
@@ -166,28 +176,76 @@ pub fn run(
 
     let head = payload["head"].as_str().unwrap_or_default();
     let base_ref = payload["base"].as_str().unwrap_or_default();
-    let push_remote = git.preferred_remote_for_branch(head, base_ref)?;
-    git.push_branch(&push_remote, head)?;
+    let requested = args.push_target.map(|target| match target.as_str() {
+        "upstream" => PushTarget::Upstream,
+        "fork" => PushTarget::Fork,
+        _ => PushTarget::Auto,
+    });
+    let placements = crate::core::resolve_push_placements(
+        db,
+        git,
+        provider,
+        crate::core::PlacementRequest {
+            records: &records,
+            branches: &[head.to_string()],
+            base_branch: &default_base,
+            requested,
+            yes: _yes,
+        },
+    )?;
+    let placement = placements
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("failed to resolve push placement for '{head}'"))?;
+    if base_ref != default_base && placement.push_target == PushTarget::Fork {
+        return Err(anyhow!(
+            "cannot open stacked PR for '{}' because parent '{}' exists only in the fork; use upstream placement or open fork PRs sequentially",
+            head,
+            base_ref
+        ));
+    }
+    if let Err(err) = git.push_branch(&placement.remote, head) {
+        if placement.push_target == PushTarget::Upstream {
+            db.clear_placement_cache()?;
+        }
+        return Err(err.context(format!(
+            "failed to push '{head}' to {}; no fork fallback was attempted. Review the repository policy with `stack config push-target` or select the fork with `stack config push-target fork`",
+            placement.remote
+        )));
+    }
     let url = build_pr_open_url(
         git,
         base_ref,
         head,
-        args.title.as_deref(),
-        args.body.as_deref(),
-        args.draft,
-        managed_pr_section.as_ref(),
+        PrOpenOptions {
+            title: args.title.as_deref(),
+            body: args.body.as_deref(),
+            draft: args.draft,
+            managed: managed_pr_section.as_ref(),
+            canonical_remote: placement.canonical_remote.as_deref(),
+        },
     )?;
 
     if porcelain {
         return crate::views::print_json(&serde_json::json!({
             "head": payload["head"],
             "base": payload["base"],
-            "push_remote": push_remote,
+            "push_remote": placement.remote,
+            "push_repository": placement.repository,
+            "push_target": placement.push_target,
+            "decision_source": placement.decision_source,
+            "canonical_repository": placement.canonical_repository,
+            "canonical_remote": placement.canonical_remote,
+            "fork_repository": placement.fork_repository,
+            "push_permission": placement.push_permission,
+            "permission_checked_at": placement.permission_checked_at,
+            "cache_age_seconds": placement.cache_age_seconds,
+            "cache_state": placement.cache_state,
             "url": url,
         }));
     }
 
-    println!("pushed '{head}' to '{push_remote}'");
+    println!("pushed '{head}' to '{}'", placement.remote);
     match open_url_in_browser(&url) {
         Ok(()) => println!("opened PR URL in browser"),
         Err(err) => {
@@ -220,7 +278,7 @@ fn format_existing_pr_ref(
         return Ok(label);
     }
 
-    let Ok(link_target) = determine_pr_link_target(git, base_branch, head_branch) else {
+    let Ok(link_target) = determine_pr_link_target(git, base_branch, head_branch, None) else {
         return Ok(label);
     };
     let url = format!(
@@ -235,12 +293,9 @@ fn build_pr_open_url(
     git: &Git,
     base: &str,
     head: &str,
-    title: Option<&str>,
-    body: Option<&str>,
-    draft: bool,
-    managed: Option<&ManagedPrSection>,
+    options: PrOpenOptions<'_>,
 ) -> Result<String> {
-    let link_target = determine_pr_link_target(git, base, head)?;
+    let link_target = determine_pr_link_target(git, base, head, options.canonical_remote)?;
     let base_url = link_target.base_url;
     let head_ref = link_target.head_ref;
     let base_commit_url = git
@@ -248,7 +303,7 @@ fn build_pr_open_url(
         .ok()
         .map(|sha| format!("{}/commit/{sha}", base_url.trim_end_matches('/')));
     let mut params = vec!["expand=1".to_string()];
-    if let Some(title) = title
+    if let Some(title) = options.title
         && !title.is_empty()
     {
         params.push(format!("title={}", url_encode_component(title)));
@@ -258,15 +313,15 @@ fn build_pr_open_url(
         base,
         head,
         base_commit_url.as_deref(),
-        managed,
-        body,
+        options.managed,
+        options.body,
     )
     .as_deref()
         && !body.is_empty()
     {
         params.push(format!("body={}", url_encode_component(body)));
     }
-    if draft {
+    if options.draft {
         params.push("draft=1".to_string());
     }
     Ok(format!(

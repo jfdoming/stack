@@ -124,6 +124,7 @@ include!("cli/stack.rs");
 include!("cli/sync.rs");
 include!("cli/pr.rs");
 include!("cli/push.rs");
+include!("cli/config.rs");
 include!("cli/completions.rs");
 include!("cli/delete.rs");
 include!("cli/doctor.rs");

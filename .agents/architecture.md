@@ -19,6 +19,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 ## Persistence
 - DB location: `.git/stack.db` (repo-scoped).
 - Key table: `branches` (single parent relationship, cached PR metadata, sync SHA).
+- `repo_meta` schema version 2 stores the push-target policy plus cached canonical/fork repository identity, GitHub permission, and detection time.
 - Integrity: cycle prevention is validated before parent updates.
 
 ## Sync behaviour
@@ -38,7 +39,8 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Restores the branch that was checked out before sync once plan execution completes.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - For open PRs discovered during sync, updates both the PR base branch and the managed stack-flow section so GitHub metadata stays aligned with the tracked stack shape.
-- For branches without an explicit upstream yet, PR/push remote selection inherits the tracked parent/base branch remote to keep a stack in one repo by default.
+- PR/push placement is resolved independently of base-branch tracking: existing upstreams are preserved, unpushed descendants inherit the nearest published ancestor, and new roots use the repository push-target policy.
+- Canonical/fork topology uses remote fetch and push identities plus a cached GitHub `viewerPermission` lookup. Automatic placement selects upstream for `WRITE`, `MAINTAIN`, or `ADMIN`, otherwise the fork.
 - Sync skips PR-base correction when the expected base branch resolves to a different GitHub repository than the PR itself, warning instead of issuing an impossible `gh pr edit --base`.
 - Stops on conflict and warns on stash restore failures.
 - In interactive TTY mode after successful apply, offers a follow-up push step for tracked non-base branches.
@@ -81,6 +83,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 ## PR behaviour
 - `stack pr` uses the tracked parent branch as PR base.
 - PR creation is skipped when a PR already exists for the current head branch.
+- PR creation blocks fork-only child bases that GitHub cannot represent in the canonical repository.
 
 ## Navigation behaviour
 - Stack navigation treats the configured base branch as outside the stack.
@@ -88,6 +91,8 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Push behaviour
 - `stack push` iterates tracked non-base branches from stack metadata and pushes each branch with `git push --force-with-lease --set-upstream`.
+- Push plans resolve and validate repository placement for every targeted stack before the first push; conflicting existing upstreams fail without migration.
+- Upstream push failures invalidate cached permission and never retry against the fork.
 - Branches marked merged in cached PR state are skipped during push operations.
 - Branches tracked in metadata but missing locally are skipped with a warning.
 

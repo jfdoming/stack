@@ -1,4 +1,21 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PushTargetArg {
+    Auto,
+    Upstream,
+    Fork,
+}
+
+impl PushTargetArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Upstream => "upstream",
+            Self::Fork => "fork",
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "stack", version, about = "Manage stacked pull requests")]
@@ -58,8 +75,10 @@ pub enum Commands {
     Split(SplitArgs),
     /// Create a pull request for the current branch
     Pr(PrArgs),
+    /// View or update repository configuration
+    Config(ConfigArgs),
     /// Push tracked branches with force-with-lease
-    Push,
+    Push(PushArgs),
     /// Switch to the highest descendant in the current stack path
     Top,
     /// Switch to the stack root ancestor for the current branch
@@ -192,6 +211,40 @@ pub struct PrArgs {
     pub draft: bool,
     #[arg(short = 'n', long, help = "Preview command without calling gh")]
     pub dry_run: bool,
+    #[arg(
+        long,
+        value_enum,
+        help = "Override placement for unpushed stack branches"
+    )]
+    pub push_target: Option<PushTargetArg>,
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub command: ConfigCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// View or set where new stack branches are pushed
+    PushTarget(PushTargetConfigArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PushTargetConfigArgs {
+    #[arg(value_enum)]
+    pub target: Option<PushTargetArg>,
+}
+
+#[derive(Debug, Args)]
+pub struct PushArgs {
+    #[arg(
+        long,
+        value_enum,
+        help = "Override placement for unpushed stack branches"
+    )]
+    pub push_target: Option<PushTargetArg>,
 }
 
 #[derive(Debug, Args)]

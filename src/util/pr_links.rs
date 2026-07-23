@@ -9,7 +9,12 @@ pub struct PrLinkTarget {
     pub head_ref: String,
 }
 
-pub fn determine_pr_link_target(git: &Git, base: &str, head: &str) -> Result<PrLinkTarget> {
+pub fn determine_pr_link_target(
+    git: &Git,
+    base: &str,
+    head: &str,
+    canonical_remote: Option<&str>,
+) -> Result<PrLinkTarget> {
     if base == head {
         return Err(anyhow!(
             "cannot build PR link when base and head are the same branch ('{}')",
@@ -18,9 +23,13 @@ pub fn determine_pr_link_target(git: &Git, base: &str, head: &str) -> Result<PrL
     }
 
     let head_remote = git.preferred_remote_for_branch(head, base)?;
-    let head_url = git.remote_web_url(&head_remote)?;
+    let head_url = git
+        .remote_push_web_url(&head_remote)?
+        .or(git.remote_web_url(&head_remote)?);
 
-    let mut base_remote = git.preferred_remote_for_branch(head, base)?;
+    let mut base_remote = canonical_remote
+        .map(str::to_string)
+        .unwrap_or(git.preferred_remote_for_branch(head, base)?);
 
     if let (Some(head_url), Some(upstream_url)) = (
         head_url.as_deref(),

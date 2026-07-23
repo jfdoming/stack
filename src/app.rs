@@ -160,10 +160,16 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             ctx.cli.global.yes,
             ctx.cli.global.debug,
         ),
-        Some(Commands::Push) => commands::push::run(
+        Some(Commands::Config(args)) => {
+            commands::config::run(&ctx.db, &ctx.git, args, ctx.cli.global.porcelain)
+        }
+        Some(Commands::Push(args)) => commands::push::run(
             &ctx.db,
             &ctx.git,
+            &ctx.provider,
+            args,
             ctx.cli.global.porcelain,
+            ctx.cli.global.yes,
             &ctx.base_branch,
         ),
         Some(Commands::Top) => commands::nav::run(

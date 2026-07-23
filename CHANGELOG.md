@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.0 - 2026-07-22
+- Added permission-aware placement for new stacks: `stack` now distinguishes Git tracking from canonical/fork repository placement, detects cached GitHub write access, and keeps descendants in their established repository.
+- Added `stack config push-target [auto|upstream|fork]` plus matching `stack pr` and `stack push` overrides, with conflict validation that never migrates existing upstreams automatically.
+- Added support for custom remote names and distinct fetch/push URLs, actionable upstream-push failures without fork fallback, and clear blocking for impossible fork-only child PRs.
+
 ## 0.17.0 - 2026-04-28
 - Added `stack split` to split the current branch's committed linear history into tracked stack branches without rewriting commits.
 - Added `stack split --top-name <branch>` to rename the current top branch while splitting.

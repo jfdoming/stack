@@ -126,7 +126,15 @@ pub fn run(
     };
 
     if should_push {
-        crate::commands::push::run(db, git, false, base_branch)?;
+        crate::commands::push::run(
+            db,
+            git,
+            provider,
+            &crate::args::PushArgs { push_target: None },
+            false,
+            opts.yes,
+            base_branch,
+        )?;
     }
 
     emit_sync_timing(

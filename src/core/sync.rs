@@ -513,7 +513,14 @@ pub fn build_sync_plan(
                 .map(|parent| parent.name.clone())
                 .unwrap_or_else(|| base_branch.to_string());
             if pr.base_ref_name.as_deref() != Some(expected_pr_base.as_str()) {
-                if can_update_pr_base(git, &branch.name, &expected_pr_base, pr.url.as_deref()) {
+                if can_update_pr_base(
+                    db,
+                    git,
+                    base_branch,
+                    &branch.name,
+                    &expected_pr_base,
+                    pr.url.as_deref(),
+                ) {
                     ops.push(SyncOp::UpdatePrBase {
                         branch: branch.name.clone(),
                         pr_number: pr.number,
@@ -775,23 +782,50 @@ fn conflicted_branch_from_sync_error(msg: &str) -> Option<&str> {
     Some(&after_second[..third])
 }
 
-fn can_update_pr_base(git: &Git, branch: &str, expected_base: &str, pr_url: Option<&str>) -> bool {
+fn can_update_pr_base(
+    db: &Database,
+    git: &Git,
+    stack_base: &str,
+    branch: &str,
+    expected_base: &str,
+    pr_url: Option<&str>,
+) -> bool {
     let Some(pr_url) = pr_url else {
         return true;
     };
     let Some(pr_repo_slug) = github_repo_slug_from_web_url(pr_url) else {
         return true;
     };
-    let Ok(base_remote) = git.preferred_remote_for_branch(expected_base, branch) else {
-        return true;
+    let base_repo_slug = if expected_base == stack_base {
+        db.repo_meta()
+            .ok()
+            .and_then(|meta| meta.canonical_repo)
+            .or_else(|| {
+                git.remote_web_url("upstream")
+                    .ok()
+                    .flatten()
+                    .and_then(|url| github_repo_slug_from_web_url(&url))
+            })
+            .or_else(|| {
+                git.remote_web_url("origin")
+                    .ok()
+                    .flatten()
+                    .and_then(|url| github_repo_slug_from_web_url(&url))
+            })
+    } else {
+        git.configured_remote_for_branch(expected_base)
+            .ok()
+            .flatten()
+            .or_else(|| git.configured_remote_for_branch(branch).ok().flatten())
+            .and_then(|remote| {
+                git.remote_push_web_url(&remote)
+                    .ok()
+                    .flatten()
+                    .or_else(|| git.remote_web_url(&remote).ok().flatten())
+            })
+            .and_then(|url| github_repo_slug_from_web_url(&url))
     };
-    let Ok(base_url) = git.remote_web_url(&base_remote) else {
-        return true;
-    };
-    let Some(base_url) = base_url else {
-        return true;
-    };
-    let Some(base_repo_slug) = github_repo_slug_from_web_url(&base_url) else {
+    let Some(base_repo_slug) = base_repo_slug else {
         return true;
     };
     pr_repo_slug == base_repo_slug

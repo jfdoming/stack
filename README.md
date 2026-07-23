@@ -50,7 +50,29 @@ stack --yes delete <branch>
 stack pr --dry-run
 stack pr
 stack push
+stack config push-target
+stack config push-target auto
+stack push --push-target upstream
 stack sync --dry-run
 stack doctor
 stack completions zsh > ~/.zsh/completions/_stack
 ```
+
+## Fork and maintainer workflows
+
+`stack` stores a repository-level push target in `.git/stack.db` and treats it separately from the remote tracked by `main`:
+
+- `auto` uses the canonical repository when GitHub reports write access; otherwise it uses the fork.
+- `upstream` always selects the canonical PR repository.
+- `fork` always selects the contributor fork.
+
+The first real push prompts in an interactive terminal. Non-interactive pushes detect and cache the automatic choice. Detection is cached for 24 hours, while descendants inherit the repository already used by their nearest published stack ancestor.
+
+Use a one-command override without changing the stored default:
+
+```bash
+stack pr --push-target upstream
+stack push --push-target fork
+```
+
+Overrides fail if an existing branch upstream points to the other repository. `stack` never silently moves a published stack or falls back to a fork after a rejected upstream push.

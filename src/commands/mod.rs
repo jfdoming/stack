@@ -1,4 +1,5 @@
 pub mod completions;
+pub mod config;
 pub mod create;
 pub mod delete;
 pub mod doctor;

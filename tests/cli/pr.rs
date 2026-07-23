@@ -22,6 +22,14 @@ fn pr_dry_run_uses_parent_branch_as_base() {
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     assert_eq!(json["head"], "feat/child");
     assert_eq!(json["base"], "feat/parent");
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let stored: Option<String> = conn
+        .query_row("SELECT push_target FROM repo_meta WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .expect("read push target");
+    assert!(stored.is_none(), "dry run must not persist first-push config");
 }
 #[test]
 fn pr_dry_run_on_untracked_branch_warns_and_uses_base() {
@@ -373,7 +381,7 @@ fn pr_uses_upstream_compare_url_when_head_branch_remote_is_upstream() {
 }
 
 #[cfg(unix)]#[test]
-fn pr_prefers_parent_remote_for_new_branch_without_upstream() {
+fn pr_uses_configured_upstream_target_for_new_branch() {
     let repo = init_repo();
     run_git(
         repo.path(),
@@ -394,6 +402,10 @@ fn pr_prefers_parent_remote_for_new_branch_without_upstream() {
         ],
     );
     run_git(repo.path(), &["config", "branch.main.remote", "upstream"]);
+    stack_cmd(repo.path())
+        .args(["config", "push-target", "upstream"])
+        .assert()
+        .success();
 
     let upstream_push = repo.path().join("upstream-push.git");
     run_git(
@@ -669,7 +681,51 @@ fn pr_open_fails_when_push_remote_is_missing() {
         .args(["--yes", "pr"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("git command failed"));
+        .stderr(predicate::str::contains(
+            "no Git remote pushes to the canonical repository",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_blocks_child_when_stack_is_placed_only_in_fork() {
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &["remote", "set-url", "origin", "git@github.com:alice/stack-test.git"],
+    );
+    run_git(
+        repo.path(),
+        &["remote", "add", "upstream", "git@github.com:acme/stack-test.git"],
+    );
+    stack_cmd(repo.path())
+        .args(["config", "push-target", "fork"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert()
+        .success();
+
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(&fake_gh, "#!/usr/bin/env bash\necho '[]'\n").expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!("{}:{}", fake_bin.display(), env::var("PATH").unwrap_or_default());
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["pr"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "parent 'feat/parent' exists only in the fork",
+        ));
 }
 #[test]
 fn pr_opens_in_non_interactive_mode_without_yes() {

@@ -10,6 +10,13 @@ pub struct Git {
 }
 
 #[derive(Debug, Clone)]
+pub struct RemoteInfo {
+    pub name: String,
+    pub fetch_url: Option<String>,
+    pub push_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct StashHandle {
     pub reference: String,
 }
@@ -212,9 +219,21 @@ impl Git {
     }
 
     pub fn remote_web_url(&self, remote: &str) -> Result<Option<String>> {
-        let output = Command::new("git")
-            .current_dir(&self.root)
-            .args(["remote", "get-url", remote])
+        self.remote_url(remote, false)
+    }
+
+    pub fn remote_push_web_url(&self, remote: &str) -> Result<Option<String>> {
+        self.remote_url(remote, true)
+    }
+
+    fn remote_url(&self, remote: &str, push: bool) -> Result<Option<String>> {
+        let mut command = Command::new("git");
+        command.current_dir(&self.root).args(["remote", "get-url"]);
+        if push {
+            command.arg("--push");
+        }
+        let output = command
+            .arg(remote)
             .output()
             .with_context(|| format!("failed to read {remote} remote URL"))?;
         if !output.status.success() {
@@ -225,6 +244,30 @@ impl Git {
             return Ok(None);
         }
         Ok(parse_remote_to_web_url(&raw))
+    }
+
+    pub fn remote_infos(&self) -> Result<Vec<RemoteInfo>> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["remote"])
+            .output()
+            .context("failed to list git remotes")?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        let names = String::from_utf8(output.stdout)?;
+        names
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                Ok(RemoteInfo {
+                    name: name.to_string(),
+                    fetch_url: self.remote_web_url(name)?,
+                    push_url: self.remote_push_web_url(name)?,
+                })
+            })
+            .collect()
     }
 
     pub fn remote_for_branch(&self, branch: &str) -> Result<Option<String>> {

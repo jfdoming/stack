@@ -2,8 +2,18 @@ use anyhow::Result;
 
 use crate::db::Database;
 use crate::git::Git;
+use crate::provider::Provider;
+use crate::{args::PushArgs, core::PushTarget};
 
-pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Result<()> {
+pub fn run(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    args: &PushArgs,
+    porcelain: bool,
+    yes: bool,
+    base_branch: &str,
+) -> Result<()> {
     let records = db.list_branches()?;
     let mut branches: Vec<(String, bool)> = records
         .iter()
@@ -19,9 +29,9 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Resu
     branches.sort_by(|a, b| a.0.cmp(&b.0));
     branches.dedup();
 
-    let mut pushed = Vec::new();
     let mut skipped_missing = Vec::new();
     let mut skipped_merged = Vec::new();
+    let mut pushable = Vec::new();
 
     for (branch, is_merged) in branches {
         if is_merged {
@@ -33,15 +43,59 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Resu
             continue;
         }
 
-        let remote = git.preferred_remote_for_branch(&branch, base_branch)?;
-        git.push_branch_force_with_lease(&remote, &branch)?;
-        pushed.push((branch, remote));
+        pushable.push(branch);
+    }
+
+    let requested = args.push_target.map(|target| match target.as_str() {
+        "upstream" => PushTarget::Upstream,
+        "fork" => PushTarget::Fork,
+        _ => PushTarget::Auto,
+    });
+    let placements = crate::core::resolve_push_placements(
+        db,
+        git,
+        provider,
+        crate::core::PlacementRequest {
+            records: &records,
+            branches: &pushable,
+            base_branch,
+            requested,
+            yes,
+        },
+    )?;
+    let mut pushed = Vec::new();
+    for placement in placements {
+        if let Err(err) = git.push_branch_force_with_lease(&placement.remote, &placement.branch) {
+            if placement.push_target == PushTarget::Upstream {
+                db.clear_placement_cache()?;
+            }
+            return Err(err.context(format!(
+                "failed to push '{}' to {}; no fork fallback was attempted. Review the repository policy with `stack config push-target` or select the fork with `stack config push-target fork`",
+                placement.branch, placement.remote
+            )));
+        }
+        pushed.push(placement);
     }
 
     if porcelain {
         let pushed = pushed
             .iter()
-            .map(|(branch, remote)| serde_json::json!({ "branch": branch, "remote": remote }))
+            .map(|placement| {
+                serde_json::json!({
+                    "branch": placement.branch,
+                    "remote": placement.remote,
+                    "repository": placement.repository,
+                    "push_target": placement.push_target,
+                    "decision_source": placement.decision_source,
+                    "canonical_repository": placement.canonical_repository,
+                    "canonical_remote": placement.canonical_remote,
+                    "fork_repository": placement.fork_repository,
+                    "push_permission": placement.push_permission,
+                    "permission_checked_at": placement.permission_checked_at,
+                    "cache_age_seconds": placement.cache_age_seconds,
+                    "cache_state": placement.cache_state,
+                })
+            })
             .collect::<Vec<_>>();
         return crate::views::print_json(&serde_json::json!({
             "pushed": pushed,
@@ -53,8 +107,8 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, base_branch: &str) -> Resu
     if pushed.is_empty() {
         println!("no tracked non-base branches to push");
     } else {
-        for (branch, remote) in &pushed {
-            println!("pushed '{branch}' to '{remote}'");
+        for placement in &pushed {
+            println!("pushed '{}' to '{}'", placement.branch, placement.remote);
         }
     }
 

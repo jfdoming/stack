@@ -32,7 +32,9 @@ pub fn run(
 
     let should_color = is_tty && std::env::var_os("NO_COLOR").is_none();
     let pr_base_url = git.remote_web_url(base_remote)?;
-    let link_targets = build_branch_link_targets(git, &records, base_branch);
+    let canonical_remote = crate::core::placement_status(db, git)?.canonical_remote;
+    let link_targets =
+        build_branch_link_targets(git, &records, base_branch, canonical_remote.as_deref());
     println!(
         "{}",
         render_tree(
@@ -50,6 +52,7 @@ fn build_branch_link_targets(
     git: &Git,
     records: &[BranchRecord],
     default_base_branch: &str,
+    canonical_remote: Option<&str>,
 ) -> HashMap<String, BranchLinkTarget> {
     let by_id: HashMap<i64, String> = records.iter().map(|r| (r.id, r.name.clone())).collect();
     let mut out = HashMap::new();
@@ -61,7 +64,9 @@ fn build_branch_link_targets(
         if compare_base == rec.name {
             continue;
         }
-        if let Ok(target) = determine_pr_link_target(git, &compare_base, &rec.name) {
+        if let Ok(target) =
+            determine_pr_link_target(git, &compare_base, &rec.name, canonical_remote)
+        {
             out.insert(
                 rec.name.clone(),
                 BranchLinkTarget {

@@ -26,7 +26,18 @@ pub struct PrInfo {
     pub url: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RepositoryInfo {
+    pub name_with_owner: String,
+    pub viewer_permission: Option<String>,
+    pub parent_name_with_owner: Option<String>,
+    pub parent_viewer_permission: Option<String>,
+}
+
 pub trait Provider {
+    fn repository_info(&self, _repo_slug: &str) -> Result<Option<RepositoryInfo>> {
+        Ok(None)
+    }
     fn resolve_pr_by_head(
         &self,
         branch: &str,
@@ -121,6 +132,18 @@ impl GithubProvider {
                 out.push(slug);
             }
         }
+        for remote in self.git.remote_infos()? {
+            for url in [remote.fetch_url.as_deref(), remote.push_url.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(slug) = github_repo_slug_from_web_url(url)
+                    && seen.insert(slug.clone())
+                {
+                    out.push(slug);
+                }
+            }
+        }
 
         Ok(out)
     }
@@ -137,6 +160,19 @@ impl GithubProvider {
                 && seen.insert(slug.clone())
             {
                 out.push(slug);
+            }
+        }
+
+        for remote in self.git.remote_infos()? {
+            for url in [remote.fetch_url.as_deref(), remote.push_url.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(slug) = github_repo_slug_from_web_url(url)
+                    && seen.insert(slug.clone())
+                {
+                    out.push(slug);
+                }
             }
         }
 
@@ -233,7 +269,45 @@ struct GhRepoView {
     name_with_owner: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GhRepositoryInfo {
+    #[serde(rename = "nameWithOwner")]
+    name_with_owner: String,
+    #[serde(rename = "viewerPermission")]
+    viewer_permission: Option<String>,
+    parent: Option<GhRepositoryParent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhRepositoryParent {
+    #[serde(rename = "nameWithOwner")]
+    name_with_owner: String,
+    #[serde(rename = "viewerPermission")]
+    viewer_permission: Option<String>,
+}
+
 impl Provider for GithubProvider {
+    fn repository_info(&self, repo_slug: &str) -> Result<Option<RepositoryInfo>> {
+        let Some((owner, name)) = parse_repo_scope(repo_slug) else {
+            return Ok(None);
+        };
+        let query = "query($owner:String!, $name:String!) { repository(owner:$owner, name:$name) { nameWithOwner viewerPermission parent { nameWithOwner viewerPermission } } }";
+        let args = [
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={query}"),
+            "-F",
+            &format!("owner={owner}"),
+            "-F",
+            &format!("name={name}"),
+        ];
+        let Some(raw) = self.run_gh_optional(&args)? else {
+            return Ok(None);
+        };
+        parse_repository_info_response(&raw)
+    }
+
     fn resolve_prs_by_head(
         &self,
         branches: &[(&str, Option<i64>)],
@@ -598,6 +672,27 @@ fn clean_gh_json_output(raw: &str) -> String {
     out
 }
 
+fn parse_repository_info_response(raw: &str) -> Result<Option<RepositoryInfo>> {
+    let cleaned = clean_gh_json_output(raw);
+    let parsed: Value = serde_json::from_str(&cleaned)?;
+    let Some(repository) = parsed.get("data").and_then(|value| value.get("repository")) else {
+        return Ok(None);
+    };
+    if repository.is_null() {
+        return Ok(None);
+    }
+    let info: GhRepositoryInfo = serde_json::from_value(repository.clone())?;
+    Ok(Some(RepositoryInfo {
+        name_with_owner: info.name_with_owner,
+        viewer_permission: info.viewer_permission,
+        parent_name_with_owner: info
+            .parent
+            .as_ref()
+            .map(|parent| parent.name_with_owner.clone()),
+        parent_viewer_permission: info.parent.and_then(|parent| parent.viewer_permission),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,5 +784,41 @@ mod tests {
         assert_eq!(h0.len(), 1);
         assert_eq!(h0[0].number, 10);
         assert_eq!(h0[0].head_ref_name.as_deref(), Some("feat/a"));
+    }
+
+    #[test]
+    fn parse_repository_info_preserves_each_permission_level() {
+        for permission in ["READ", "TRIAGE", "WRITE", "MAINTAIN", "ADMIN"] {
+            let raw = format!(
+                r#"{{"data":{{"repository":{{"nameWithOwner":"acme/repo","viewerPermission":"{permission}","parent":null}}}}}}"#
+            );
+            let info = parse_repository_info_response(&raw)
+                .expect("parse repository response")
+                .expect("repository metadata");
+            assert_eq!(info.name_with_owner, "acme/repo");
+            assert_eq!(info.viewer_permission.as_deref(), Some(permission));
+        }
+    }
+
+    #[test]
+    fn parse_repository_info_extracts_fork_parent_topology() {
+        let raw = r#"{
+          "data": {
+            "repository": {
+              "nameWithOwner": "alice/repo",
+              "viewerPermission": "ADMIN",
+              "parent": {
+                "nameWithOwner": "acme/repo",
+                "viewerPermission": "WRITE"
+              }
+            }
+          }
+        }"#;
+        let info = parse_repository_info_response(raw)
+            .expect("parse repository response")
+            .expect("repository metadata");
+        assert_eq!(info.name_with_owner, "alice/repo");
+        assert_eq!(info.parent_name_with_owner.as_deref(), Some("acme/repo"));
+        assert_eq!(info.parent_viewer_permission.as_deref(), Some("WRITE"));
     }
 }
