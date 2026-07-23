@@ -259,6 +259,136 @@ fn rename_rejects_when_new_branch_already_exists() {
 }
 
 #[test]
+fn rename_rejects_option_like_new_name_without_overwriting_existing_refs() {
+    let repo = init_repo();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/old"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let main_before = git_ref_sha(repo.path(), "refs/heads/main");
+    let old_before = git_ref_sha(repo.path(), "refs/heads/feat/old");
+    let output = stack_cmd(repo.path())
+        .args(["rename", "feat/old", "--", "-M"])
+        .output()
+        .expect("run rename with option-like branch name");
+
+    assert_eq!(git_ref_sha(repo.path(), "refs/heads/main"), main_before);
+    assert_eq!(git_ref_sha(repo.path(), "refs/heads/feat/old"), old_before);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid new branch name"),
+        "unexpected error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn rename_rejects_previous_checkout_syntax_as_a_literal_new_name() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/old"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["rename", "feat/old", "@{-1}"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid new branch name"));
+
+    assert!(git_ref_sha(repo.path(), "refs/heads/main").is_some());
+    assert!(git_ref_sha(repo.path(), "refs/heads/feat/old").is_some());
+    assert!(git_ref_sha(repo.path(), "refs/heads/@{-1}").is_none());
+}
+
+#[test]
+fn rename_treats_an_option_like_source_branch_as_an_operand() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "placeholder"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/heads/-M", "refs/heads/placeholder"],
+    );
+    run_git(repo.path(), &["update-ref", "-d", "refs/heads/placeholder"]);
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET name = '-M' WHERE name = 'placeholder'",
+        [],
+    )
+    .expect("track option-like source branch");
+
+    let source_sha = git_ref_sha(repo.path(), "refs/heads/-M");
+    stack_cmd(repo.path())
+        .args(["rename", "--", "-M", "safe-name"])
+        .assert()
+        .success();
+
+    assert!(git_ref_sha(repo.path(), "refs/heads/main").is_some());
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/safe-name"),
+        source_sha
+    );
+    assert!(git_ref_sha(repo.path(), "refs/heads/-M").is_none());
+}
+
+#[test]
+fn rename_rejects_an_existing_remote_destination_before_any_mutation() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/old"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("old.txt"), "old branch\n").expect("write old branch file");
+    run_git(repo.path(), &["add", "old.txt"]);
+    run_git(repo.path(), &["commit", "-m", "old branch"]);
+
+    let bare = configure_local_push_url(repo.path());
+    run_git(
+        repo.path(),
+        &["push", "--set-upstream", "origin", "feat/old"],
+    );
+    run_git(
+        repo.path(),
+        &["push", "origin", "refs/heads/main:refs/heads/feat/new"],
+    );
+
+    let local_old_before = git_ref_sha(repo.path(), "refs/heads/feat/old");
+    let remote_old_before = git_ref_sha(&bare, "refs/heads/feat/old");
+    let remote_new_before = git_ref_sha(&bare, "refs/heads/feat/new");
+    stack_cmd(repo.path())
+        .args(["--yes", "rename", "feat/old", "feat/new"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "destination branch already exists on remote",
+        ));
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/old"),
+        local_old_before
+    );
+    assert!(git_ref_sha(repo.path(), "refs/heads/feat/new").is_none());
+    assert_eq!(
+        git_ref_sha(&bare, "refs/heads/feat/old"),
+        remote_old_before
+    );
+    assert_eq!(
+        git_ref_sha(&bare, "refs/heads/feat/new"),
+        remote_new_before
+    );
+}
+
+#[test]
 fn rename_does_not_push_or_delete_remote_when_source_branch_has_no_upstream() {
     let repo = init_repo();
     let bare = configure_local_push_url(repo.path());
@@ -290,4 +420,17 @@ fn rename_does_not_push_or_delete_remote_when_source_branch_has_no_upstream() {
         !new_remote.success(),
         "renamed local-only branch should not be pushed"
     );
+}
+
+
+fn git_ref_sha(repo: &Path, reference: &str) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(["rev-parse", "--verify", reference])
+        .output()
+        .expect("resolve git ref");
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

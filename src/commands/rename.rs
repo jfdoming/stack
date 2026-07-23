@@ -32,6 +32,9 @@ pub fn run(
     if old_branch == new_branch {
         return Err(anyhow!("old and new branch names are identical"));
     }
+    if !git.is_valid_branch_name(&new_branch)? {
+        return Err(anyhow!("invalid new branch name: {new_branch}"));
+    }
 
     let tracked = db
         .branch_by_name(&old_branch)?
@@ -53,6 +56,14 @@ pub fn run(
         .and_then(|u| u.split_once('/').map(|(name, _)| name.to_string()))
         .or(git.remote_for_branch(&old_branch)?)
         .unwrap_or_else(|| "origin".to_string());
+
+    if has_upstream && git.remote_branch_exists(&remote, &new_branch)? {
+        return Err(anyhow!(
+            "destination branch already exists on remote '{}': {}",
+            remote,
+            new_branch
+        ));
+    }
 
     let mut open_pr_number = None;
     match provider.resolve_pr_by_head(&old_branch, tracked.cached_pr_number) {
@@ -134,7 +145,7 @@ pub fn run(
     db.set_pr_cache(&new_branch, None, None)?;
 
     if has_upstream {
-        git.push_branch(&remote, &new_branch)
+        git.push_new_branch(&remote, &new_branch)
             .with_context(|| format!("failed to push renamed branch '{}'", new_branch))?;
         git.delete_remote_branch(&remote, &old_branch)
             .with_context(|| format!("failed to delete old remote branch '{}'", old_branch))?;

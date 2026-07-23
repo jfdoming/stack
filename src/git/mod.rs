@@ -79,52 +79,120 @@ impl Git {
     }
 
     pub fn create_branch_from(&self, name: &str, parent: &str) -> Result<()> {
-        self.run(["branch", name, parent])
+        self.run(["branch", "--", name, parent])
     }
 
     pub fn checkout_branch(&self, branch: &str) -> Result<()> {
-        self.run(["checkout", branch])
+        self.run(["switch", "--", branch])
     }
 
     pub fn delete_local_branch(&self, branch: &str) -> Result<()> {
-        self.run(["branch", "-D", branch])
+        self.run(["branch", "-D", "--", branch])
     }
 
     pub fn rename_local_branch(&self, old: &str, new: &str) -> Result<()> {
-        self.run(["branch", "-m", old, new])
+        self.run(["branch", "-m", "--", old, new])
     }
 
     pub fn push_branch(&self, remote: &str, branch: &str) -> Result<()> {
-        self.run(["push", "--set-upstream", remote, branch])
+        let branch_ref = local_branch_ref(branch);
+        let refspec = format!("{branch_ref}:{branch_ref}");
+        self.run(["push", "--set-upstream", "--", remote, &refspec])
+    }
+
+    pub fn push_new_branch(&self, remote: &str, branch: &str) -> Result<()> {
+        let branch_ref = local_branch_ref(branch);
+        let lease = format!("--force-with-lease={branch_ref}:");
+        let refspec = format!("{branch_ref}:{branch_ref}");
+        self.run(["push", "--set-upstream", &lease, "--", remote, &refspec])
     }
 
     pub fn push_branch_force_with_lease(&self, remote: &str, branch: &str) -> Result<()> {
+        let branch_ref = local_branch_ref(branch);
+        let refspec = format!("{branch_ref}:{branch_ref}");
         self.run([
             "push",
             "--force-with-lease",
             "--set-upstream",
+            "--",
             remote,
-            branch,
+            &refspec,
         ])
     }
 
     pub fn delete_remote_branch(&self, remote: &str, branch: &str) -> Result<()> {
-        self.run(["push", remote, "--delete", branch])
+        let refspec = format!(":{}", local_branch_ref(branch));
+        self.run(["push", "--", remote, &refspec])
+    }
+
+    pub fn remote_branch_exists(&self, remote: &str, branch: &str) -> Result<bool> {
+        let remote_url = Command::new("git")
+            .current_dir(&self.root)
+            .args(["remote", "get-url", "--push", "--", remote])
+            .output()
+            .with_context(|| format!("failed to resolve push URL for remote {remote}"))?;
+        if !remote_url.status.success() {
+            return Err(anyhow!(
+                "could not resolve push URL for remote '{}'",
+                sanitize_terminal_text(remote)
+            ));
+        }
+        let remote_url = String::from_utf8(remote_url.stdout)?.trim().to_string();
+        if remote_url.is_empty() {
+            return Err(anyhow!(
+                "push URL for remote '{}' is empty",
+                sanitize_terminal_text(remote)
+            ));
+        }
+
+        let branch_ref = local_branch_ref(branch);
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args([
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                "--",
+                &remote_url,
+                &branch_ref,
+            ])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to inspect destination branch on remote '{}'",
+                    sanitize_terminal_text(remote)
+                )
+            })?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(2) => Ok(false),
+            _ => Err(anyhow!(
+                "could not inspect destination branch on remote '{}'",
+                sanitize_terminal_text(remote)
+            )),
+        }
     }
 
     pub fn head_sha(&self, branch: &str) -> Result<String> {
-        self.capture(["rev-parse", branch])
+        let revision = format!("{}^{{commit}}", local_branch_ref(branch));
+        self.capture(["rev-parse", "--verify", "--end-of-options", &revision])
             .map(|s| s.trim().to_string())
     }
 
     pub fn resolve_commit(&self, rev: &str) -> Result<String> {
-        self.capture(["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+        let rev = self.unambiguous_revision(rev)?;
+        let revision = format!("{rev}^{{commit}}");
+        self.capture(["rev-parse", "--verify", "--end-of-options", &revision])
             .map(|s| s.trim().to_string())
     }
 
     pub fn rev_list_reverse(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        let range = format!("{base}..{head}");
-        let out = self.capture(["rev-list", "--reverse", &range])?;
+        let range = format!(
+            "{}..{}",
+            self.resolve_commit(base)?,
+            self.resolve_commit(head)?
+        );
+        let out = self.capture(["rev-list", "--reverse", "--end-of-options", &range, "--"])?;
         Ok(out
             .lines()
             .map(str::trim)
@@ -134,13 +202,18 @@ impl Git {
     }
 
     pub fn has_merge_commits(&self, base: &str, head: &str) -> Result<bool> {
-        let range = format!("{base}..{head}");
-        let out = self.capture(["rev-list", "--merges", &range])?;
+        let range = format!(
+            "{}..{}",
+            self.resolve_commit(base)?,
+            self.resolve_commit(head)?
+        );
+        let out = self.capture(["rev-list", "--merges", "--end-of-options", &range, "--"])?;
         Ok(out.lines().any(|line| !line.trim().is_empty()))
     }
 
     pub fn commit_oneline(&self, rev: &str) -> Result<String> {
-        self.capture(["show", "-s", "--format=%h %s", rev])
+        let commit = self.resolve_commit(rev)?;
+        self.capture(["show", "-s", "--format=%h %s", "--end-of-options", &commit])
             .map(|s| s.trim().to_string())
     }
 
@@ -150,7 +223,10 @@ impl Git {
             .args(["check-ref-format", "--branch", name])
             .output()
             .with_context(|| format!("failed to validate branch name {name}"))?;
-        Ok(output.status.success())
+        if !output.status.success() {
+            return Ok(false);
+        }
+        Ok(String::from_utf8(output.stdout)?.trim() == name)
     }
 
     pub fn is_worktree_dirty(&self) -> Result<bool> {
@@ -356,13 +432,16 @@ impl Git {
     }
 
     pub fn ref_exists(&self, name: &str) -> Result<bool> {
+        let name = self.unambiguous_revision(name)?;
+        let revision = format!("{name}^{{commit}}");
         let output = Command::new("git")
             .current_dir(&self.root)
             .args([
                 "rev-parse",
                 "--verify",
                 "--quiet",
-                &format!("{name}^{{commit}}"),
+                "--end-of-options",
+                &revision,
             ])
             .output()
             .with_context(|| format!("failed to verify ref {name}"))?;
@@ -370,8 +449,9 @@ impl Git {
     }
 
     pub fn fast_forward_branch(&self, branch: &str, onto: &str) -> Result<()> {
-        self.run(["checkout", branch])?;
-        self.run(["merge", "--ff-only", onto])
+        let onto = self.resolve_commit(onto)?;
+        self.checkout_branch(branch)?;
+        self.run(["merge", "--ff-only", "--", &onto])
     }
 
     fn has_remote(&self, name: &str) -> Result<bool> {
@@ -388,10 +468,12 @@ impl Git {
     }
 
     pub fn replay_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
-        let revision_range = format!("{old_base}..{branch}");
+        let old_base = self.resolve_commit(old_base)?;
+        let new_base = self.resolve_commit(new_base)?;
+        let revision_range = format!("{old_base}..{}", local_branch_ref(branch));
         let output = Command::new("git")
             .current_dir(&self.root)
-            .args(["replay", "--onto", new_base, &revision_range])
+            .args(["replay", "--onto", &new_base, "--", &revision_range])
             .output()
             .with_context(|| {
                 format!(
@@ -434,30 +516,50 @@ impl Git {
     }
 
     pub fn rebase_onto(&self, branch: &str, old_base: &str, new_base: &str) -> Result<()> {
-        self.run(["rebase", "--onto", new_base, old_base, branch])
+        let old_base = self.resolve_commit(old_base)?;
+        let new_base = self.resolve_commit(new_base)?;
+        self.checkout_branch(branch)?;
+        self.run(["rebase", "--onto", &new_base, "--", &old_base])
     }
 
     pub fn merge_base(&self, branch: &str, onto: &str) -> Result<String> {
-        self.capture(["merge-base", branch, onto])
+        let branch = self.resolve_commit(branch)?;
+        let onto = self.resolve_commit(onto)?;
+        self.capture(["merge-base", "--", &branch, &onto])
             .map(|s| s.trim().to_string())
     }
 
     pub fn is_ancestor(&self, ancestor: &str, branch: &str) -> Result<bool> {
+        let ancestor = self.resolve_commit(ancestor)?;
+        let branch = self.resolve_commit(branch)?;
         let status = Command::new("git")
             .current_dir(&self.root)
-            .args(["merge-base", "--is-ancestor", ancestor, branch])
+            .args(["merge-base", "--is-ancestor", "--", &ancestor, &branch])
             .status()
             .with_context(|| format!("failed to compare ancestry {ancestor} -> {branch}"))?;
         Ok(status.success())
     }
 
     pub fn commit_distance(&self, base: &str, head: &str) -> Result<u32> {
-        let out = self.capture(["rev-list", "--count", &format!("{base}..{head}")])?;
+        let range = format!(
+            "{}..{}",
+            self.resolve_commit(base)?,
+            self.resolve_commit(head)?
+        );
+        let out = self.capture(["rev-list", "--count", "--end-of-options", &range, "--"])?;
         let count = out
             .trim()
             .parse::<u32>()
             .with_context(|| format!("invalid commit distance output for {base}..{head}"))?;
         Ok(count)
+    }
+
+    fn unambiguous_revision(&self, revision: &str) -> Result<String> {
+        if self.branch_exists(revision)? {
+            Ok(local_branch_ref(revision))
+        } else {
+            Ok(revision.to_string())
+        }
     }
 
     pub fn capture<const N: usize>(&self, args: [&str; N]) -> Result<String> {
@@ -491,6 +593,10 @@ impl Git {
         }
         Ok(())
     }
+}
+
+fn local_branch_ref(branch: &str) -> String {
+    format!("refs/heads/{branch}")
 }
 
 fn parse_remote_to_web_url(raw: &str) -> Option<String> {

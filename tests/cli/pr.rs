@@ -1,4 +1,49 @@
 #[test]
+fn pr_push_treats_a_plus_prefixed_branch_as_a_literal_ref() {
+    let repo = init_repo();
+    let bare = configure_local_push_url(repo.path());
+
+    run_git(repo.path(), &["checkout", "-b", "victim"]);
+    fs::write(repo.path().join("victim.txt"), "victim\n").expect("write victim file");
+    run_git(repo.path(), &["add", "victim.txt"]);
+    run_git(repo.path(), &["commit", "-m", "victim"]);
+    run_git(repo.path(), &["push", "origin", "victim"]);
+
+    run_git(repo.path(), &["checkout", "-b", "remote-advance"]);
+    fs::write(repo.path().join("remote.txt"), "remote advance\n")
+        .expect("write remote advancement");
+    run_git(repo.path(), &["add", "remote.txt"]);
+    run_git(repo.path(), &["commit", "-m", "remote advance"]);
+    run_git(
+        repo.path(),
+        &[
+            "push",
+            "origin",
+            "refs/heads/remote-advance:refs/heads/victim",
+        ],
+    );
+    let remote_victim_before = git_ref_sha(&bare, "refs/heads/victim");
+
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "+victim"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("literal.txt"), "literal\n").expect("write literal file");
+    run_git(repo.path(), &["add", "literal.txt"]);
+    run_git(repo.path(), &["commit", "-m", "literal"]);
+    let literal_sha = git_ref_sha(repo.path(), "refs/heads/+victim");
+
+    stack_cmd(repo.path()).arg("pr").assert().success();
+
+    assert_eq!(
+        git_ref_sha(&bare, "refs/heads/victim"),
+        remote_victim_before
+    );
+    assert_eq!(git_ref_sha(&bare, "refs/heads/+victim"), literal_sha);
+}
+
+#[test]
 fn pr_dry_run_uses_parent_branch_as_base() {
     let repo = init_repo();
 

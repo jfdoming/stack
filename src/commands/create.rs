@@ -106,6 +106,9 @@ pub fn run(
         ));
     };
 
+    if !git.is_valid_branch_name(&child)? {
+        return Err(anyhow!("invalid branch name: {child}"));
+    }
     if git.branch_exists(&child)? {
         return Err(anyhow!("branch already exists: {child}"));
     }

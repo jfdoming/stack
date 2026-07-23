@@ -46,6 +46,7 @@
 - Base branch is excluded from stack navigation (`up`, `down`, `top`, `bottom`); run navigation commands from tracked non-base branches.
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.
 - `stack create --insert [child]` inserts a new branch between the child's current parent and that child, updates stack metadata links, and refreshes managed sections for affected open PR bodies.
+- Branch creation and rename reject invalid destination names before invoking Git; dynamic branch operands are passed after an option terminator so malformed legacy refs cannot be interpreted as Git flags.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
 - `stack doctor --fix` also repairs detected parent-link cycles, clears invalid base-parent links, and resets incomplete PR cache fields.

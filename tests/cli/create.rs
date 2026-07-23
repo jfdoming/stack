@@ -62,6 +62,47 @@ fn create_without_parent_in_non_interactive_mode_assumes_only_viable_branch() {
 }
 
 #[test]
+fn create_rejects_option_like_name_without_deleting_the_parent_branch() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "work"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name=-D"])
+        .output()
+        .expect("run create with option-like branch name");
+
+    let main_ref = Command::new("git")
+        .current_dir(repo.path())
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/main"])
+        .status()
+        .expect("verify main branch");
+    assert!(main_ref.success(), "the parent branch must not be deleted");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid branch name"),
+        "unexpected error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn create_rejects_previous_checkout_syntax_as_a_literal_branch_name() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "work"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "@{-1}"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid branch name"));
+
+    assert!(git_ref_sha(repo.path(), "refs/heads/main").is_some());
+    assert!(git_ref_sha(repo.path(), "refs/heads/work").is_some());
+    assert!(git_ref_sha(repo.path(), "refs/heads/@{-1}").is_none());
+}
+
+#[test]
 fn create_before_inserts_new_branch_between_parent_and_child() {
     let repo = init_repo();
 

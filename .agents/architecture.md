@@ -103,6 +103,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
+- Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitized before display to avoid terminal control-character injection.
 - Generated markdown link labels and branch path segments in stack-managed PR/compare content are escaped/URL-encoded to reduce malformed-link and markdown-injection risks.
