@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.21 - 2026-07-22
+- Serialised parent-cycle validation and relationship writes in immediate database transactions, preventing concurrent linked worktrees from committing opposite links that form a cycle.
+- Rolled back branch records created by rejected links and rejected pre-existing corrupt cycles without looping indefinitely.
+
 ## 0.18.20 - 2026-07-22
 - Pinned replay and rebase inputs to the child head reviewed during planning, then finalized the rewritten branch with an expected-old compare-and-swap so concurrent commits are preserved instead of replayed or overwritten.
 - Kept atomic fallback rebase conflicts recoverable on an encoded temporary branch authenticated by a private one-time ref; after `git rebase --continue`, the next sync atomically consumes that authority while finalizing the unchanged target before planning more work.

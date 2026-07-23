@@ -24,7 +24,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `repo_meta` schema version 3 stores base-discovery provenance, the push-target policy, cached canonical/fork repository identity, GitHub permission, and detection time.
 - Database schema creation, column migration, and version updates run in one immediate SQLite transaction so concurrent worktrees observe one complete migration.
 - Base discovery prefers `origin/HEAD` only when both its remote-tracking target and same-named local branch exist, then an existing conventional local base, then the current branch. Provisional current-branch/first-local/default discoveries can yield to a later authoritative remote HEAD; conventional, remote, and legacy bases remain stable while present. Missing cached refs are repaired, with updates conditioned on the exact metadata observed so concurrent linked worktrees cannot overwrite a newer decision.
-- Integrity: cycle prevention is validated before parent updates.
+- Integrity: parent-link updates acquire an immediate writer transaction before reading the graph, then validate and write within that transaction. Rejected updates roll back provisional branch records, and validation terminates safely on pre-existing corrupt cycles.
 
 ## Sync behaviour
 - Builds a plan (`fetch`, `restack`, metadata updates) after inspecting the preferred remote's advertised base head and comparing it with the optional local remote-tracking ref.

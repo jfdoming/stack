@@ -1,6 +1,6 @@
 [package]
 name = "stack"
-version = "0.18.20"
+version = "0.18.21"
 edition = "2024"
 
 [lints.rust]

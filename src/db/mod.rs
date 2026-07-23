@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 #[derive(Debug, Clone)]
 pub struct BranchRecord {
@@ -271,17 +271,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn upsert_branch(&self, name: &str) -> Result<i64> {
-        self.conn.execute(
-            "INSERT INTO branches(name) VALUES (?1)
-             ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP",
-            params![name],
-        )?;
-        self.branch_by_name(name)?
-            .map(|b| b.id)
-            .ok_or_else(|| anyhow!("failed to upsert branch {name}"))
-    }
-
     pub fn branch_by_name(&self, name: &str) -> Result<Option<BranchRecord>> {
         self.conn
             .query_row(
@@ -304,39 +293,25 @@ impl Database {
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_branch_id, last_synced_head_sha, cached_pr_number, cached_pr_state
-             FROM branches ORDER BY name",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(BranchRecord {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                parent_branch_id: row.get(2)?,
-                last_synced_head_sha: row.get(3)?,
-                cached_pr_number: row.get(4)?,
-                cached_pr_state: row.get(5)?,
-            });
-        }
-        Ok(out)
+        list_branches_on(&self.conn)
     }
 
     pub fn set_parent(&self, child_name: &str, parent_name: Option<&str>) -> Result<()> {
-        let child_id = self.upsert_branch(child_name)?;
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let child_id = upsert_branch_on(&tx, child_name)?;
         let parent_id = if let Some(p) = parent_name {
-            Some(self.upsert_branch(p)?)
+            Some(upsert_branch_on(&tx, p)?)
         } else {
             None
         };
         if let Some(pid) = parent_id {
-            self.ensure_no_cycle(child_id, pid)?;
+            ensure_no_cycle_on(&tx, child_id, pid)?;
         }
-        self.conn.execute(
+        tx.execute(
             "UPDATE branches SET parent_branch_id = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
             params![parent_id, child_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -345,7 +320,8 @@ impl Database {
             return Ok(());
         }
 
-        let existing = self.list_branches()?;
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let existing = list_branches_on(&tx)?;
         let mut id_by_name: std::collections::HashMap<String, i64> =
             existing.iter().map(|b| (b.name.clone(), b.id)).collect();
         let mut parent_by_id: std::collections::HashMap<i64, Option<i64>> = existing
@@ -379,7 +355,6 @@ impl Database {
             }
         }
 
-        let tx = self.conn.unchecked_transaction()?;
         for update in updates {
             tx.execute(
                 "INSERT INTO branches(name) VALUES (?1)
@@ -412,29 +387,6 @@ impl Database {
             }
         }
         tx.commit()?;
-        Ok(())
-    }
-
-    fn ensure_no_cycle(&self, child_id: i64, mut parent_id: i64) -> Result<()> {
-        loop {
-            if parent_id == child_id {
-                return Err(anyhow!("link would create a cycle"));
-            }
-            let next: Option<i64> = self
-                .conn
-                .query_row(
-                    "SELECT parent_branch_id FROM branches WHERE id = ?1",
-                    params![parent_id],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .flatten();
-            if let Some(n) = next {
-                parent_id = n;
-            } else {
-                break;
-            }
-        }
         Ok(())
     }
 
@@ -539,6 +491,63 @@ impl Database {
     }
 }
 
+fn upsert_branch_on(conn: &Connection, name: &str) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO branches(name) VALUES (?1)
+         ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP",
+        params![name],
+    )?;
+    conn.query_row(
+        "SELECT id FROM branches WHERE name = ?1",
+        params![name],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| anyhow!("failed to upsert branch {name}"))
+}
+
+fn list_branches_on(conn: &Connection) -> Result<Vec<BranchRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, parent_branch_id, last_synced_head_sha, cached_pr_number, cached_pr_state
+         FROM branches ORDER BY name",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(BranchRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            parent_branch_id: row.get(2)?,
+            last_synced_head_sha: row.get(3)?,
+            cached_pr_number: row.get(4)?,
+            cached_pr_state: row.get(5)?,
+        });
+    }
+    Ok(out)
+}
+
+fn ensure_no_cycle_on(conn: &Connection, child_id: i64, mut parent_id: i64) -> Result<()> {
+    let mut seen = std::collections::HashSet::from([child_id]);
+    loop {
+        if !seen.insert(parent_id) {
+            return Err(anyhow!("link would create a cycle"));
+        }
+        let next: Option<i64> = conn
+            .query_row(
+                "SELECT parent_branch_id FROM branches WHERE id = ?1",
+                params![parent_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        if let Some(next_parent) = next {
+            parent_id = next_parent;
+        } else {
+            return Ok(());
+        }
+    }
+}
+
 fn ensure_temp_id(
     id_by_name: &mut std::collections::HashMap<String, i64>,
     parent_by_id: &mut std::collections::HashMap<i64, Option<i64>>,
@@ -568,6 +577,117 @@ mod tests {
         let db = Database::open(&dir.path().join("stack.db")).unwrap();
         db.set_parent("b", Some("a")).unwrap();
         let err = db.set_parent("a", Some("b")).unwrap_err();
+        assert!(err.to_string().contains("cycle"));
+    }
+
+    #[test]
+    fn rejected_parent_update_rolls_back_new_branch_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+
+        let err = db.set_parent("self-cycle", Some("self-cycle")).unwrap_err();
+
+        assert!(err.to_string().contains("cycle"));
+        assert!(db.branch_by_name("self-cycle").unwrap().is_none());
+    }
+
+    #[test]
+    fn concurrent_opposite_parent_updates_cannot_commit_a_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("stack.db");
+        let db = Database::open(&db_path).unwrap();
+        db.set_parent("a", None).unwrap();
+        db.set_parent("b", None).unwrap();
+        drop(db);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let spawn_update = |child: &'static str, parent: &'static str| {
+            let path = db_path.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let db = Database::open(&path).unwrap();
+                barrier.wait();
+                db.set_parent(child, Some(parent))
+            })
+        };
+        let a_to_b = spawn_update("a", "b");
+        let b_to_a = spawn_update("b", "a");
+        barrier.wait();
+
+        let results = [a_to_b.join().unwrap(), b_to_a.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert!(
+            results
+                .iter()
+                .filter_map(|result| result.as_ref().err())
+                .any(|err| err.to_string().contains("cycle"))
+        );
+
+        let db = Database::open(&db_path).unwrap();
+        let a = db.branch_by_name("a").unwrap().unwrap();
+        let b = db.branch_by_name("b").unwrap().unwrap();
+        assert!(!(a.parent_branch_id == Some(b.id) && b.parent_branch_id == Some(a.id)));
+    }
+
+    #[test]
+    fn concurrent_batch_parent_updates_cannot_commit_a_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("stack.db");
+        let db = Database::open(&db_path).unwrap();
+        db.set_parent("a", None).unwrap();
+        db.set_parent("b", None).unwrap();
+        drop(db);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let spawn_update = |child: &'static str, parent: &'static str| {
+            let path = db_path.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let db = Database::open(&path).unwrap();
+                barrier.wait();
+                db.set_parents_batch(&[ParentUpdate {
+                    child_name: child.to_string(),
+                    parent_name: Some(parent.to_string()),
+                }])
+            })
+        };
+        let a_to_b = spawn_update("a", "b");
+        let b_to_a = spawn_update("b", "a");
+        barrier.wait();
+
+        let results = [a_to_b.join().unwrap(), b_to_a.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert!(
+            results
+                .iter()
+                .filter_map(|result| result.as_ref().err())
+                .any(|err| err.to_string().contains("cycle"))
+        );
+    }
+
+    #[test]
+    fn parent_validation_rejects_a_preexisting_cycle_without_looping() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("a", None).unwrap();
+        db.set_parent("b", None).unwrap();
+        db.set_parent("c", None).unwrap();
+        let a = db.branch_by_name("a").unwrap().unwrap();
+        let b = db.branch_by_name("b").unwrap().unwrap();
+        db.conn
+            .execute(
+                "UPDATE branches SET parent_branch_id = ?1 WHERE id = ?2",
+                params![b.id, a.id],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE branches SET parent_branch_id = ?1 WHERE id = ?2",
+                params![a.id, b.id],
+            )
+            .unwrap();
+
+        let err = db.set_parent("c", Some("a")).unwrap_err();
         assert!(err.to_string().contains("cycle"));
     }
 
