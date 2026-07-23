@@ -58,8 +58,15 @@ impl BaseBranchSource {
         }
     }
 
-    fn is_provisional(self) -> bool {
-        matches!(self, Self::CurrentBranch | Self::FirstLocal | Self::Default)
+    fn can_yield_to_remote_head(self) -> bool {
+        matches!(
+            self,
+            Self::LocalConvention
+                | Self::CurrentBranch
+                | Self::FirstLocal
+                | Self::Default
+                | Self::Legacy
+        )
     }
 }
 
@@ -171,10 +178,11 @@ impl Database {
         observed_branch_exists: bool,
     ) -> Result<()> {
         let should_replace = !observed_branch_exists
-            || (observed.base_branch_source.is_provisional()
+            || (observed.base_branch_source.can_yield_to_remote_head()
                 && candidate_source == BaseBranchSource::RemoteHead);
         if should_replace {
-            self.conn.execute(
+            let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+            let updated = tx.execute(
                 "UPDATE repo_meta
                  SET base_branch = ?1, base_branch_source = ?2
                  WHERE id = 1 AND base_branch = ?3 AND base_branch_source = ?4",
@@ -185,6 +193,36 @@ impl Database {
                     observed.base_branch_source.as_str()
                 ],
             )?;
+            if updated == 0 {
+                tx.commit()?;
+                return Ok(());
+            }
+
+            let candidate_id = upsert_branch_on(&tx, candidate)?;
+            tx.execute(
+                "UPDATE branches
+                 SET parent_branch_id = NULL, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                params![candidate_id],
+            )?;
+            if observed.base_branch != candidate
+                && let Some(old_base_id) = tx
+                    .query_row(
+                        "SELECT id FROM branches WHERE name = ?1",
+                        params![observed.base_branch],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+            {
+                tx.execute(
+                    "UPDATE branches
+                     SET parent_branch_id = ?1, updated_at = CURRENT_TIMESTAMP
+                     WHERE parent_branch_id = ?2 AND id != ?1",
+                    params![candidate_id, old_base_id],
+                )?;
+                tx.execute("DELETE FROM branches WHERE id = ?1", params![old_base_id])?;
+            }
+            tx.commit()?;
         }
         Ok(())
     }
@@ -786,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_remote_head_replaces_only_provisional_base_discovery() {
+    fn authoritative_remote_head_replaces_heuristic_base_discovery() {
         let dir = tempfile::tempdir().unwrap();
         let provisional_path = dir.path().join("provisional.db");
         let provisional = Database::open(&provisional_path).unwrap();
@@ -811,8 +849,76 @@ mod tests {
             .reconcile_base_branch(&observed, "trunk", BaseBranchSource::RemoteHead, true)
             .unwrap();
         let meta = stable.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "trunk");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::RemoteHead);
+
+        let legacy_path = dir.path().join("legacy.db");
+        let legacy = Database::open(&legacy_path).unwrap();
+        legacy
+            .set_base_branch_if_missing("master", BaseBranchSource::Legacy)
+            .unwrap();
+        let observed = legacy.repo_meta().unwrap();
+        legacy
+            .reconcile_base_branch(&observed, "production", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+        let meta = legacy.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "production");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::RemoteHead);
+
+        let same_name_path = dir.path().join("same-name.db");
+        let same_name = Database::open(&same_name_path).unwrap();
+        same_name
+            .set_base_branch_if_missing("main", BaseBranchSource::LocalConvention)
+            .unwrap();
+        let observed = same_name.repo_meta().unwrap();
+        same_name
+            .reconcile_base_branch(&observed, "main", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+        let meta = same_name.repo_meta().unwrap();
         assert_eq!(meta.base_branch, "main");
-        assert_eq!(meta.base_branch_source, BaseBranchSource::LocalConvention);
+        assert_eq!(meta.base_branch_source, BaseBranchSource::RemoteHead);
+
+        let authoritative_path = dir.path().join("authoritative.db");
+        let authoritative = Database::open(&authoritative_path).unwrap();
+        authoritative
+            .set_base_branch_if_missing("main", BaseBranchSource::RemoteHead)
+            .unwrap();
+        let observed = authoritative.repo_meta().unwrap();
+        authoritative
+            .reconcile_base_branch(&observed, "trunk", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+        let meta = authoritative.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "main");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::RemoteHead);
+    }
+
+    #[test]
+    fn base_reconciliation_migrates_the_tracked_root_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_base_branch_if_missing("main", BaseBranchSource::LocalConvention)
+            .unwrap();
+        db.set_parent("feat/root", Some("main")).unwrap();
+        db.set_parent("feat/child", Some("feat/root")).unwrap();
+        db.set_parent("feat/sibling", Some("main")).unwrap();
+        db.set_parent("trunk", Some("feat/root")).unwrap();
+        let observed = db.repo_meta().unwrap();
+
+        db.reconcile_base_branch(&observed, "trunk", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+
+        let meta = db.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "trunk");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::RemoteHead);
+        assert!(db.branch_by_name("main").unwrap().is_none());
+        let trunk = db.branch_by_name("trunk").unwrap().unwrap();
+        let root = db.branch_by_name("feat/root").unwrap().unwrap();
+        let child = db.branch_by_name("feat/child").unwrap().unwrap();
+        let sibling = db.branch_by_name("feat/sibling").unwrap().unwrap();
+        assert_eq!(trunk.parent_branch_id, None);
+        assert_eq!(root.parent_branch_id, Some(trunk.id));
+        assert_eq!(sibling.parent_branch_id, Some(trunk.id));
+        assert_eq!(child.parent_branch_id, Some(root.id));
     }
 
     #[test]
@@ -869,6 +975,12 @@ mod tests {
             )
             .unwrap();
         assert_eq!(version, 3);
+
+        db.reconcile_base_branch(&meta, "production", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+        let reconciled = db.repo_meta().unwrap();
+        assert_eq!(reconciled.base_branch, "production");
+        assert_eq!(reconciled.base_branch_source, BaseBranchSource::RemoteHead);
     }
 
     #[test]

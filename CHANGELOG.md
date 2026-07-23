@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.22 - 2026-07-22
+- Let a verified remote HEAD replace or upgrade cached heuristic base discovery, including conventional local names and metadata migrated with legacy provenance.
+- Migrated an existing tracked root in the same transaction by making the authoritative base parentless, reparenting direct stack roots, and removing the obsolete inferred base record.
+- Kept an existing authoritative remote-HEAD choice stable and retained compare-and-swap protection against stale metadata observations.
+
 ## 0.18.21 - 2026-07-22
 - Serialised parent-cycle validation and relationship writes in immediate database transactions, preventing concurrent linked worktrees from committing opposite links that form a cycle.
 - Rolled back branch records created by rejected links and rejected pre-existing corrupt cycles without looping indefinitely.

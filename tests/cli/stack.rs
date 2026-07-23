@@ -254,9 +254,14 @@ fn stack_repairs_a_missing_cached_base_when_remote_head_becomes_known() {
 }
 
 #[test]
-fn stack_preserves_an_existing_cached_base_when_remote_head_differs() {
+fn stack_replaces_a_conventional_cached_base_when_remote_head_differs() {
     let repo = init_repo_without_origin();
     stack_cmd(repo.path()).assert().success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/root"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
     run_git(repo.path(), &["branch", "trunk"]);
     run_git(
         repo.path(),
@@ -272,8 +277,28 @@ fn stack_preserves_an_existing_cached_base_when_remote_head_differs() {
     );
 
     stack_cmd(repo.path()).assert().success();
-    assert_eq!(stored_base_branch(repo.path()), "main");
-    assert_eq!(stored_base_source(repo.path()), "local_convention");
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let root_parent: String = conn
+        .query_row(
+            "SELECT parent.name
+             FROM branches child
+             JOIN branches parent ON parent.id = child.parent_branch_id
+             WHERE child.name = 'feat/root'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read migrated root parent");
+    assert_eq!(root_parent, "trunk");
+    let obsolete_base_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'main'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count obsolete base rows");
+    assert_eq!(obsolete_base_count, 0);
 }
 
 #[test]
