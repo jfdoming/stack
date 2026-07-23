@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.14 - 2026-07-22
+- Recorded how the cached base was discovered so a provisional current-branch fallback can yield to a later authoritative `origin/HEAD`, while established conventional and legacy bases remain stable.
+- Ignored dangling `origin/HEAD` targets during base discovery and made concurrent linked-worktree reconciliation conditional on the exact cached metadata originally observed.
+
 ## 0.18.13 - 2026-07-22
 - Made sync inspect the configured remote base even when no base upstream or remote-tracking ref exists, so first-time remote advances are fetched and restacked in one run.
 

@@ -184,6 +184,24 @@ fn stack_initializes_non_main_repo_base_from_current_branch() {
     stack_cmd(repo.path()).assert().success();
 
     assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "local_convention");
+}
+
+#[test]
+fn stack_ignores_a_dangling_remote_head_when_discovering_the_base() {
+    let repo = init_repo_on_branch("trunk");
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/ghost",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "local_convention");
 }
 
 #[test]
@@ -233,6 +251,38 @@ fn stack_preserves_an_existing_cached_base_when_remote_head_differs() {
 
     stack_cmd(repo.path()).assert().success();
     assert_eq!(stored_base_branch(repo.path()), "main");
+    assert_eq!(stored_base_source(repo.path()), "local_convention");
+}
+
+#[test]
+fn stack_replaces_a_provisional_current_branch_base_with_remote_head() {
+    let repo = init_repo_on_branch("production");
+    run_git(repo.path(), &["checkout", "-b", "feat/work"]);
+
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "feat/work");
+    assert_eq!(stored_base_source(repo.path()), "current_branch");
+
+    run_git(
+        repo.path(),
+        &[
+            "update-ref",
+            "refs/remotes/origin/production",
+            "production",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/production",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "production");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
 }
 
 fn stored_base_branch(repo: &Path) -> String {
@@ -241,6 +291,16 @@ fn stored_base_branch(repo: &Path) -> String {
         row.get(0)
     })
     .expect("read base branch")
+}
+
+fn stored_base_source(repo: &Path) -> String {
+    let conn = Connection::open(repo.join(".git/stack.db")).expect("open stack db");
+    conn.query_row(
+        "SELECT base_branch_source FROM repo_meta WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )
+    .expect("read base branch source")
 }
 
 #[test]

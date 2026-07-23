@@ -16,11 +16,51 @@ pub struct BranchRecord {
 #[derive(Debug, Clone)]
 pub struct RepoMeta {
     pub base_branch: String,
+    pub base_branch_source: BaseBranchSource,
     pub push_target: Option<String>,
     pub canonical_repo: Option<String>,
     pub fork_repo: Option<String>,
     pub push_permission: Option<String>,
     pub permission_checked_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseBranchSource {
+    RemoteHead,
+    LocalConvention,
+    CurrentBranch,
+    FirstLocal,
+    Default,
+    Legacy,
+}
+
+impl BaseBranchSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RemoteHead => "remote_head",
+            Self::LocalConvention => "local_convention",
+            Self::CurrentBranch => "current_branch",
+            Self::FirstLocal => "first_local",
+            Self::Default => "default",
+            Self::Legacy => "legacy",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "remote_head" => Some(Self::RemoteHead),
+            "local_convention" => Some(Self::LocalConvention),
+            "current_branch" => Some(Self::CurrentBranch),
+            "first_local" => Some(Self::FirstLocal),
+            "default" => Some(Self::Default),
+            "legacy" => Some(Self::Legacy),
+            _ => None,
+        }
+    }
+
+    fn is_provisional(self) -> bool {
+        matches!(self, Self::CurrentBranch | Self::FirstLocal | Self::Default)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +100,7 @@ impl Database {
             CREATE TABLE IF NOT EXISTS repo_meta (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 base_branch TEXT NOT NULL,
+                base_branch_source TEXT NOT NULL DEFAULT 'legacy',
                 schema_version INTEGER NOT NULL,
                 push_target TEXT NULL,
                 canonical_repo TEXT NULL,
@@ -77,6 +118,7 @@ impl Database {
             ",
         )?;
         for (name, ty) in [
+            ("base_branch_source", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("push_target", "TEXT NULL"),
             ("canonical_repo", "TEXT NULL"),
             ("fork_repo", "TEXT NULL"),
@@ -89,7 +131,7 @@ impl Database {
             }
         }
         self.conn
-            .execute("UPDATE repo_meta SET schema_version = 2 WHERE id = 1", [])?;
+            .execute("UPDATE repo_meta SET schema_version = 3 WHERE id = 1", [])?;
         Ok(())
     }
 
@@ -105,44 +147,79 @@ impl Database {
         Ok(false)
     }
 
-    pub fn set_base_branch_if_missing(&self, base_branch: &str) -> Result<()> {
+    pub fn set_base_branch_if_missing(
+        &self,
+        base_branch: &str,
+        source: BaseBranchSource,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO repo_meta(id, base_branch, schema_version)
-             VALUES (1, ?1, 2)
+            "INSERT INTO repo_meta(id, base_branch, base_branch_source, schema_version)
+             VALUES (1, ?1, ?2, 3)
              ON CONFLICT(id) DO NOTHING",
-            params![base_branch],
+            params![base_branch, source.as_str()],
         )?;
         Ok(())
     }
 
-    pub fn set_base_branch(&self, base_branch: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE repo_meta SET base_branch = ?1 WHERE id = 1",
-            params![base_branch],
-        )?;
+    pub fn reconcile_base_branch(
+        &self,
+        observed: &RepoMeta,
+        candidate: &str,
+        candidate_source: BaseBranchSource,
+        observed_branch_exists: bool,
+    ) -> Result<()> {
+        let should_replace = !observed_branch_exists
+            || (observed.base_branch_source.is_provisional()
+                && candidate_source == BaseBranchSource::RemoteHead);
+        if should_replace {
+            self.conn.execute(
+                "UPDATE repo_meta
+                 SET base_branch = ?1, base_branch_source = ?2
+                 WHERE id = 1 AND base_branch = ?3 AND base_branch_source = ?4",
+                params![
+                    candidate,
+                    candidate_source.as_str(),
+                    observed.base_branch,
+                    observed.base_branch_source.as_str()
+                ],
+            )?;
+        }
         Ok(())
     }
 
     pub fn repo_meta(&self) -> Result<RepoMeta> {
-        self.conn
+        let raw = self
+            .conn
             .query_row(
-                "SELECT base_branch, push_target, canonical_repo, fork_repo,
+                "SELECT base_branch, base_branch_source, push_target, canonical_repo, fork_repo,
                         push_permission, permission_checked_at
                  FROM repo_meta WHERE id = 1",
                 [],
                 |row| {
-                    Ok(RepoMeta {
-                        base_branch: row.get(0)?,
-                        push_target: row.get(1)?,
-                        canonical_repo: row.get(2)?,
-                        fork_repo: row.get(3)?,
-                        push_permission: row.get(4)?,
-                        permission_checked_at: row.get(5)?,
-                    })
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
                 },
             )
             .optional()?
-            .ok_or_else(|| anyhow!("repo metadata missing"))
+            .ok_or_else(|| anyhow!("repo metadata missing"))?;
+        let source = BaseBranchSource::parse(&raw.1)
+            .ok_or_else(|| anyhow!("invalid cached base branch source '{}'", raw.1))?;
+        Ok(RepoMeta {
+            base_branch: raw.0,
+            base_branch_source: source,
+            push_target: raw.2,
+            canonical_repo: raw.3,
+            fork_repo: raw.4,
+            push_permission: raw.5,
+            permission_checked_at: raw.6,
+        })
     }
 
     pub fn set_push_target(&self, target: &str) -> Result<()> {
@@ -564,7 +641,8 @@ mod tests {
     fn repository_push_configuration_round_trips_and_auto_clears_cache() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("stack.db")).unwrap();
-        db.set_base_branch_if_missing("main").unwrap();
+        db.set_base_branch_if_missing("main", BaseBranchSource::LocalConvention)
+            .unwrap();
         db.set_push_target("upstream").unwrap();
         db.set_placement_cache("acme/repo", Some("alice/repo"), Some("WRITE"), 123)
             .unwrap();
@@ -581,6 +659,60 @@ mod tests {
         assert_eq!(meta.push_target.as_deref(), Some("auto"));
         assert!(meta.push_permission.is_none());
         assert!(meta.permission_checked_at.is_none());
+    }
+
+    #[test]
+    fn authoritative_remote_head_replaces_only_provisional_base_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let provisional_path = dir.path().join("provisional.db");
+        let provisional = Database::open(&provisional_path).unwrap();
+        provisional
+            .set_base_branch_if_missing("feat/work", BaseBranchSource::CurrentBranch)
+            .unwrap();
+        let observed = provisional.repo_meta().unwrap();
+        provisional
+            .reconcile_base_branch(&observed, "production", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+        let meta = provisional.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "production");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::RemoteHead);
+
+        let stable_path = dir.path().join("stable.db");
+        let stable = Database::open(&stable_path).unwrap();
+        stable
+            .set_base_branch_if_missing("main", BaseBranchSource::LocalConvention)
+            .unwrap();
+        let observed = stable.repo_meta().unwrap();
+        stable
+            .reconcile_base_branch(&observed, "trunk", BaseBranchSource::RemoteHead, true)
+            .unwrap();
+        let meta = stable.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "main");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::LocalConvention);
+    }
+
+    #[test]
+    fn stale_branch_observation_does_not_overwrite_updated_base_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_base_branch_if_missing("feat/work", BaseBranchSource::CurrentBranch)
+            .unwrap();
+        let observed = db.repo_meta().unwrap();
+
+        db.conn
+            .execute(
+                "UPDATE repo_meta
+                 SET base_branch = 'main', base_branch_source = 'local_convention'
+                 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        db.reconcile_base_branch(&observed, "production", BaseBranchSource::RemoteHead, false)
+            .unwrap();
+
+        let meta = db.repo_meta().unwrap();
+        assert_eq!(meta.base_branch, "main");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::LocalConvention);
     }
 
     #[test]
@@ -602,6 +734,7 @@ mod tests {
         let db = Database::open(&path).unwrap();
         let meta = db.repo_meta().unwrap();
         assert_eq!(meta.base_branch, "main");
+        assert_eq!(meta.base_branch_source, BaseBranchSource::Legacy);
         assert!(meta.push_target.is_none());
         let version: i64 = db
             .conn
@@ -611,6 +744,6 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
     }
 }

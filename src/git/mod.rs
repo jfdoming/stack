@@ -5,6 +5,8 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, anyhow};
 use url::Url;
 
+use crate::db::BaseBranchSource;
+
 #[derive(Debug, Clone)]
 pub struct Git {
     root: PathBuf,
@@ -20,6 +22,12 @@ pub struct RemoteInfo {
 #[derive(Debug, Clone)]
 pub struct StashHandle {
     pub reference: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BaseBranchCandidate {
+    pub name: String,
+    pub source: BaseBranchSource,
 }
 
 impl Git {
@@ -297,7 +305,8 @@ impl Git {
         Ok(base_remote.to_string())
     }
 
-    pub fn default_base_branch(&self) -> Result<String> {
+    pub fn default_base_branch(&self) -> Result<BaseBranchCandidate> {
+        let local = self.local_branches()?;
         let output = Command::new("git")
             .current_dir(&self.root)
             .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
@@ -306,25 +315,41 @@ impl Git {
 
         if output.status.success() {
             let val = String::from_utf8(output.stdout)?.trim().to_string();
-            if let Some(branch) = val.strip_prefix("refs/remotes/origin/") {
-                return Ok(branch.to_string());
+            if let Some(branch) = val.strip_prefix("refs/remotes/origin/")
+                && local.iter().any(|local_branch| local_branch == branch)
+            {
+                return Ok(BaseBranchCandidate {
+                    name: branch.to_string(),
+                    source: BaseBranchSource::RemoteHead,
+                });
             }
         }
 
-        let local = self.local_branches()?;
         for conventional in ["main", "master", "trunk", "develop"] {
             if local.iter().any(|branch| branch == conventional) {
-                return Ok(conventional.to_string());
+                return Ok(BaseBranchCandidate {
+                    name: conventional.to_string(),
+                    source: BaseBranchSource::LocalConvention,
+                });
             }
         }
         let current = self.current_branch()?;
         if !current.is_empty() {
-            return Ok(current);
+            return Ok(BaseBranchCandidate {
+                name: current,
+                source: BaseBranchSource::CurrentBranch,
+            });
         }
-        Ok(local
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "main".to_string()))
+        if let Some(name) = local.into_iter().next() {
+            return Ok(BaseBranchCandidate {
+                name,
+                source: BaseBranchSource::FirstLocal,
+            });
+        }
+        Ok(BaseBranchCandidate {
+            name: "main".to_string(),
+            source: BaseBranchSource::Default,
+        })
     }
 
     pub fn remote_web_url(&self, remote: &str) -> Result<Option<String>> {

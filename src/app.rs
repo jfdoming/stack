@@ -27,11 +27,15 @@ impl AppContext {
         let db_path = prepare_stack_db_path(&git)?;
         let db = Database::open(&db_path)?;
         let default_base = git.default_base_branch()?;
-        db.set_base_branch_if_missing(&default_base)?;
-        let cached_base = db.repo_meta()?.base_branch;
-        if cached_base != default_base && !git.branch_exists(&cached_base)? {
-            db.set_base_branch(&default_base)?;
-        }
+        db.set_base_branch_if_missing(&default_base.name, default_base.source)?;
+        let cached_base = db.repo_meta()?;
+        let cached_base_exists = git.branch_exists(&cached_base.base_branch)?;
+        db.reconcile_base_branch(
+            &cached_base,
+            &default_base.name,
+            default_base.source,
+            cached_base_exists,
+        )?;
         let base_branch = db.repo_meta()?.base_branch;
         let base_remote = git.base_remote_for_stack(&base_branch)?;
         let provider = GithubProvider::new(git.clone(), cli.global.debug);
