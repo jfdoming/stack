@@ -113,6 +113,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitised before display to avoid terminal control-character injection; rendered HTTP(S) links are structurally parsed and stripped of user information, query strings, and fragments before they reach terminal, browser, or PR-body output.
 - Batched GitHub GraphQL lookups pass branch names as raw string fields so GitHub CLI cannot apply `@file` or typed-value substitution to ref names.
+- The privileged draft-release handoff accepts only successful same-repository `main` push runs and downloads artifacts through the triggering run's ID; pull-request runs cannot cross the privilege boundary even when their head branch is named `main`.
 - Generated markdown link labels and branch path segments in stack-managed PR/compare content are escaped/URL-encoded to reduce malformed-link and markdown-injection risks.
 
 ## Doctor behaviour

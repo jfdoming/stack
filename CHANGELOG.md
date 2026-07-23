@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.8 - 2026-07-22
+- Restricted draft releases to successful same-repository `main` push runs, kept artifact downloads scoped to the triggering run ID, and made the build workflow token read-only.
+
 ## 0.18.7 - 2026-07-22
 - Passed branch names to batched GitHub GraphQL lookups as raw string fields so leading `@` characters cannot trigger GitHub CLI file substitution.
 
