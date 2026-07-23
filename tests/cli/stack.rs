@@ -205,6 +205,28 @@ fn stack_ignores_a_dangling_remote_head_when_discovering_the_base() {
 }
 
 #[test]
+fn stack_does_not_promote_a_dangling_remote_head_with_a_local_namesake() {
+    let repo = init_repo_on_branch("production");
+    run_git(repo.path(), &["checkout", "-b", "feat/work"]);
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "feat/work");
+    assert_eq!(stored_base_source(repo.path()), "current_branch");
+
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/production",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "feat/work");
+    assert_eq!(stored_base_source(repo.path()), "current_branch");
+}
+
+#[test]
 fn stack_repairs_a_missing_cached_base_when_remote_head_becomes_known() {
     let repo = init_repo_on_branch("trunk");
     stack_cmd(repo.path()).assert().success();

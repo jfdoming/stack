@@ -317,6 +317,7 @@ impl Git {
             let val = String::from_utf8(output.stdout)?.trim().to_string();
             if let Some(branch) = val.strip_prefix("refs/remotes/origin/")
                 && local.iter().any(|local_branch| local_branch == branch)
+                && self.ref_exists(&format!("refs/remotes/origin/{branch}"))?
             {
                 return Ok(BaseBranchCandidate {
                     name: branch.to_string(),

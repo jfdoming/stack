@@ -126,7 +126,7 @@
 - Stack tree output no longer shows a separate `PR:none` badge; `[no PR]` is the single missing-PR indicator.
 - `SYNC:never` means a branch has not yet been synced by `stack sync` (no last-synced SHA recorded).
 - Stack metadata lives in Git's common directory so all linked worktrees share one database. A lone legacy per-worktree database is installed through an atomic no-clobber claim; concurrent or conflicting losers are left untouched and reported for manual reconciliation. Schema upgrades are serialised transactionally across concurrent worktrees.
-- Base discovery accepts `origin/HEAD` only when its target also exists locally. Without that authoritative target, it prefers an existing `main`, `master`, `trunk`, or `develop` ref and otherwise records the current-branch fallback as provisional. A later valid remote HEAD can replace that provisional choice, while established conventional and legacy bases remain stable; missing cached refs are repaired on startup.
+- Base discovery accepts `origin/HEAD` only when its remote-tracking target and same-named local branch both exist. Without that authoritative target, it prefers an existing `main`, `master`, `trunk`, or `develop` ref and otherwise records the current-branch fallback as provisional. A later valid remote HEAD can replace that provisional choice, while established conventional and legacy bases remain stable; missing cached refs are repaired on startup.
 - Interactive prompt Ctrl-C handling uses the Dialoguer workaround from `console-rs/dialoguer#294`:
   - install a no-op `ctrlc` handler at startup,
   - on prompt errors, call `dialoguer::console::Term::stdout().show_cursor()` and `Term::stderr().show_cursor()`.
