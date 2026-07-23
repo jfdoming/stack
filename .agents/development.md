@@ -67,6 +67,7 @@
 - `stack sync` only advances the local base branch when a direct child PR is marked merged and includes a merge commit SHA; the base branch is fast-forwarded to that exact merge commit (not beyond later base-branch commits).
 - If a branch is known merged (fresh PR metadata or cached merged state), sync skips direct mutation ops for that branch and only processes its descendants.
 - Sync no longer re-plans redundant restacks on repeated runs once descendants already contain the merged-parent target commit.
+- When the base branch already contains a merged direct child's merge commit, sync persists the current advanced base SHA so later runs do not re-plan descendant restacks.
 - When no merge/restack/metadata updates are needed, `stack sync --dry-run` now emits an empty operation list (no no-op fetch/update entries).
 - When a non-dry-run sync plan is empty, `stack sync` exits early with `sync already up to date` and skips apply bookkeeping.
 - When every tracked non-base branch in the stack is merged, `stack sync` prunes merged local branches and removes their stack metadata records (leaf-first).

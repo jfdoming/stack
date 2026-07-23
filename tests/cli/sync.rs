@@ -948,7 +948,7 @@ fn sync_does_not_restack_cached_merged_direct_child_when_base_sha_changes() {
 
 #[cfg(unix)]
 #[test]
-fn sync_skips_update_base_when_base_already_contains_merge_commit() {
+fn sync_updates_base_sha_when_base_already_contains_merge_commit() {
     let repo = init_repo_without_origin();
     let origin_bare = repo.path().join("origin.git");
     let upstream_bare = repo.path().join("upstream.git");
@@ -1033,6 +1033,33 @@ fn sync_skips_update_base_when_base_already_contains_merge_commit() {
     run_git(repo.path(), &["fetch", "upstream"]);
     run_git(repo.path(), &["merge", "--ff-only", "upstream/main"]);
 
+    let current_main_sha = {
+        let output = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "main"])
+            .output()
+            .expect("rev-parse current main sha");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string()
+    };
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/active"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches SET last_synced_head_sha = ?1 WHERE name = 'main'",
+        [&merged_sha],
+    )
+    .expect("seed stale main sync sha");
+
     let fake_bin = repo.path().join("fake-bin-skip-update-base");
     fs::create_dir_all(&fake_bin).expect("create fake bin dir");
     let fake_gh = fake_bin.join("gh");
@@ -1064,6 +1091,50 @@ fn sync_skips_update_base_when_base_already_contains_merge_commit() {
     assert!(
         !has_update_base,
         "expected no update_base op when base already contains merged commit"
+    );
+    let has_update_sha = ops.iter().any(|op| {
+        op["kind"] == "update_sha"
+            && op["branch"] == "main"
+            && op["details"] == current_main_sha
+    });
+    assert!(
+        has_update_sha,
+        "expected current base SHA to be persisted when it already contains the merge commit"
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    let stored_main_sha: String = conn
+        .query_row(
+            "SELECT last_synced_head_sha FROM branches WHERE name = 'main'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read stored main sync sha");
+    assert_eq!(stored_main_sha, current_main_sha);
+
+    let repeated = stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("run repeated sync dry-run");
+    assert!(
+        repeated.status.success(),
+        "repeated sync dry-run failed: {}",
+        String::from_utf8_lossy(&repeated.stderr)
+    );
+    let repeated_json: Value =
+        serde_json::from_slice(&repeated.stdout).expect("valid repeated sync json");
+    let repeated_ops = repeated_json["operations"]
+        .as_array()
+        .expect("repeated operations array");
+    assert!(
+        repeated_ops.is_empty(),
+        "expected no repeated sync operations, got {repeated_ops:?}"
     );
 }
 

@@ -33,6 +33,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
 - Branches marked merged (from fresh PR metadata or cached merged state) are excluded from direct sync restack/update operations; only descendants are considered for follow-up restacks.
 - Merged-parent descendant restacks are gated by ancestry checks so repeated sync runs do not keep emitting no-op restack plans.
+- When the base already contains a merged direct child's merge commit, sync records the base's current SHA instead of leaving the prior merge SHA stale.
 - Sync planning prunes no-op operations (fetch/update-sha/update-base) when branch sync state is already current.
 - Sync execution short-circuits when the computed plan has zero operations.
 - Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged.

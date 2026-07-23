@@ -336,11 +336,8 @@ pub fn build_sync_plan(
                 }
             }
         }
-        let has_base_merge_update = base_merge_commit_to_apply
-            .as_deref()
-            .is_some_and(|merge_commit| branch.name == base_branch && merge_commit != current_sha);
         if !is_merged_pr
-            && !has_base_merge_update
+            && branch.name != base_branch
             && branch.last_synced_head_sha.as_deref() != Some(current_sha.as_str())
         {
             ops.push(SyncOp::UpdateSha {
@@ -350,8 +347,9 @@ pub fn build_sync_plan(
         }
     }
 
+    let base_current_sha = current_sha_by_branch.get(base_branch).cloned();
+    let mut base_will_move = false;
     if let Some(merge_commit) = base_merge_commit_to_apply {
-        let base_current_sha = current_sha_by_branch.get(base_branch).cloned();
         let base_already_contains_merge = if let Some(base_sha) = base_current_sha.as_deref() {
             if base_sha == merge_commit {
                 true
@@ -364,6 +362,7 @@ pub fn build_sync_plan(
             false
         };
         if !base_already_contains_merge {
+            base_will_move = true;
             needs_fetch = true;
             ops.insert(
                 0,
@@ -373,6 +372,16 @@ pub fn build_sync_plan(
                 },
             );
         }
+    }
+    if !base_will_move
+        && let Some(base_sha) = base_current_sha
+        && let Some(base) = tracked.iter().find(|branch| branch.name == base_branch)
+        && base.last_synced_head_sha.as_deref() != Some(base_sha.as_str())
+    {
+        ops.push(SyncOp::UpdateSha {
+            branch: base_branch.to_string(),
+            sha: base_sha,
+        });
     }
 
     let mut seen_restack = HashSet::new();

@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.1 - 2026-07-22
+- Fixed repeated `stack sync` restacks when the base branch has advanced beyond an already-contained merged child commit by persisting the current base SHA.
+
 ## 0.18.0 - 2026-07-22
 - Added permission-aware placement for new stacks: `stack` now distinguishes Git tracking from canonical/fork repository placement, detects cached GitHub write access, and keeps descendants in their established repository.
 - Added `stack config push-target [auto|upstream|fork]` plus matching `stack pr` and `stack push` overrides, with conflict validation that never migrates existing upstreams automatically.
