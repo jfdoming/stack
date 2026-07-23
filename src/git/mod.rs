@@ -1,11 +1,14 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use url::Url;
 
 use crate::db::BaseBranchSource;
+
+static NEXT_AUTO_STASH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct Git {
@@ -266,9 +269,14 @@ impl Git {
     }
 
     pub fn stash_push(&self, reason: &str) -> Result<Option<StashHandle>> {
+        let marker = format!(
+            "{reason} [stack-auto-stash:{}:{}]",
+            std::process::id(),
+            NEXT_AUTO_STASH_ID.fetch_add(1, Ordering::Relaxed)
+        );
         let status = Command::new("git")
             .current_dir(&self.root)
-            .args(["stash", "push", "-u", "-m", reason])
+            .args(["stash", "push", "-u", "-m", &marker])
             .output()
             .context("failed to run git stash push")?;
         if !status.status.success() {
@@ -281,13 +289,17 @@ impl Git {
         if stdout.contains("No local changes to save") {
             return Ok(None);
         }
-        Ok(Some(StashHandle {
-            reference: "stash@{0}".to_string(),
-        }))
+        let entries = self.capture(["stash", "list", "--format=%H%x09%gs"])?;
+        let reference = entries
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find_map(|(oid, subject)| subject.ends_with(&marker).then(|| oid.to_string()))
+            .ok_or_else(|| anyhow!("could not identify the auto-stash created for this sync"))?;
+        Ok(Some(StashHandle { reference }))
     }
 
-    pub fn stash_pop(&self, stash: &StashHandle) -> Result<()> {
-        self.run(["stash", "pop", &stash.reference])
+    pub fn stash_restore(&self, stash: &StashHandle) -> Result<()> {
+        self.run(["stash", "apply", &stash.reference])
     }
 
     pub fn fetch_remote(&self, remote: &str) -> Result<()> {
@@ -887,6 +899,33 @@ mod tests {
         );
 
         git.fetch_remote("--all").expect("fetch only --all remote");
+    }
+
+    #[test]
+    fn stash_restore_uses_the_created_stash_after_an_intervening_stash() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        std::fs::write(repo.path().join("file.txt"), "initial\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "initial"]);
+
+        std::fs::write(repo.path().join("file.txt"), "stack changes\n").unwrap();
+        let stash = git
+            .stash_push("stack-sync-auto-stash")
+            .unwrap()
+            .expect("stack stash");
+
+        std::fs::write(repo.path().join("file.txt"), "other changes\n").unwrap();
+        run_test_git(repo.path(), &["stash", "push", "-m", "intervening stash"]);
+
+        git.stash_restore(&stash).expect("restore stack stash");
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("file.txt")).unwrap(),
+            "stack changes\n"
+        );
+        let remaining = git.capture(["stash", "list"]).unwrap();
+        assert!(remaining.contains("intervening stash"));
     }
 
     #[test]

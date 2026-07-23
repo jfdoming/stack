@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.18 - 2026-07-22
+- Identified each sync auto-stash by its immutable object ID and restored that exact object, so a newer stash from another linked worktree cannot be applied or dropped by mistake.
+- Retained successfully restored auto-stashes as recovery entries because Git cannot safely drop a shared stash reflog entry by object ID under concurrent updates.
+
 ## 0.18.17 - 2026-07-22
 - Required both the local base branch and the matching remote-tracking ref to exist before treating `origin/HEAD` as authoritative, so a dangling symbolic ref cannot make a local namesake replace a provisional base.
 

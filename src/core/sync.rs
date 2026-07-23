@@ -818,12 +818,17 @@ pub fn execute_sync_plan(
                 .current_branch()
                 .is_ok_and(|current| current == starting_branch);
         if original_branch_restored {
-            if let Err(err) = git.stash_pop(&stash_handle) {
+            if let Err(err) = git.stash_restore(&stash_handle) {
                 stash_restore_error = Some(anyhow!(
                     "could not auto-restore stash {} on '{}': {err}",
                     stash_handle.reference,
                     starting_branch
                 ));
+            } else {
+                eprintln!(
+                    "note: restored auto-stash {}; its recovery entry remains in git stash list",
+                    stash_handle.reference
+                );
             }
         } else {
             stash_restore_error = Some(anyhow!(

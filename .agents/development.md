@@ -52,7 +52,7 @@
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
 - `stack doctor --fix` also repairs detected parent-link cycles without detaching non-cycle descendants, clears invalid base-parent links, and resets incomplete PR cache fields.
 - After `stack sync` applies operations, it restores the branch that was checked out before the sync run started. When a clean checked-out merged branch is itself pruned, sync leaves the repository on the base branch.
-- Sync refuses to prune the checked-out branch while its worktree is dirty. Auto-stashes are restored only after the original branch is re-established; otherwise the stash is retained and sync fails with its stash reference.
+- Sync refuses to prune the checked-out branch while its worktree is dirty. Auto-stashes are captured and restored by immutable object ID only after the original branch is re-established, so another linked worktree cannot shift the selected stash. The recovery entry remains in `git stash list` after a successful apply; on unsafe branch restoration, sync leaves it unapplied and fails with its object ID.
 - During `stack sync`, open PR bodies are refreshed to keep the managed stack-flow section current; user-written text outside managed markers is preserved.
 - During `stack sync`, open PR base branches are corrected to match each branch’s tracked parent (or the repo base branch when no tracked parent exists).
 - Repository push placement is independent of the base branch's Git tracking remote. New stack roots use the configured `auto`, `upstream`, or `fork` policy; descendants inherit their nearest published ancestor's repository.
