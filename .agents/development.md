@@ -59,6 +59,7 @@
 - `auto` performs one GitHub topology/permission lookup when placement is first needed, persists the policy in `.git/stack.db`, and caches successful detection for 24 hours. Interactive first pushes prompt; non-interactive/`--yes` pushes persist automatic detection.
 - `stack pr --push-target` and `stack push --push-target` override placement for unpushed branches and fail before pushing when an existing upstream conflicts.
 - Remote resolution compares fetch and push URLs separately and supports custom remote names. Rejected upstream pushes stop without a fork fallback.
+- Dynamic remote names are always passed after Git's option terminator, including fetch and URL lookup; option-like names such as `--all` remain literal remotes.
 - A fork-hosted root branch can target the canonical base branch, but `stack pr` blocks a child whose parent exists only in the fork because GitHub cannot use that cross-repository base.
 - During `stack sync`, PR base updates are skipped with a warning when the target base branch lives in a different repo from the PR and GitHub cannot accept the cross-repo base.
 - After non-dry-run `stack sync` in interactive TTY mode, stack offers a follow-up prompt to run `stack push`; `--yes` auto-accepts that prompt in TTY mode.

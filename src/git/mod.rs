@@ -295,7 +295,7 @@ impl Git {
             eprintln!("warning: no '{remote}' remote configured; skipping fetch");
             return Ok(());
         }
-        self.run(["fetch", remote])
+        self.run(["fetch", "--", remote])
     }
 
     pub fn preferred_sync_remote(&self, base_remote: &str) -> Result<String> {
@@ -367,6 +367,7 @@ impl Git {
             command.arg("--push");
         }
         let output = command
+            .arg("--")
             .arg(remote)
             .output()
             .with_context(|| format!("failed to read {remote} remote URL"))?;
@@ -791,7 +792,101 @@ fn sanitize_terminal_text(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+
+    fn run_test_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .expect("run test git command");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_test_repo() -> (tempfile::TempDir, Git) {
+        let repo = tempfile::tempdir().expect("test repository");
+        run_test_git(repo.path(), &["init", "-b", "main"]);
+        let git = Git {
+            root: repo.path().to_path_buf(),
+        };
+        (repo, git)
+    }
+
+    #[test]
+    fn remote_url_treats_an_option_like_remote_name_as_an_operand() {
+        let (repo, git) = init_test_repo();
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "remote.--all.url",
+                "https://github.com/acme/stack-test.git",
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "remote.--all.fetch",
+                "+refs/heads/*:refs/remotes/--all/*",
+            ],
+        );
+
+        assert_eq!(
+            git.remote_web_url("--all").unwrap().as_deref(),
+            Some("https://github.com/acme/stack-test")
+        );
+    }
+
+    #[test]
+    fn fetch_treats_an_option_like_remote_name_as_a_single_operand() {
+        let (repo, git) = init_test_repo();
+        let remote = tempfile::tempdir().expect("remote repository");
+        run_test_git(remote.path(), &["init", "--bare"]);
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "remote.--all.url",
+                remote.path().to_str().expect("remote path"),
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "remote.--all.fetch",
+                "+refs/heads/*:refs/remotes/--all/*",
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "remote.broken.url",
+                repo.path()
+                    .join("missing.git")
+                    .to_str()
+                    .expect("missing path"),
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "remote.broken.fetch",
+                "+refs/heads/*:refs/remotes/broken/*",
+            ],
+        );
+
+        git.fetch_remote("--all").expect("fetch only --all remote");
+    }
 
     #[test]
     fn parse_remote_to_web_url_strips_control_characters() {

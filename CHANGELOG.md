@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.15 - 2026-07-22
+- Passed remote names after Git's option terminator during fetch and URL lookup so names such as `--all` remain single literal operands instead of selecting unrelated remotes or recursive fetch behaviour.
+
 ## 0.18.14 - 2026-07-22
 - Recorded how the cached base was discovered so a provisional current-branch fallback can yield to a later authoritative `origin/HEAD`, while established conventional and legacy bases remain stable.
 - Ignored dangling `origin/HEAD` targets during base discovery and made concurrent linked-worktree reconciliation conditional on the exact cached metadata originally observed.

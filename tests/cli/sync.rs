@@ -2151,7 +2151,7 @@ fn sync_skips_pr_base_update_when_target_branch_is_in_different_repo() {
     fs::write(
         &fake_git,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"ls-remote\" ]]; then\n  printf '{}\\trefs/heads/main\\n'\n  exit 0\nfi\nif [[ \"$1\" == \"fetch\" && \"$2\" == \"upstream\" ]]; then\n  exec '{}' update-ref refs/remotes/upstream/main '{}'\nfi\nexec '{}' \"$@\"\n",
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"ls-remote\" ]]; then\n  printf '{}\\trefs/heads/main\\n'\n  exit 0\nfi\nif [[ \"$1\" == \"fetch\" && \"$2\" == \"--\" && \"$3\" == \"upstream\" ]]; then\n  exec '{}' update-ref refs/remotes/upstream/main '{}'\nfi\nexec '{}' \"$@\"\n",
             main_sha, real_git, main_sha, real_git
         ),
     )

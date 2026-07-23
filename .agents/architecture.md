@@ -116,6 +116,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors.
 - Existing PR close/body/base mutations use the repository and verified head identity returned by lookup; bare PR numbers are never mutated outside their repository scope.
 - Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
+- Git fetch, URL lookup, remote inspection, and push commands terminate option parsing before dynamic remote operands, so option-like remote names cannot select command modes.
 - Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
 - Remote URLs derived from git config are sanitised before display to avoid terminal control-character injection; rendered HTTP(S) links are structurally parsed and stripped of user information, query strings, and fragments before they reach terminal, browser, or PR-body output.
 - Batched GitHub GraphQL lookups pass branch names as raw string fields so GitHub CLI cannot apply `@file` or typed-value substitution to ref names.
