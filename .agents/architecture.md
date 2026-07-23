@@ -37,7 +37,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Every restack operation also captures the child head reviewed during planning. Replay uses that immutable commit range, rebase uses a temporary recovery branch, and the real child ref is finalized with an expected-old compare-and-swap so another process cannot inject or lose commits between review and mutation.
 - Applies restacks parent-first and persists their sync SHAs only after every planned operation succeeds.
 - For merged-parent child restacks, execution uses the merged parent branch tip as `old_base` so parent commits are not replayed again over squash-merged base history.
-- When a direct child of the base branch is merged and exposes a merge commit SHA, sync fast-forwards the local base branch to that exact merge commit.
+- Fresh merge commits from all direct children of the base are applied as one batch. After fetch, sync selects the unique candidate that contains every merged commit and is a descendant of the current base, then fast-forwards once; incomparable or divergent candidates fail before any base mutation.
 - Branches marked merged (from fresh PR metadata or cached merged state) are excluded from direct sync restack/update operations; only descendants are considered for follow-up restacks.
 - Merged-parent descendant restacks are gated by ancestry checks so repeated sync runs do not keep emitting no-op restack plans.
 - When the base already contains a merged direct child's merge commit, sync records the base's current SHA instead of leaving the prior merge SHA stale.

@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.23 - 2026-07-22
+- Batched merge commits from every freshly merged direct child and advanced the local base once to the unique newest commit containing all of them, independent of branch-name order.
+- Failed before moving the base when merged-child commits were incomparable or the local base could not fast-forward to their common newest candidate.
+
 ## 0.18.22 - 2026-07-22
 - Let a verified remote HEAD replace or upgrade cached heuristic base discovery, including conventional local names and metadata migrated with legacy provenance.
 - Migrated an existing tracked root in the same transaction by making the authoritative base parentless, reparenting direct stack roots, and removing the obsolete inferred base record.

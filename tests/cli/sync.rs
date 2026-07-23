@@ -412,7 +412,7 @@ fn sync_refuses_a_restack_when_the_child_changes_after_planning() {
         &["update-ref", "refs/heads/feat/root", &planned_head],
     );
     stack_cmd(repo.path())
-        .env("PATH", test_path)
+        .env("PATH", &test_path)
         .env("STACK_TEST_FORCE_REBASE", "1")
         .args(["sync", "--yes"])
         .assert()
@@ -1266,6 +1266,130 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
         !child_restack,
         "expected no repeated child restack once already based on merged commit"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_advances_base_to_the_newest_of_all_merged_direct_children() {
+    let repo = init_repo_without_origin();
+    run_git(repo.path(), &["checkout", "-b", "remote-main"]);
+    fs::write(repo.path().join("first.txt"), "first merge\n").expect("write first merge");
+    run_git(repo.path(), &["add", "first.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merge alpha"]);
+    let first_merge = git_ref_sha(repo.path(), "HEAD").expect("first merge oid");
+    fs::write(repo.path().join("second.txt"), "second merge\n").expect("write second merge");
+    run_git(repo.path(), &["add", "second.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merge zeta"]);
+    let second_merge = git_ref_sha(repo.path(), "HEAD").expect("second merge oid");
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "alpha"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "zeta"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let test_path = install_two_merged_root_provider(repo.path(), &first_merge, &second_merge);
+
+    stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(second_merge),
+        "base must include every merged direct child regardless of branch-name order"
+    );
+
+    let repeated = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .expect("plan repeated merged-root sync");
+    assert!(repeated.status.success());
+    let repeated_plan: Value = serde_json::from_slice(&repeated.stdout).expect("valid sync plan");
+    let operations = repeated_plan["operations"]
+        .as_array()
+        .expect("operations array");
+    assert!(
+        !operations.iter().any(|op| op["kind"] == "update_base"),
+        "expected no repeated base advance after all merged roots were applied: {operations:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_preserves_base_when_merged_direct_children_are_incomparable() {
+    let repo = init_repo_without_origin();
+    let original_base = git_ref_sha(repo.path(), "refs/heads/main").expect("original base");
+
+    run_git(repo.path(), &["checkout", "-b", "merge-alpha"]);
+    fs::write(repo.path().join("alpha.txt"), "alpha merge\n").expect("write alpha merge");
+    run_git(repo.path(), &["add", "alpha.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merge alpha independently"]);
+    let alpha_merge = git_ref_sha(repo.path(), "HEAD").expect("alpha merge oid");
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["checkout", "-b", "merge-zeta"]);
+    fs::write(repo.path().join("zeta.txt"), "zeta merge\n").expect("write zeta merge");
+    run_git(repo.path(), &["add", "zeta.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merge zeta independently"]);
+    let zeta_merge = git_ref_sha(repo.path(), "HEAD").expect("zeta merge oid");
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "alpha"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "zeta"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    let test_path = install_two_merged_root_provider(repo.path(), &alpha_merge, &zeta_merge);
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "merged direct-child commits do not form one fast-forward history",
+        ));
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/main"),
+        Some(original_base),
+        "an invalid merged-commit set must not partially advance the base"
+    );
+}
+
+#[cfg(unix)]
+fn install_two_merged_root_provider(repo: &Path, alpha_merge: &str, zeta_merge: &str) -> String {
+    let fake_bin = repo.join("fake-bin-multiple-merged-roots");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"alpha\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"zeta\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            alpha_merge, zeta_merge
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    )
 }
 
 #[cfg(unix)]

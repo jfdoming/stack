@@ -71,7 +71,7 @@
 - Parent restacks run before descendants, and sync SHAs are persisted only after the complete plan succeeds.
 - For child restacks after a merged parent PR (including squash merges), sync anchors replay/rebase `old-base` to the merged parent branch tip so parent commits are dropped and only child commits are replayed.
 - In fork workflows, `stack sync` fetches `upstream` when present (instead of `origin`) so merged-parent commit SHAs can be resolved locally before replay/rebase.
-- `stack sync` only advances the local base branch when a direct child PR is marked merged and includes a merge commit SHA; the base branch is fast-forwarded to that exact merge commit (not beyond later base-branch commits).
+- `stack sync` collects merge commits from every freshly merged direct child PR and fast-forwards the local base once to the unique newest candidate containing them all (not beyond later unrelated base commits). Incomparable candidates or a diverged local base fail before mutation.
 - If a branch is known merged (fresh PR metadata or cached merged state), sync skips direct mutation ops for that branch and only processes its descendants.
 - Sync no longer re-plans redundant restacks on repeated runs once descendants already contain the merged-parent target commit.
 - When the base branch already contains a merged direct child's merge commit, sync persists the current advanced base SHA so later runs do not re-plan descendant restacks.

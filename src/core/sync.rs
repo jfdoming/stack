@@ -17,9 +17,9 @@ pub enum SyncOp {
         expected_base_ref: Option<String>,
         expected_base_sha: Option<String>,
     },
-    UpdateBaseToMergeCommit {
+    UpdateBaseToMergedCommits {
         branch: String,
-        merge_commit: String,
+        merge_commits: Vec<String>,
     },
     Restack {
         branch: String,
@@ -72,14 +72,17 @@ impl SyncPlan {
                     onto: None,
                     details: format!("fetch {remote}"),
                 }),
-                SyncOp::UpdateBaseToMergeCommit {
+                SyncOp::UpdateBaseToMergedCommits {
                     branch,
-                    merge_commit,
+                    merge_commits,
                 } => operations.push(OperationView {
                     kind: "update_base".to_string(),
                     branch: branch.clone(),
-                    onto: Some(merge_commit.clone()),
-                    details: format!("ff-only to merged commit {merge_commit}"),
+                    onto: (merge_commits.len() == 1).then(|| merge_commits[0].clone()),
+                    details: format!(
+                        "ff-only to the newest commit containing merged commits {}",
+                        merge_commits.join(", ")
+                    ),
                 }),
                 SyncOp::Restack {
                     branch,
@@ -190,7 +193,7 @@ pub fn build_sync_plan(
     let mut current_sha_by_branch: HashMap<String, String> = HashMap::new();
     let mut by_id: HashMap<i64, BranchRecord> = HashMap::new();
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
-    let mut base_merge_commit_to_apply: Option<String> = None;
+    let mut base_merge_commits = Vec::new();
     let mut merged_state_by_branch: HashMap<String, bool> = HashMap::new();
 
     for b in &tracked {
@@ -240,10 +243,9 @@ pub fn build_sync_plan(
                     .and_then(|parent_id| by_id.get(&parent_id))
                     .is_some_and(|parent| parent.name == base_branch);
                 if is_direct_child_of_base
-                    && base_merge_commit_to_apply.is_none()
                     && let Some(merge_commit_oid) = merge_commit_oid.as_deref()
                 {
-                    base_merge_commit_to_apply = Some(merge_commit_oid.to_string());
+                    base_merge_commits.push(merge_commit_oid.to_string());
                 }
             }
         }
@@ -338,26 +340,38 @@ pub fn build_sync_plan(
 
     let base_current_sha = current_sha_by_branch.get(base_branch).cloned();
     let mut base_will_move = false;
-    if let Some(merge_commit) = base_merge_commit_to_apply {
-        let base_already_contains_merge = if let Some(base_sha) = base_current_sha.as_deref() {
-            if base_sha == merge_commit {
-                true
-            } else if git.ref_exists(&merge_commit)? {
-                git.is_ancestor(&merge_commit, base_branch)?
-            } else {
-                false
+    base_merge_commits.sort();
+    base_merge_commits.dedup();
+    if !base_merge_commits.is_empty() {
+        let base_already_contains_all = if base_current_sha.is_some() {
+            let mut contains_all = true;
+            for merge_commit in &base_merge_commits {
+                if !git.ref_exists(merge_commit)? || !git.is_ancestor(merge_commit, base_branch)? {
+                    contains_all = false;
+                    break;
+                }
             }
+            contains_all
         } else {
             false
         };
-        if !base_already_contains_merge {
+        if !base_already_contains_all {
+            if base_merge_commits
+                .iter()
+                .map(|commit| git.ref_exists(commit))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .all(|exists| exists)
+            {
+                newest_merged_base_commit(git, base_branch, &base_merge_commits)?;
+            }
             base_will_move = true;
             needs_fetch = true;
             ops.insert(
                 0,
-                SyncOp::UpdateBaseToMergeCommit {
+                SyncOp::UpdateBaseToMergedCommits {
                     branch: base_branch.to_string(),
-                    merge_commit,
+                    merge_commits: base_merge_commits,
                 },
             );
         }
@@ -636,6 +650,64 @@ pub fn build_sync_plan(
     Ok((plan, timing))
 }
 
+fn newest_merged_base_commit(
+    git: &Git,
+    base_branch: &str,
+    merge_commits: &[String],
+) -> Result<Option<String>> {
+    let mut commits = merge_commits
+        .iter()
+        .map(|commit| git.resolve_commit(commit))
+        .collect::<Result<Vec<_>>>()?;
+    commits.sort();
+    commits.dedup();
+    if commits.is_empty() {
+        return Err(anyhow!("cannot advance base without merged commit IDs"));
+    }
+
+    let base_head = git.head_sha(base_branch)?;
+    let mut base_contains_all = true;
+    for commit in &commits {
+        if !git.is_ancestor(commit, &base_head)? {
+            base_contains_all = false;
+            break;
+        }
+    }
+    if base_contains_all {
+        return Ok(None);
+    }
+
+    let mut targets = Vec::new();
+    for candidate in &commits {
+        let mut contains_all = true;
+        for commit in &commits {
+            if !git.is_ancestor(commit, candidate)? {
+                contains_all = false;
+                break;
+            }
+        }
+        if contains_all {
+            targets.push(candidate.clone());
+        }
+    }
+    let target = match targets.as_slice() {
+        [target] => target,
+        _ => {
+            return Err(anyhow!(
+                "cannot safely advance '{}': merged direct-child commits do not form one fast-forward history",
+                base_branch
+            ));
+        }
+    };
+    if !git.is_ancestor(&base_head, target)? {
+        return Err(anyhow!(
+            "cannot safely advance '{}': the local base has diverged from the newest merged direct-child commit",
+            base_branch
+        ));
+    }
+    Ok(Some(target.clone()))
+}
+
 fn safe_restack_old_base(git: &Git, parent: &str, child: &str) -> Result<String> {
     let parent_sha = git.head_sha(parent)?;
     if git.is_ancestor(&parent_sha, child)? {
@@ -730,11 +802,15 @@ pub fn execute_sync_plan(
                         }
                     }
                 }
-                SyncOp::UpdateBaseToMergeCommit {
+                SyncOp::UpdateBaseToMergedCommits {
                     branch,
-                    merge_commit,
+                    merge_commits,
                 } => {
-                    git.fast_forward_branch(branch, merge_commit)?;
+                    if let Some(merge_commit) =
+                        newest_merged_base_commit(git, branch, merge_commits)?
+                    {
+                        git.fast_forward_branch(branch, &merge_commit)?;
+                    }
                     let sha = git.head_sha(branch)?;
                     pending_sync_shas.insert(branch.clone(), sha);
                 }
