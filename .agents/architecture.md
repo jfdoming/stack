@@ -42,7 +42,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - When the base already contains a merged direct child's merge commit, sync records the base's current SHA instead of leaving the prior merge SHA stale.
 - Sync planning prunes no-op operations (fetch/update-sha/update-base) when branch sync state is already current.
 - Sync execution short-circuits when the computed plan has zero operations.
-- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged and every present local tip is contained in its fresh merged PR head. The executor revalidates this proof before each deletion.
+- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged and every present local tip is contained in its fresh merged PR head. The executor revalidates this proof before each deletion, checks linked-worktree occupancy before and after deletion, restores a ref that raced with checkout, deletes with the validated tip as an expected-old compare-and-swap, and best-effort removes only the exact branch's stale configuration after success.
 - Restores the branch that was checked out before sync once plan execution completes. A clean starting branch that is pruned lands on the base branch; a dirty starting branch is never pruned.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - For open PRs discovered during sync, updates both the PR base branch and the managed stack-flow section so GitHub metadata stays aligned with the tracked stack shape.

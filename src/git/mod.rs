@@ -114,6 +114,79 @@ impl Git {
         self.run(["branch", "-D", "--", branch])
     }
 
+    pub fn delete_local_branch_if_unchanged(
+        &self,
+        branch: &str,
+        expected_head: &str,
+    ) -> Result<()> {
+        let branch_ref = local_branch_ref(branch);
+        if self.branch_checked_out_in_worktree(&branch_ref)? {
+            return Err(anyhow!(
+                "refusing to delete '{}': branch is checked out in a worktree",
+                sanitize_terminal_text(branch)
+            ));
+        }
+
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["update-ref", "-d", &branch_ref, expected_head])
+            .output()
+            .with_context(|| format!("failed to conditionally delete branch {branch}"))?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "refusing to delete '{}': branch changed before deletion: {}",
+                sanitize_terminal_text(branch),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        if self.branch_checked_out_in_worktree(&branch_ref)? {
+            let restore = Command::new("git")
+                .current_dir(&self.root)
+                .args(["update-ref", &branch_ref, expected_head, ""])
+                .output()
+                .with_context(|| format!("failed to restore checked-out branch {branch}"))?;
+            if !restore.status.success() {
+                return Err(anyhow!(
+                    "branch '{}' became checked out during deletion and its ref could not be restored safely: {}",
+                    sanitize_terminal_text(branch),
+                    String::from_utf8_lossy(&restore.stderr).trim()
+                ));
+            }
+            return Err(anyhow!(
+                "refusing to delete '{}': branch became checked out in a worktree; its ref was restored",
+                sanitize_terminal_text(branch)
+            ));
+        }
+
+        let section = format!("branch.{branch}");
+        let _ = Command::new("git")
+            .current_dir(&self.root)
+            .args(["config", "--local", "--remove-section", &section])
+            .output();
+        Ok(())
+    }
+
+    fn branch_checked_out_in_worktree(&self, branch_ref: &str) -> Result<bool> {
+        let worktrees = Command::new("git")
+            .current_dir(&self.root)
+            .args(["worktree", "list", "--porcelain", "-z"])
+            .output()
+            .context("failed to inspect linked worktree checkouts")?;
+        if !worktrees.status.success() {
+            return Err(anyhow!(
+                "git worktree list failed before deleting '{}': {}",
+                sanitize_terminal_text(branch_ref),
+                String::from_utf8_lossy(&worktrees.stderr)
+            ));
+        }
+        let checked_out_field = format!("branch {branch_ref}");
+        Ok(worktrees
+            .stdout
+            .split(|byte| *byte == 0)
+            .any(|field| field == checked_out_field.as_bytes()))
+    }
+
     pub fn rename_local_branch(&self, old: &str, new: &str) -> Result<()> {
         self.run(["branch", "-m", "--", old, new])
     }
@@ -926,6 +999,112 @@ mod tests {
         );
         let remaining = git.capture(["stash", "list"]).unwrap();
         assert!(remaining.contains("intervening stash"));
+    }
+
+    #[test]
+    fn conditional_branch_delete_preserves_an_advanced_ref() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        std::fs::write(repo.path().join("file.txt"), "initial\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "initial"]);
+        run_test_git(repo.path(), &["branch", "victim"]);
+        let expected = git.head_sha("victim").unwrap();
+
+        std::fs::write(repo.path().join("file.txt"), "advanced\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "advanced"]);
+        run_test_git(repo.path(), &["update-ref", "refs/heads/victim", "main"]);
+        let advanced = git.head_sha("victim").unwrap();
+
+        let error = git
+            .delete_local_branch_if_unchanged("victim", &expected)
+            .unwrap_err();
+        assert!(error.to_string().contains("changed"));
+        assert_eq!(git.head_sha("victim").unwrap(), advanced);
+    }
+
+    #[test]
+    fn conditional_branch_delete_rejects_a_linked_worktree_checkout() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        std::fs::write(repo.path().join("file.txt"), "initial\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "initial"]);
+        run_test_git(repo.path(), &["branch", "victim"]);
+        let expected = git.head_sha("victim").unwrap();
+        let linked_root = tempfile::tempdir().expect("linked worktree root");
+        let linked = linked_root.path().join("linked");
+        run_test_git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                linked.to_str().expect("linked path"),
+                "victim",
+            ],
+        );
+
+        let error = git
+            .delete_local_branch_if_unchanged("victim", &expected)
+            .unwrap_err();
+        assert!(error.to_string().contains("checked out"));
+        assert_eq!(git.head_sha("victim").unwrap(), expected);
+    }
+
+    #[test]
+    fn conditional_branch_delete_removes_branch_configuration() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        std::fs::write(repo.path().join("file.txt"), "initial\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "initial"]);
+        run_test_git(repo.path(), &["branch", "victim"]);
+        run_test_git(repo.path(), &["config", "branch.victim.remote", "origin"]);
+        run_test_git(
+            repo.path(),
+            &["config", "branch.victim.merge", "refs/heads/victim"],
+        );
+        let expected = git.head_sha("victim").unwrap();
+
+        git.delete_local_branch_if_unchanged("victim", &expected)
+            .unwrap();
+
+        assert!(!git.branch_exists("victim").unwrap());
+        let config = Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--get", "branch.victim.remote"])
+            .output()
+            .unwrap();
+        assert!(!config.status.success());
+    }
+
+    #[test]
+    fn conditional_branch_delete_preserves_prefix_namesake_configuration() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        std::fs::write(repo.path().join("file.txt"), "initial\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "initial"]);
+        run_test_git(repo.path(), &["branch", "foo"]);
+        run_test_git(repo.path(), &["branch", "foo.bar"]);
+        run_test_git(
+            repo.path(),
+            &["config", "branch.foo.bar.remote", "namesake"],
+        );
+        let expected = git.head_sha("foo").unwrap();
+
+        git.delete_local_branch_if_unchanged("foo", &expected)
+            .unwrap();
+
+        let config = git
+            .capture(["config", "--get", "branch.foo.bar.remote"])
+            .unwrap();
+        assert_eq!(config.trim(), "namesake");
     }
 
     #[test]

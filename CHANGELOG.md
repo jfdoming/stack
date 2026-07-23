@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.19 - 2026-07-22
+- Deleted pruned local branch refs with an expected-old compare-and-swap after the ancestry proof, so a concurrent branch advance cannot be force-deleted between validation and removal.
+- Preserved Git's linked-worktree safety with pre/post deletion checkout checks and ref restoration, and best-effort removed the exact deleted branch's Git configuration without matching prefix-named siblings.
+
 ## 0.18.18 - 2026-07-22
 - Identified each sync auto-stash by its immutable object ID and restored that exact object, so a newer stash from another linked worktree cannot be applied or dropped by mistake.
 - Retained successfully restored auto-stashes as recovery entries because Git cannot safely drop a shared stash reflog entry by object ID under concurrent updates.

@@ -792,7 +792,7 @@ pub fn execute_sync_plan(
                         if git.current_branch()? == *branch {
                             git.checkout_branch(&plan.base_branch)?;
                         }
-                        git.delete_local_branch(branch)?;
+                        git.delete_local_branch_if_unchanged(branch, &current_head)?;
                     }
                     if db.branch_by_name(branch)?.is_some() {
                         db.splice_out_branch(branch)?;
