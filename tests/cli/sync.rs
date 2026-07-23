@@ -1826,7 +1826,7 @@ fn sync_updates_existing_pr_body_with_managed_section() {
             "remote",
             "add",
             "origin",
-            "git@github.com:acme/stack-test.git",
+            "https://build-user:super-secret@github.com/acme/stack-test.git",
         ],
     );
     run_git(repo.path(), &["config", "branch.main.remote", "no-fetch"]);
@@ -1848,7 +1848,7 @@ fn sync_updates_existing_pr_body_with_managed_section() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/42\",\"body\":\"Existing reviewer notes\"}}]}},\"h1\":{{\"nodes\":[]}}}}}}}}'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":42,\"state\":\"OPEN\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":null,\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":null,\"body\":\"Existing reviewer notes\"}}]}},\"h1\":{{\"nodes\":[]}}}}}}}}'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"edit\" ]]; then\n  exit 0\nfi\necho '[]'\n",
             gh_log.display()
         ),
     )
@@ -1893,6 +1893,12 @@ fn sync_updates_existing_pr_body_with_managed_section() {
         gh_calls.contains("/tree/feat/parent"),
         "expected unresolved parent to link to branch path, got: {gh_calls}"
     );
+    assert!(
+        gh_calls.contains("https://github.com/acme/stack-test/tree/feat/parent"),
+        "expected credential-free managed links, got: {gh_calls}"
+    );
+    assert!(!gh_calls.contains("super-secret"));
+    assert!(!gh_calls.contains("build-user"));
     assert!(
         !gh_calls.contains("/pull/6944"),
         "expected stale cached parent PR not to be reused, got: {gh_calls}"

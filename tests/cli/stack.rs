@@ -53,6 +53,33 @@ fn stack_default_output_includes_pr_creation_link_when_pr_missing() {
 }
 
 #[test]
+fn stack_output_redacts_credentials_from_remote_links() {
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://build-user:super-secret@github.com/acme/stack-test.git",
+        ],
+    );
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/credential-link"])
+        .assert()
+        .success();
+
+    stack_cmd(repo.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "https://github.com/acme/stack-test/compare/main...feat/credential-link",
+        ))
+        .stdout(predicate::str::contains("super-secret").not())
+        .stdout(predicate::str::contains("build-user").not());
+}
+
+#[test]
 fn stack_up_and_down_switch_between_parent_and_child() {
     let repo = init_repo_without_origin();
 

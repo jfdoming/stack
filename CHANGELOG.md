@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.6 - 2026-07-22
+- Removed HTTPS remote credentials, query strings, and fragments from terminal links, browser targets, and generated PR content while retaining the original remote URL for authenticated Git operations.
+
 ## 0.18.5 - 2026-07-22
 - Made sync discover an advanced remote base before planning, pin and verify the advertised commit across fetch, and restack roots onto that remote state without moving the local base branch.
 - Made rewritten-parent restacks use validated reflog fork points, apply parent restacks before descendants, and defer sync metadata updates until the full plan succeeds so obsolete parent commits are not duplicated.

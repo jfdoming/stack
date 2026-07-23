@@ -276,6 +276,62 @@ fn pr_yes_pushes_and_prints_pr_open_link() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn pr_browser_url_redacts_remote_credentials() {
+    let repo = init_repo();
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://build-user:super-secret@github.com/acme/stack-test.git",
+        ],
+    );
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "main",
+            "--name",
+            "feat/credential-browser",
+        ])
+        .assert()
+        .success();
+    configure_local_push_url(repo.path());
+
+    let fake_bin = repo.path().join("fake-bin-credential-browser");
+    let open_log = repo.path().join("credential-browser.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    install_fake_browser_openers(&fake_bin, &open_log);
+    let fake_gh = fake_bin.join("gh");
+    fs::write(&fake_gh, "#!/usr/bin/env bash\necho '[]'\n").expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .env_remove("STACK_MOCK_BROWSER_OPEN")
+        .args(["--yes", "pr"])
+        .assert()
+        .success();
+
+    let open_calls = fs::read_to_string(&open_log).expect("read browser log");
+    assert!(
+        open_calls.contains(
+            "https://github.com/acme/stack-test/compare/main...feat/credential-browser"
+        ),
+        "expected a credential-free GitHub URL, got: {open_calls}"
+    );
+    assert!(!open_calls.contains("super-secret"));
+    assert!(!open_calls.contains("build-user"));
+}
+
 #[cfg(unix)]#[test]
 fn pr_uses_upstream_compare_url_when_branch_remote_is_fork() {
     let repo = init_repo();

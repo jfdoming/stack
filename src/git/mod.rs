@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow};
+use url::Url;
 
 #[derive(Debug, Clone)]
 pub struct Git {
@@ -714,13 +715,23 @@ fn parse_remote_to_web_url(raw: &str) -> Option<String> {
         )));
     }
 
-    if raw.starts_with("https://") || raw.starts_with("http://") {
-        return Some(sanitize_terminal_text(
-            raw.trim_end_matches(".git").trim_end_matches('/').trim(),
-        ));
+    let sanitized = sanitize_terminal_text(raw.trim());
+    let mut url = Url::parse(&sanitized).ok()?;
+    if !matches!(url.scheme(), "https" | "http") || url.host_str()?.is_empty() {
+        return None;
     }
+    url.set_username("").ok()?;
+    url.set_password(None).ok()?;
+    url.set_query(None);
+    url.set_fragment(None);
 
-    None
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path).to_string();
+    if path.is_empty() || path == "/" {
+        return None;
+    }
+    url.set_path(&path);
+    Some(url.to_string())
 }
 
 fn sanitize_terminal_text(value: &str) -> String {
@@ -743,5 +754,23 @@ mod tests {
         let parsed =
             parse_remote_to_web_url("git@github.com:acme/repo.git").expect("url should parse");
         assert_eq!(parsed, "https://github.com/acme/repo");
+    }
+
+    #[test]
+    fn parse_remote_to_web_url_redacts_https_credentials() {
+        let parsed = parse_remote_to_web_url(
+            "https://build-user:ghp_super-secret%40value@github.com/acme/repo.git",
+        )
+        .expect("url should parse");
+        assert_eq!(parsed, "https://github.com/acme/repo");
+    }
+
+    #[test]
+    fn parse_remote_to_web_url_drops_query_and_fragment_credentials() {
+        let parsed = parse_remote_to_web_url(
+            "https://github.com:8443/acme/repo.git?access_token=super-secret#fragment",
+        )
+        .expect("url should parse");
+        assert_eq!(parsed, "https://github.com:8443/acme/repo");
     }
 }

@@ -112,6 +112,7 @@
 - For fork branches, `stack pr` builds compare links against `upstream` (when configured) and uses `owner:branch` head refs.
 - Generated `stack pr` URLs always include a compact `Stack Flow` PR body section wrapped in `<!-- stack:managed:start -->`/`<!-- stack:managed:end -->` markers; stacked branches include parent/child links, and user-provided body text is appended below it.
 - Stack-generated PR/compare links now URL-encode branch path segments and escape markdown link labels in generated bodies to avoid malformed or injected markdown links.
+- Rendered HTTP(S) remote links are structurally parsed and stripped of user information, query strings, and fragments before they are shown in the terminal, opened in a browser, or embedded in generated PR content; Git operations continue to use the original remote URL.
 - In styled TTY output, existing `stack pr` hashes are rendered as clickable links.
 - `--debug` prints full provider/gh parse error details where non-debug mode uses concise fallback warnings.
 - `stack sync` with `--debug` prints timing metrics to stderr, including totals (`plan_ms`, `apply_ms`, `total_ms`) plus plan breakdown (`setup_ms`, `pr_lookup_ms`, `assemble_ms`).
