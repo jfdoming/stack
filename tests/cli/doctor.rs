@@ -91,6 +91,10 @@ fn doctor_fix_breaks_parent_cycles() {
         .args(["create", "--parent", "feat/a", "--name", "feat/b"])
         .assert()
         .success();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/b", "--name", "feat/child"])
+        .assert()
+        .success();
 
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(&db_path).expect("open db");
@@ -109,16 +113,38 @@ fn doctor_fix_breaks_parent_cycles() {
     )
     .expect("seed cycle b -> a");
 
-    stack_cmd(repo.path())
+    let before = stack_cmd(repo.path())
         .args(["doctor", "--porcelain"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"code\": \"cycle\""));
+        .output()
+        .expect("run doctor before fix");
+    assert!(before.status.success());
+    let before_json: Value = serde_json::from_slice(&before.stdout).expect("valid doctor json");
+    let mut cycle_branches: Vec<&str> = before_json["issues"]
+        .as_array()
+        .expect("issues array")
+        .iter()
+        .filter(|issue| issue["code"] == "cycle")
+        .filter_map(|issue| issue["branch"].as_str())
+        .collect();
+    cycle_branches.sort_unstable();
+    assert_eq!(cycle_branches, vec!["feat/a", "feat/b"]);
 
     stack_cmd(repo.path())
         .args(["doctor", "--fix"])
         .assert()
         .success();
+
+    let child_parent: Option<String> = conn
+        .query_row(
+            "SELECT p.name
+             FROM branches AS c
+             LEFT JOIN branches AS p ON p.id = c.parent_branch_id
+             WHERE c.name = 'feat/child'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query child parent");
+    assert_eq!(child_parent.as_deref(), Some("feat/b"));
 
     let output = stack_cmd(repo.path())
         .args(["doctor", "--porcelain"])

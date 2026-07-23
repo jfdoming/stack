@@ -143,8 +143,11 @@ fn cycle_branches(records: &[BranchRecord]) -> HashSet<String> {
         let mut seen = HashSet::new();
         let mut cursor = r.parent_branch_id;
         while let Some(id) = cursor {
-            if !seen.insert(id) {
+            if id == r.id {
                 branches.insert(r.name.clone());
+                break;
+            }
+            if !seen.insert(id) {
                 break;
             }
             cursor = by_id.get(&id).and_then(|p| p.parent_branch_id);

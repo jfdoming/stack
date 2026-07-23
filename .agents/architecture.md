@@ -123,4 +123,4 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Doctor behaviour
 - `stack doctor` validates stack metadata integrity and reports repairable issues.
-- `stack doctor --fix` can remove missing-branch records, clear invalid base-parent links, break parent-link cycles by clearing implicated parent links, and reset incomplete PR cache fields.
+- `stack doctor --fix` can remove missing-branch records, clear invalid base-parent links, break parent-link cycles by clearing only actual cycle-member links, and reset incomplete PR cache fields; descendants that merely lead into a cycle stay attached.

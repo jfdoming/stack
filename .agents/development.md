@@ -50,7 +50,7 @@
 - Branch creation and rename reject invalid destination names before invoking Git; dynamic branch operands are passed after an option terminator so malformed legacy refs cannot be interpreted as Git flags.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
-- `stack doctor --fix` also repairs detected parent-link cycles, clears invalid base-parent links, and resets incomplete PR cache fields.
+- `stack doctor --fix` also repairs detected parent-link cycles without detaching non-cycle descendants, clears invalid base-parent links, and resets incomplete PR cache fields.
 - After `stack sync` applies operations, it restores the branch that was checked out before the sync run started. When a clean checked-out merged branch is itself pruned, sync leaves the repository on the base branch.
 - Sync refuses to prune the checked-out branch while its worktree is dirty. Auto-stashes are restored only after the original branch is re-established; otherwise the stash is retained and sync fails with its stash reference.
 - During `stack sync`, open PR bodies are refreshed to keep the managed stack-flow section current; user-written text outside managed markers is preserved.

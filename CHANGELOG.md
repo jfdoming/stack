@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.11 - 2026-07-22
+- Made `stack doctor --fix` detach only actual cycle members, preserving valid descendant links that merely lead into a cycle.
+
 ## 0.18.10 - 2026-07-22
 - Made cached PR numbers lookup hints only, verified the exact head branch and repository owner, and preserved the base repository identity through close, body-edit, and base-edit mutations.
 
