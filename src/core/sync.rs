@@ -41,6 +41,7 @@ pub enum SyncOp {
     },
     PruneMergedBranch {
         branch: String,
+        merged_head_oid: Option<String>,
     },
 }
 
@@ -112,7 +113,7 @@ impl SyncPlan {
                     onto: Some(base.clone()),
                     details: format!("pr #{pr_number} -> {base}"),
                 }),
-                SyncOp::PruneMergedBranch { branch } => operations.push(OperationView {
+                SyncOp::PruneMergedBranch { branch, .. } => operations.push(OperationView {
                     kind: "prune_merged".to_string(),
                     branch: branch.clone(),
                     onto: None,
@@ -452,8 +453,32 @@ pub fn build_sync_plan(
                         .is_some_and(|state| state.eq_ignore_ascii_case("merged"))
                 })
         });
-    if stack_fully_merged {
-        let mut prune_candidates: Vec<(String, usize)> = Vec::new();
+    let mut all_local_heads_are_prune_safe = true;
+    for branch in tracked.iter().filter(|branch| branch.name != base_branch) {
+        if !branch_exists.get(&branch.name).copied().unwrap_or(false) {
+            continue;
+        }
+        let Some(current_sha) = current_sha_by_branch.get(&branch.name) else {
+            all_local_heads_are_prune_safe = false;
+            break;
+        };
+        let Some(merged_head) = pr_by_branch.get(&branch.name).and_then(|pr| {
+            matches!(pr.state, PrState::Merged)
+                .then_some(pr.head_ref_oid.as_deref())
+                .flatten()
+        }) else {
+            all_local_heads_are_prune_safe = false;
+            break;
+        };
+        let is_safe = current_sha == merged_head
+            || (git.ref_exists(merged_head)? && git.is_ancestor(current_sha, merged_head)?);
+        if !is_safe {
+            all_local_heads_are_prune_safe = false;
+            break;
+        }
+    }
+    if stack_fully_merged && all_local_heads_are_prune_safe {
+        let mut prune_candidates: Vec<(String, usize, Option<String>)> = Vec::new();
         for branch in &tracked {
             if branch.name == base_branch {
                 continue;
@@ -477,11 +502,17 @@ pub fn build_sync_plan(
                 depth += 1;
                 cursor = by_id.get(&parent_id).and_then(|p| p.parent_branch_id);
             }
-            prune_candidates.push((branch.name.clone(), depth));
+            let merged_head_oid = pr_by_branch
+                .get(&branch.name)
+                .and_then(|pr| pr.head_ref_oid.clone());
+            prune_candidates.push((branch.name.clone(), depth, merged_head_oid));
         }
         prune_candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        for (branch, _) in prune_candidates {
-            ops.push(SyncOp::PruneMergedBranch { branch });
+        for (branch, _, merged_head_oid) in prune_candidates {
+            ops.push(SyncOp::PruneMergedBranch {
+                branch,
+                merged_head_oid,
+            });
         }
     }
 
@@ -599,8 +630,21 @@ pub fn execute_sync_plan(
     plan: &SyncPlan,
 ) -> Result<()> {
     let starting_branch = git.current_branch()?;
+    let worktree_dirty = git.is_worktree_dirty()?;
+    let starting_branch_will_be_pruned = plan.ops.iter().any(|op| {
+        matches!(
+            op,
+            SyncOp::PruneMergedBranch { branch, .. } if branch == &starting_branch
+        )
+    });
+    if worktree_dirty && starting_branch_will_be_pruned {
+        return Err(anyhow!(
+            "cannot prune the checked-out branch with uncommitted changes; commit or stash the changes, or switch to '{}' before syncing",
+            plan.base_branch
+        ));
+    }
     let mut stash: Option<StashHandle> = None;
-    if git.is_worktree_dirty()? {
+    if worktree_dirty {
         eprintln!("warning: worktree is dirty; auto-stashing local changes");
         stash = git.stash_push("stack-sync-auto-stash")?;
     }
@@ -661,8 +705,27 @@ pub fn execute_sync_plan(
                 SyncOp::UpdatePrBase {
                     pr_number, base, ..
                 } => provider.update_pr_base(*pr_number, base)?,
-                SyncOp::PruneMergedBranch { branch } => {
+                SyncOp::PruneMergedBranch {
+                    branch,
+                    merged_head_oid,
+                } => {
                     if git.branch_exists(branch)? {
+                        let expected_head = merged_head_oid.as_deref().ok_or_else(|| {
+                            anyhow!(
+                                "refusing to prune '{}': merged PR head is unavailable",
+                                branch
+                            )
+                        })?;
+                        let current_head = git.head_sha(branch)?;
+                        let still_safe = current_head == expected_head
+                            || (git.ref_exists(expected_head)?
+                                && git.is_ancestor(&current_head, expected_head)?);
+                        if !still_safe {
+                            return Err(anyhow!(
+                                "refusing to prune '{}': branch changed after the sync plan was built",
+                                branch
+                            ));
+                        }
                         if git.current_branch()? == *branch {
                             git.checkout_branch(&plan.base_branch)?;
                         }
@@ -679,16 +742,31 @@ pub fn execute_sync_plan(
 
     let restore_branch_result = restore_starting_branch(git, &starting_branch);
 
-    if let Some(stash_handle) = stash
-        && let Err(err) = git.stash_pop(&stash_handle)
-    {
-        eprintln!(
-            "warning: could not auto-restore stash {}: {err}",
-            stash_handle.reference
-        );
+    let mut stash_restore_error = None;
+    if let Some(stash_handle) = stash {
+        let original_branch_restored = restore_branch_result.is_ok()
+            && !starting_branch.is_empty()
+            && git
+                .current_branch()
+                .is_ok_and(|current| current == starting_branch);
+        if original_branch_restored {
+            if let Err(err) = git.stash_pop(&stash_handle) {
+                stash_restore_error = Some(anyhow!(
+                    "could not auto-restore stash {} on '{}': {err}",
+                    stash_handle.reference,
+                    starting_branch
+                ));
+            }
+        } else {
+            stash_restore_error = Some(anyhow!(
+                "auto-stash {} was left intact because the prior branch '{}' could not be restored safely",
+                stash_handle.reference,
+                starting_branch
+            ));
+        }
     }
 
-    let result = match (op_result, restore_branch_result) {
+    let mut result = match (op_result, restore_branch_result) {
         (Err(op_err), Err(restore_err)) => Err(anyhow!(format_sync_failure(
             &op_err,
             Some(&restore_err),
@@ -705,6 +783,12 @@ pub fn execute_sync_plan(
         )),
         (Ok(()), Ok(())) => Ok(()),
     };
+    if let Some(stash_err) = stash_restore_error {
+        result = match result {
+            Ok(()) => Err(stash_err),
+            Err(err) => Err(anyhow!("{err}; {stash_err}")),
+        };
+    }
 
     if let Err(err) = result {
         status = "failed";
@@ -730,6 +814,9 @@ fn restore_starting_branch(git: &Git, starting_branch: &str) -> Result<()> {
     }
     let current_branch = git.current_branch()?;
     if current_branch == starting_branch {
+        return Ok(());
+    }
+    if !git.branch_exists(starting_branch)? {
         return Ok(());
     }
     git.checkout_branch(starting_branch)

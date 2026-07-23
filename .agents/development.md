@@ -50,7 +50,8 @@
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
 - `stack sync` supports staged application; use `--yes` to auto-confirm.
 - `stack doctor --fix` also repairs detected parent-link cycles, clears invalid base-parent links, and resets incomplete PR cache fields.
-- After `stack sync` applies operations, it restores the branch that was checked out before the sync run started.
+- After `stack sync` applies operations, it restores the branch that was checked out before the sync run started. When a clean checked-out merged branch is itself pruned, sync leaves the repository on the base branch.
+- Sync refuses to prune the checked-out branch while its worktree is dirty. Auto-stashes are restored only after the original branch is re-established; otherwise the stash is retained and sync fails with its stash reference.
 - During `stack sync`, open PR bodies are refreshed to keep the managed stack-flow section current; user-written text outside managed markers is preserved.
 - During `stack sync`, open PR base branches are corrected to match each branch’s tracked parent (or the repo base branch when no tracked parent exists).
 - Repository push placement is independent of the base branch's Git tracking remote. New stack roots use the configured `auto`, `upstream`, or `fork` policy; descendants inherit their nearest published ancestor's repository.
@@ -71,7 +72,7 @@
 - When the base branch already contains a merged direct child's merge commit, sync persists the current advanced base SHA so later runs do not re-plan descendant restacks.
 - When no merge/restack/metadata updates are needed, `stack sync --dry-run` now emits an empty operation list (no no-op fetch/update entries).
 - When a non-dry-run sync plan is empty, `stack sync` exits early with `sync already up to date` and skips apply bookkeeping.
-- When every tracked non-base branch in the stack is merged, `stack sync` prunes merged local branches and removes their stack metadata records (leaf-first).
+- When every tracked non-base branch in the stack is merged, `stack sync` prunes leaf-first only when every present local tip is contained in fresh merged-PR `headRefOid` metadata; missing local refs can still have their metadata pruned.
 - Sync batches GitHub PR metadata lookups to reduce per-branch `gh` round trips on larger stacks.
 - PR metadata lookup now checks both default GH context and known remote repo scopes (including `upstream`) to avoid missing PRs in fork workflows.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.

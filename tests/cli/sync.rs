@@ -944,6 +944,12 @@ fn sync_does_not_restack_cached_merged_direct_child_when_base_sha_changes() {
         !parent_restack,
         "expected merged direct child to be excluded from restack operations when base SHA changes"
     );
+    assert!(
+        !ops
+            .iter()
+            .any(|op| op["kind"] == "prune_merged" && op["branch"] == "feat/parent"),
+        "cached merged state without a fresh PR head must not authorize pruning"
+    );
 }
 
 #[cfg(unix)]
@@ -1199,6 +1205,154 @@ fn sync_does_not_restack_child_when_merged_parent_ref_is_missing() {
 
 #[cfg(unix)]
 #[test]
+fn sync_preserves_the_entire_stack_when_a_merged_branch_has_later_commits() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/merged"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("merged.txt"), "merged content\n").expect("write merged content");
+    run_git(repo.path(), &["add", "merged.txt"]);
+    run_git(repo.path(), &["commit", "-m", "merged PR head"]);
+    let merged_parent_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/merged").expect("merged parent head");
+    stack_cmd(repo.path())
+        .args([
+            "create",
+            "--parent",
+            "feat/merged",
+            "--name",
+            "feat/child",
+        ])
+        .assert()
+        .success();
+    let merged_child_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/child").expect("merged child head");
+
+    fs::write(repo.path().join("later.txt"), "post-merge work\n")
+        .expect("write post-merge content");
+    run_git(repo.path(), &["add", "later.txt"]);
+    run_git(repo.path(), &["commit", "-m", "post-merge work"]);
+    let post_merge_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/child").expect("post-merge head");
+    run_git(repo.path(), &["checkout", "main"]);
+    let main_sha = git_ref_sha(repo.path(), "refs/heads/main").expect("main head");
+
+    let fake_bin = repo.path().join("fake-bin-preserve-post-merge");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/merged\",\"headRefName\":\"feat/child\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/merged\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            merged_child_head, main_sha, merged_parent_head, main_sha
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/child"),
+        Some(post_merge_head)
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/merged"),
+        Some(merged_parent_head)
+    );
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let record_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name IN ('feat/merged', 'feat/child')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count preserved branch record");
+    assert_eq!(record_count, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_to_prune_the_dirty_checked_out_branch() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/merged"])
+        .assert()
+        .success();
+    let merged_head = git_ref_sha(repo.path(), "refs/heads/feat/merged").expect("merged head");
+    fs::write(repo.path().join("README.md"), "uncommitted work\n")
+        .expect("write dirty tracked file");
+
+    let fake_bin = repo.path().join("fake-bin-dirty-prune");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/merged\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            merged_head, merged_head
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .output()
+        .expect("run sync with dirty merged branch checked out");
+
+    assert!(
+        git_ref_sha(repo.path(), "refs/heads/feat/merged").is_some(),
+        "dirty starting branch must not be pruned"
+    );
+    let current = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "--show-current"])
+        .output()
+        .expect("read current branch");
+    assert_eq!(String::from_utf8_lossy(&current.stdout).trim(), "feat/merged");
+    assert_eq!(
+        fs::read_to_string(repo.path().join("README.md")).expect("read dirty file"),
+        "uncommitted work\n"
+    );
+    let stash_list = Command::new("git")
+        .current_dir(repo.path())
+        .args(["stash", "list"])
+        .output()
+        .expect("list stashes");
+    assert!(
+        stash_list.stdout.is_empty(),
+        "sync must refuse before creating an auto-stash"
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("cannot prune the checked-out branch with uncommitted changes"),
+        "unexpected error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_prunes_fully_merged_stack_branches() {
     let repo = init_repo_without_origin();
 
@@ -1231,8 +1385,8 @@ fn sync_prunes_fully_merged_stack_branches() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
-            main_sha, main_sha
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            main_sha, main_sha, main_sha, main_sha
         ),
     )
     .expect("write fake gh");
@@ -1315,8 +1469,8 @@ fn sync_prunes_metadata_when_merged_branch_ref_is_already_missing() {
     fs::write(
         &fake_gh,
         format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
-            main_sha, main_sha
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":12,\"state\":\"MERGED\",\"baseRefName\":\"feat/parent\",\"headRefName\":\"feat/child\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/12\",\"body\":\"\"}}]}},\"h1\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/parent\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            main_sha, main_sha, main_sha, main_sha
         ),
     )
     .expect("write fake gh");

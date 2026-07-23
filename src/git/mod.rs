@@ -230,12 +230,18 @@ impl Git {
     }
 
     pub fn is_worktree_dirty(&self) -> Result<bool> {
-        let status = Command::new("git")
+        let output = Command::new("git")
             .current_dir(&self.root)
-            .args(["diff", "--quiet", "--ignore-submodules", "HEAD", "--"])
-            .status()
+            .args(["status", "--porcelain=v1", "--untracked-files=normal", "--"])
+            .output()
             .context("failed to check worktree state")?;
-        Ok(!status.success())
+        if !output.status.success() {
+            return Err(anyhow!(
+                "git status failed while checking worktree state: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(!output.stdout.is_empty())
     }
 
     pub fn stash_push(&self, reason: &str) -> Result<Option<StashHandle>> {

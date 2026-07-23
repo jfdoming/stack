@@ -36,14 +36,14 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - When the base already contains a merged direct child's merge commit, sync records the base's current SHA instead of leaving the prior merge SHA stale.
 - Sync planning prunes no-op operations (fetch/update-sha/update-base) when branch sync state is already current.
 - Sync execution short-circuits when the computed plan has zero operations.
-- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged.
-- Restores the branch that was checked out before sync once plan execution completes.
+- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged and every present local tip is contained in its fresh merged PR head. The executor revalidates this proof before each deletion.
+- Restores the branch that was checked out before sync once plan execution completes. A clean starting branch that is pruned lands on the base branch; a dirty starting branch is never pruned.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - For open PRs discovered during sync, updates both the PR base branch and the managed stack-flow section so GitHub metadata stays aligned with the tracked stack shape.
 - PR/push placement is resolved independently of base-branch tracking: existing upstreams are preserved, unpushed descendants inherit the nearest published ancestor, and new roots use the repository push-target policy.
 - Canonical/fork topology uses remote fetch and push identities plus a cached GitHub `viewerPermission` lookup. Automatic placement selects upstream for `WRITE`, `MAINTAIN`, or `ADMIN`, otherwise the fork.
 - Sync skips PR-base correction when the expected base branch resolves to a different GitHub repository than the PR itself, warning instead of issuing an impossible `gh pr edit --base`.
-- Stops on conflict and warns on stash restore failures.
+- Stops on conflict and restores an auto-stash only after verifying that the original branch was restored; otherwise the stash is retained and sync reports an error.
 - In interactive TTY mode after successful apply, offers a follow-up push step for tracked non-base branches.
 
 ## Track behaviour

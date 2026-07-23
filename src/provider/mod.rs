@@ -20,6 +20,7 @@ pub enum PrState {
 pub struct PrInfo {
     pub number: i64,
     pub state: PrState,
+    pub head_ref_oid: Option<String>,
     pub merge_commit_oid: Option<String>,
     pub base_ref_name: Option<String>,
     pub body: Option<String>,
@@ -245,6 +246,8 @@ struct GhPr {
     base_ref_name: Option<String>,
     #[serde(rename = "headRefName")]
     head_ref_name: Option<String>,
+    #[serde(rename = "headRefOid")]
+    head_ref_oid: Option<String>,
     #[serde(rename = "headRepositoryOwner")]
     head_repository_owner: Option<GhOwner>,
     body: Option<String>,
@@ -439,7 +442,7 @@ impl Provider for GithubProvider {
                     "view".to_string(),
                     num.to_string(),
                     "--json".to_string(),
-                    "number,state,mergeCommit,baseRefName,url,body".to_string(),
+                    "number,state,headRefOid,mergeCommit,baseRefName,url,body".to_string(),
                 ];
                 if let Some(scope) = scope.as_deref() {
                     args.push("--repo".to_string());
@@ -489,7 +492,7 @@ impl Provider for GithubProvider {
                     "--state".to_string(),
                     "all".to_string(),
                     "--json".to_string(),
-                    "number,state,mergeCommit,baseRefName,url,body".to_string(),
+                    "number,state,headRefOid,mergeCommit,baseRefName,url,body".to_string(),
                 ];
                 if let Some(scope) = scope.as_deref() {
                     args.push("--repo".to_string());
@@ -566,7 +569,7 @@ fn build_head_lookup_query(heads: &[String]) -> (String, Vec<String>) {
     query.push_str(") { repository(owner:$owner, name:$name) {");
     for idx in 0..heads.len() {
         query.push_str(&format!(
-            " h{idx}: pullRequests(first:20, states:[OPEN,MERGED,CLOSED], headRefName:$h{idx}, orderBy:{{field:UPDATED_AT, direction:DESC}}) {{ nodes {{ number state mergeCommit {{ oid }} baseRefName headRefName headRepositoryOwner {{ login }} url body }} }}"
+            " h{idx}: pullRequests(first:20, states:[OPEN,MERGED,CLOSED], headRefName:$h{idx}, orderBy:{{field:UPDATED_AT, direction:DESC}}) {{ nodes {{ number state headRefOid mergeCommit {{ oid }} baseRefName headRefName headRepositoryOwner {{ login }} url body }} }}"
         ));
     }
     query.push_str(" } }");
@@ -613,6 +616,7 @@ fn convert_pr(pr: GhPr) -> PrInfo {
     PrInfo {
         number: pr.number,
         state,
+        head_ref_oid: pr.head_ref_oid,
         merge_commit_oid: pr.merge_commit.map(|m| m.oid),
         base_ref_name: pr.base_ref_name,
         body: pr.body,
@@ -631,6 +635,7 @@ fn select_preferred_pr(prs: Vec<GhPr>) -> Option<GhPr> {
                 state: pr.state.clone(),
                 base_ref_name: pr.base_ref_name.clone(),
                 head_ref_name: pr.head_ref_name.clone(),
+                head_ref_oid: pr.head_ref_oid.clone(),
                 head_repository_owner: pr.head_repository_owner.clone(),
                 body: pr.body.clone(),
                 url: pr.url.clone(),
@@ -713,6 +718,7 @@ mod tests {
                 state: "CLOSED".to_string(),
                 base_ref_name: Some("master".to_string()),
                 head_ref_name: Some("feature/top".to_string()),
+                head_ref_oid: None,
                 head_repository_owner: None,
                 body: None,
                 url: None,
@@ -723,6 +729,7 @@ mod tests {
                 state: "OPEN".to_string(),
                 base_ref_name: Some("feature/base".to_string()),
                 head_ref_name: Some("feature/current".to_string()),
+                head_ref_oid: None,
                 head_repository_owner: None,
                 body: None,
                 url: None,
@@ -754,6 +761,7 @@ mod tests {
         assert!(query.contains("h1: pullRequests"));
         assert!(query.contains("$h0:String!"));
         assert!(query.contains("$h1:String!"));
+        assert!(query.contains("headRefOid"));
         assert_eq!(fields, vec!["-F", "h0=feat/a", "-F", "h1=feat/b"]);
     }
 
@@ -770,6 +778,7 @@ mod tests {
                     "mergeCommit": null,
                     "baseRefName": "main",
                     "headRefName": "feat/a",
+                    "headRefOid": "abc123",
                     "headRepositoryOwner": {"login": "acme"},
                     "url": "https://example.com/pull/10",
                     "body": "test"
@@ -784,6 +793,7 @@ mod tests {
         assert_eq!(h0.len(), 1);
         assert_eq!(h0[0].number, 10);
         assert_eq!(h0[0].head_ref_name.as_deref(), Some("feat/a"));
+        assert_eq!(h0[0].head_ref_oid.as_deref(), Some("abc123"));
     }
 
     #[test]

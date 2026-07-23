@@ -13,6 +13,7 @@ use tempfile::TempDir;
 fn init_repo() -> TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     run_git(dir.path(), &["init", "-b", "main"]);
+    configure_test_fixture_excludes(dir.path());
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Stack Test"]);
     run_git(dir.path(), &["config", "commit.gpgsign", "false"]);
@@ -36,6 +37,7 @@ fn init_repo() -> TempDir {
 fn init_repo_without_origin() -> TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     run_git(dir.path(), &["init", "-b", "main"]);
+    configure_test_fixture_excludes(dir.path());
     run_git(dir.path(), &["config", "user.email", "test@example.com"]);
     run_git(dir.path(), &["config", "user.name", "Stack Test"]);
     run_git(dir.path(), &["config", "commit.gpgsign", "false"]);
@@ -44,6 +46,14 @@ fn init_repo_without_origin() -> TempDir {
     run_git(dir.path(), &["add", "README.md"]);
     run_git(dir.path(), &["commit", "-m", "initial"]);
     dir
+}
+
+fn configure_test_fixture_excludes(repo: &Path) {
+    fs::write(
+        repo.join(".git/info/exclude"),
+        "/fake-bin*/\n/*.log\n/*.git/\n",
+    )
+    .expect("exclude test fixtures");
 }
 
 fn init_repo_with_named_remote(remote: &str) -> TempDir {

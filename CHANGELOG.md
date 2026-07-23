@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.4 - 2026-07-22
+- Made merged-stack pruning fail closed unless every present local branch is contained in its fresh merged PR head, with a second safety check immediately before deletion.
+- Prevented sync auto-stashes from being restored on the wrong branch; sync now refuses to prune a dirty checked-out branch before stashing and retains the stash if the original branch cannot be restored.
+
 ## 0.18.3 - 2026-07-22
 - Prevented `stack delete` from deleting the configured base branch or removing its stack metadata.
 
