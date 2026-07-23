@@ -190,6 +190,7 @@ fn stack_initializes_non_main_repo_base_from_current_branch() {
 #[test]
 fn stack_ignores_a_dangling_remote_head_when_discovering_the_base() {
     let repo = init_repo_on_branch("trunk");
+    add_origin_remote(repo.path());
     run_git(
         repo.path(),
         &[
@@ -207,6 +208,7 @@ fn stack_ignores_a_dangling_remote_head_when_discovering_the_base() {
 #[test]
 fn stack_does_not_promote_a_dangling_remote_head_with_a_local_namesake() {
     let repo = init_repo_on_branch("production");
+    add_origin_remote(repo.path());
     run_git(repo.path(), &["checkout", "-b", "feat/work"]);
     stack_cmd(repo.path()).assert().success();
     assert_eq!(stored_base_branch(repo.path()), "feat/work");
@@ -227,8 +229,338 @@ fn stack_does_not_promote_a_dangling_remote_head_with_a_local_namesake() {
 }
 
 #[test]
+fn stack_discovers_head_on_the_base_branch_configured_custom_remote() {
+    let repo = init_repo_with_named_remote("company");
+    run_git(repo.path(), &["branch", "trunk"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/company/trunk", "trunk"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/company/HEAD",
+            "refs/remotes/company/trunk",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("company"));
+
+    run_git(repo.path(), &["config", "--unset", "branch.main.remote"]);
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("company"));
+
+    run_git(repo.path(), &["branch", "release-a"]);
+    run_git(repo.path(), &["branch", "release-b"]);
+    add_local_remote(repo.path(), "alpha");
+    add_local_remote(repo.path(), "beta");
+    run_git(
+        repo.path(),
+        &["config", "branch.release-a.remote", "alpha"],
+    );
+    run_git(
+        repo.path(),
+        &["config", "branch.release-b.remote", "beta"],
+    );
+    configure_remote_head(repo.path(), "alpha", "release-a");
+    configure_remote_head(repo.path(), "beta", "release-b");
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("company"));
+
+    run_git(repo.path(), &["remote", "remove", "company"]);
+    stack_cmd(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cached base remote 'company' is no longer configured",
+        ));
+}
+
+#[test]
+fn stack_reconciles_a_cached_base_from_its_configured_custom_remote_head() {
+    let repo = init_repo_without_origin();
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "main");
+
+    let bare = repo.path().join("company.git");
+    run_git(
+        repo.path(),
+        &["init", "--bare", bare.to_str().expect("bare remote path")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "company",
+            bare.to_str().expect("bare remote path"),
+        ],
+    );
+    run_git(repo.path(), &["config", "branch.main.remote", "company"]);
+    run_git(repo.path(), &["branch", "trunk"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/company/trunk", "trunk"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/company/HEAD",
+            "refs/remotes/company/trunk",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+}
+
+#[test]
+fn stack_uses_the_cached_base_remote_before_new_local_conventions() {
+    let repo = init_repo_on_branch("production");
+    run_git(repo.path(), &["checkout", "-b", "feat/work"]);
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "feat/work");
+
+    run_git(repo.path(), &["branch", "main"]);
+    let bare = repo.path().join("company.git");
+    run_git(
+        repo.path(),
+        &["init", "--bare", bare.to_str().expect("bare remote path")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "company",
+            bare.to_str().expect("bare remote path"),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/work.remote", "company"],
+    );
+    run_git(repo.path(), &["branch", "trunk"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/company/trunk", "trunk"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/company/HEAD",
+            "refs/remotes/company/trunk",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+}
+
+#[test]
+fn stack_discovers_a_nonconventional_base_from_a_uniquely_configured_remote() {
+    let repo = init_repo_on_branch("production");
+    add_local_remote(repo.path(), "central");
+    run_git(
+        repo.path(),
+        &["config", "branch.production.remote", "central"],
+    );
+    configure_remote_head(repo.path(), "central", "production");
+    run_git(repo.path(), &["checkout", "-b", "feat/work"]);
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "production");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("central"));
+}
+
+#[test]
+fn stack_prefers_a_valid_origin_head_over_an_unrelated_custom_remote() {
+    let repo = init_repo();
+    configure_remote_head(repo.path(), "origin", "main");
+    run_git(repo.path(), &["branch", "trunk"]);
+    add_local_remote(repo.path(), "company");
+    run_git(
+        repo.path(),
+        &["config", "branch.trunk.remote", "company"],
+    );
+    configure_remote_head(repo.path(), "company", "trunk");
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "main");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("origin"));
+}
+
+#[test]
+fn stack_uses_origin_when_a_branch_configured_remote_head_is_invalid() {
+    let repo = init_repo_without_origin();
+    add_origin_remote(repo.path());
+    run_git(repo.path(), &["branch", "trunk"]);
+    configure_remote_head(repo.path(), "origin", "trunk");
+    add_local_remote(repo.path(), "company");
+    run_git(repo.path(), &["config", "branch.main.remote", "company"]);
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("origin"));
+}
+
+#[test]
+fn stack_rejects_ambiguous_configured_remote_heads() {
+    let repo = init_repo_on_branch("feat/work");
+    run_git(repo.path(), &["branch", "release-a"]);
+    run_git(repo.path(), &["branch", "release-b"]);
+    add_local_remote(repo.path(), "alpha");
+    add_local_remote(repo.path(), "beta");
+    run_git(
+        repo.path(),
+        &["config", "branch.release-a.remote", "alpha"],
+    );
+    run_git(
+        repo.path(),
+        &["config", "branch.release-b.remote", "beta"],
+    );
+    configure_remote_head(repo.path(), "alpha", "release-a");
+    configure_remote_head(repo.path(), "beta", "release-b");
+
+    stack_cmd(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ambiguous configured remote HEADs",
+        ));
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let metadata_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM repo_meta", [], |row| row.get(0))
+        .expect("count repo metadata");
+    assert_eq!(metadata_rows, 0);
+}
+
+#[test]
+fn stack_preserves_authority_when_the_cached_remote_base_is_missing() {
+    let repo = init_repo_with_named_remote("company");
+    run_git(repo.path(), &["branch", "trunk"]);
+    configure_remote_head(repo.path(), "company", "trunk");
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+
+    run_git(repo.path(), &["branch", "-D", "trunk"]);
+    stack_cmd(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cached authoritative base branch 'trunk' is missing",
+        ));
+
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_source(repo.path()), "remote_head");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("company"));
+}
+
+#[test]
+fn stack_ignores_remote_head_refs_without_a_configured_remote() {
+    let repo = init_repo_without_origin();
+    run_git(repo.path(), &["branch", "trunk"]);
+    run_git(repo.path(), &["config", "branch.main.remote", "ghost"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/ghost/trunk", "trunk"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/ghost/HEAD",
+            "refs/remotes/ghost/trunk",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "main");
+    assert_eq!(stored_base_source(repo.path()), "local_convention");
+    assert_eq!(stored_base_remote(repo.path()), None);
+}
+
+#[test]
+fn stack_ignores_a_chained_custom_remote_tracking_target() {
+    let repo = init_repo_without_origin();
+    add_local_remote(repo.path(), "company");
+    run_git(repo.path(), &["config", "branch.main.remote", "company"]);
+    run_git(repo.path(), &["branch", "trunk"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/company/real", "trunk"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/company/trunk",
+            "refs/remotes/company/real",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/company/HEAD",
+            "refs/remotes/company/trunk",
+        ],
+    );
+
+    stack_cmd(repo.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("refs/remotes/company/real").not());
+
+    assert_eq!(stored_base_branch(repo.path()), "main");
+    assert_eq!(stored_base_source(repo.path()), "local_convention");
+    assert_eq!(stored_base_remote(repo.path()), None);
+}
+
+#[test]
+fn stack_ignores_a_dangling_head_on_a_configured_custom_remote() {
+    let repo = init_repo_with_named_remote("company");
+    run_git(repo.path(), &["branch", "trunk"]);
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/company/HEAD",
+            "refs/remotes/company/trunk",
+        ],
+    );
+
+    stack_cmd(repo.path()).assert().success();
+
+    assert_eq!(stored_base_branch(repo.path()), "main");
+    assert_eq!(stored_base_source(repo.path()), "local_convention");
+}
+
+#[test]
 fn stack_repairs_a_missing_cached_base_when_remote_head_becomes_known() {
     let repo = init_repo_on_branch("trunk");
+    add_origin_remote(repo.path());
     stack_cmd(repo.path()).assert().success();
 
     let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
@@ -256,6 +588,7 @@ fn stack_repairs_a_missing_cached_base_when_remote_head_becomes_known() {
 #[test]
 fn stack_replaces_a_conventional_cached_base_when_remote_head_differs() {
     let repo = init_repo_without_origin();
+    add_origin_remote(repo.path());
     stack_cmd(repo.path()).assert().success();
     stack_cmd(repo.path())
         .args(["create", "--parent", "main", "--name", "feat/root"])
@@ -304,6 +637,7 @@ fn stack_replaces_a_conventional_cached_base_when_remote_head_differs() {
 #[test]
 fn stack_replaces_a_provisional_current_branch_base_with_remote_head() {
     let repo = init_repo_on_branch("production");
+    add_origin_remote(repo.path());
     run_git(repo.path(), &["checkout", "-b", "feat/work"]);
 
     stack_cmd(repo.path()).assert().success();
@@ -340,6 +674,54 @@ fn stored_base_branch(repo: &Path) -> String {
     .expect("read base branch")
 }
 
+fn add_origin_remote(repo: &Path) {
+    run_git(
+        repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+}
+
+fn add_local_remote(repo: &Path, remote: &str) {
+    let bare = repo.join(format!("{remote}.git"));
+    run_git(
+        repo,
+        &["init", "--bare", bare.to_str().expect("bare remote path")],
+    );
+    run_git(
+        repo,
+        &[
+            "remote",
+            "add",
+            remote,
+            bare.to_str().expect("bare remote path"),
+        ],
+    );
+}
+
+fn configure_remote_head(repo: &Path, remote: &str, branch: &str) {
+    run_git(
+        repo,
+        &[
+            "update-ref",
+            &format!("refs/remotes/{remote}/{branch}"),
+            branch,
+        ],
+    );
+    run_git(
+        repo,
+        &[
+            "symbolic-ref",
+            &format!("refs/remotes/{remote}/HEAD"),
+            &format!("refs/remotes/{remote}/{branch}"),
+        ],
+    );
+}
+
 fn stored_base_source(repo: &Path) -> String {
     let conn = Connection::open(repo.join(".git/stack.db")).expect("open stack db");
     conn.query_row(
@@ -348,6 +730,14 @@ fn stored_base_source(repo: &Path) -> String {
         |row| row.get(0),
     )
     .expect("read base branch source")
+}
+
+fn stored_base_remote(repo: &Path) -> Option<String> {
+    let conn = Connection::open(repo.join(".git/stack.db")).expect("open stack db");
+    conn.query_row("SELECT base_remote FROM repo_meta WHERE id = 1", [], |row| {
+        row.get(0)
+    })
+    .expect("read base remote")
 }
 
 #[test]

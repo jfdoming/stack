@@ -1270,6 +1270,65 @@ fn sync_uses_upstream_and_updates_main_to_merged_commit_not_tip() {
 
 #[cfg(unix)]
 #[test]
+fn sync_prefers_upstream_for_a_fork_with_a_custom_named_clone_remote() {
+    let repo = init_repo_with_named_remote("personal");
+    run_git(repo.path(), &["branch", "trunk"]);
+    configure_remote_head(repo.path(), "personal", "trunk");
+    stack_cmd(repo.path()).assert().success();
+    assert_eq!(stored_base_branch(repo.path()), "trunk");
+    assert_eq!(stored_base_remote(repo.path()).as_deref(), Some("personal"));
+    add_local_remote(repo.path(), "upstream");
+
+    let real_git = {
+        let output = Command::new("sh")
+            .args(["-lc", "command -v git"])
+            .output()
+            .expect("resolve real git");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("utf8 real git")
+            .trim()
+            .to_string()
+    };
+    let fake_bin = repo.path().join("fake-bin-custom-clone-sync");
+    let git_log = repo.path().join("custom-clone-sync.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            git_log.display(),
+            real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--dry-run", "--porcelain"])
+        .assert()
+        .success();
+
+    let calls = fs::read_to_string(&git_log).expect("read git calls");
+    assert!(
+        calls.contains("ls-remote --exit-code --heads --refs -- upstream refs/heads/trunk"),
+        "expected the canonical upstream to win over the custom-named fork remote: {calls}"
+    );
+    assert!(
+        !calls.contains("ls-remote --exit-code --heads --refs -- personal refs/heads/trunk"),
+        "expected sync not to mistake the custom-named fork remote for canonical: {calls}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_advances_base_to_the_newest_of_all_merged_direct_children() {
     let repo = init_repo_without_origin();
     run_git(repo.path(), &["checkout", "-b", "remote-main"]);

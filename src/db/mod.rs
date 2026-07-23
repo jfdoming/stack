@@ -17,6 +17,7 @@ pub struct BranchRecord {
 pub struct RepoMeta {
     pub base_branch: String,
     pub base_branch_source: BaseBranchSource,
+    pub base_remote: Option<String>,
     pub push_target: Option<String>,
     pub canonical_repo: Option<String>,
     pub fork_repo: Option<String>,
@@ -111,6 +112,7 @@ impl Database {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 base_branch TEXT NOT NULL,
                 base_branch_source TEXT NOT NULL DEFAULT 'legacy',
+                base_remote TEXT NULL,
                 schema_version INTEGER NOT NULL,
                 push_target TEXT NULL,
                 canonical_repo TEXT NULL,
@@ -129,6 +131,7 @@ impl Database {
         )?;
         for (name, ty) in [
             ("base_branch_source", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("base_remote", "TEXT NULL"),
             ("push_target", "TEXT NULL"),
             ("canonical_repo", "TEXT NULL"),
             ("fork_repo", "TEXT NULL"),
@@ -139,7 +142,13 @@ impl Database {
                 tx.execute(&format!("ALTER TABLE repo_meta ADD COLUMN {name} {ty}"), [])?;
             }
         }
-        tx.execute("UPDATE repo_meta SET schema_version = 3 WHERE id = 1", [])?;
+        tx.execute(
+            "UPDATE repo_meta
+             SET base_remote = 'origin'
+             WHERE id = 1 AND base_branch_source = 'remote_head' AND base_remote IS NULL",
+            [],
+        )?;
+        tx.execute("UPDATE repo_meta SET schema_version = 4 WHERE id = 1", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -156,25 +165,53 @@ impl Database {
         Ok(false)
     }
 
+    #[cfg(test)]
     pub fn set_base_branch_if_missing(
         &self,
         base_branch: &str,
         source: BaseBranchSource,
     ) -> Result<()> {
+        self.set_base_branch_if_missing_with_remote(base_branch, source, None)
+    }
+
+    pub fn set_base_branch_if_missing_with_remote(
+        &self,
+        base_branch: &str,
+        source: BaseBranchSource,
+        base_remote: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO repo_meta(id, base_branch, base_branch_source, schema_version)
-             VALUES (1, ?1, ?2, 3)
+            "INSERT INTO repo_meta(id, base_branch, base_branch_source, base_remote, schema_version)
+             VALUES (1, ?1, ?2, ?3, 4)
              ON CONFLICT(id) DO NOTHING",
-            params![base_branch, source.as_str()],
+            params![base_branch, source.as_str(), base_remote],
         )?;
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn reconcile_base_branch(
         &self,
         observed: &RepoMeta,
         candidate: &str,
         candidate_source: BaseBranchSource,
+        observed_branch_exists: bool,
+    ) -> Result<()> {
+        self.reconcile_base_branch_with_remote(
+            observed,
+            candidate,
+            candidate_source,
+            None,
+            observed_branch_exists,
+        )
+    }
+
+    pub fn reconcile_base_branch_with_remote(
+        &self,
+        observed: &RepoMeta,
+        candidate: &str,
+        candidate_source: BaseBranchSource,
+        candidate_remote: Option<&str>,
         observed_branch_exists: bool,
     ) -> Result<()> {
         let should_replace = !observed_branch_exists
@@ -184,13 +221,16 @@ impl Database {
             let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
             let updated = tx.execute(
                 "UPDATE repo_meta
-                 SET base_branch = ?1, base_branch_source = ?2
-                 WHERE id = 1 AND base_branch = ?3 AND base_branch_source = ?4",
+                 SET base_branch = ?1, base_branch_source = ?2, base_remote = ?3
+                 WHERE id = 1 AND base_branch = ?4 AND base_branch_source = ?5
+                   AND base_remote IS ?6",
                 params![
                     candidate,
                     candidate_source.as_str(),
+                    candidate_remote,
                     observed.base_branch,
-                    observed.base_branch_source.as_str()
+                    observed.base_branch_source.as_str(),
+                    observed.base_remote.as_deref()
                 ],
             )?;
             if updated == 0 {
@@ -228,11 +268,16 @@ impl Database {
     }
 
     pub fn repo_meta(&self) -> Result<RepoMeta> {
+        self.repo_meta_optional()?
+            .ok_or_else(|| anyhow!("repo metadata missing"))
+    }
+
+    pub fn repo_meta_optional(&self) -> Result<Option<RepoMeta>> {
         let raw = self
             .conn
             .query_row(
-                "SELECT base_branch, base_branch_source, push_target, canonical_repo, fork_repo,
-                        push_permission, permission_checked_at
+                "SELECT base_branch, base_branch_source, base_remote, push_target, canonical_repo,
+                        fork_repo, push_permission, permission_checked_at
                  FROM repo_meta WHERE id = 1",
                 [],
                 |row| {
@@ -244,22 +289,26 @@ impl Database {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )
-            .optional()?
-            .ok_or_else(|| anyhow!("repo metadata missing"))?;
+            .optional()?;
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
         let source = BaseBranchSource::parse(&raw.1)
             .ok_or_else(|| anyhow!("invalid cached base branch source '{}'", raw.1))?;
-        Ok(RepoMeta {
+        Ok(Some(RepoMeta {
             base_branch: raw.0,
             base_branch_source: source,
-            push_target: raw.2,
-            canonical_repo: raw.3,
-            fork_repo: raw.4,
-            push_permission: raw.5,
-            permission_checked_at: raw.6,
-        })
+            base_remote: raw.2,
+            push_target: raw.3,
+            canonical_repo: raw.4,
+            fork_repo: raw.5,
+            push_permission: raw.6,
+            permission_checked_at: raw.7,
+        }))
     }
 
     pub fn set_push_target(&self, target: &str) -> Result<()> {
@@ -974,13 +1023,87 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
+        assert!(meta.base_remote.is_none());
 
         db.reconcile_base_branch(&meta, "production", BaseBranchSource::RemoteHead, true)
             .unwrap();
         let reconciled = db.repo_meta().unwrap();
         assert_eq!(reconciled.base_branch, "production");
         assert_eq!(reconciled.base_branch_source, BaseBranchSource::RemoteHead);
+    }
+
+    #[test]
+    fn opening_schema_v3_remote_head_backfills_origin_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repo_meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_branch TEXT NOT NULL,
+                base_branch_source TEXT NOT NULL,
+                schema_version INTEGER NOT NULL
+             );
+             INSERT INTO repo_meta(id, base_branch, base_branch_source, schema_version)
+             VALUES (1, 'main', 'remote_head', 3);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let db = Database::open(&path).unwrap();
+        let (base_remote, version): (Option<String>, i64) = db
+            .conn
+            .query_row(
+                "SELECT base_remote, schema_version FROM repo_meta WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(base_remote.as_deref(), Some("origin"));
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn base_remote_provenance_is_persisted_and_cas_protected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let db = Database::open(&path).unwrap();
+        db.set_base_branch_if_missing("main", BaseBranchSource::LocalConvention)
+            .unwrap();
+        let observed = db.repo_meta().unwrap();
+
+        db.reconcile_base_branch_with_remote(
+            &observed,
+            "trunk",
+            BaseBranchSource::RemoteHead,
+            Some("company"),
+            true,
+        )
+        .unwrap();
+        let authoritative = db.repo_meta().unwrap();
+        assert_eq!(authoritative.base_branch, "trunk");
+        assert_eq!(authoritative.base_remote.as_deref(), Some("company"));
+
+        let stale = authoritative.clone();
+        db.conn
+            .execute(
+                "UPDATE repo_meta SET base_remote = 'replacement' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        db.reconcile_base_branch_with_remote(
+            &stale,
+            "production",
+            BaseBranchSource::RemoteHead,
+            Some("other"),
+            false,
+        )
+        .unwrap();
+        let current = db.repo_meta().unwrap();
+        assert_eq!(current.base_branch, "trunk");
+        assert_eq!(current.base_remote.as_deref(), Some("replacement"));
     }
 
     #[test]

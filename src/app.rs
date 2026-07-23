@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::args::{Cli, Commands};
 use crate::commands;
-use crate::db::Database;
+use crate::db::{BaseBranchSource, Database};
 use crate::git::Git;
 use crate::provider::GithubProvider;
 
@@ -26,18 +26,60 @@ impl AppContext {
         let git = Git::discover()?;
         let db_path = prepare_stack_db_path(&git)?;
         let db = Database::open(&db_path)?;
-        let default_base = git.default_base_branch()?;
-        db.set_base_branch_if_missing(&default_base.name, default_base.source)?;
-        let cached_base = db.repo_meta()?;
+        let cached_base = if let Some(cached_base) = db.repo_meta_optional()? {
+            cached_base
+        } else {
+            let bootstrap_base = git.default_base_branch()?;
+            db.set_base_branch_if_missing_with_remote(
+                &bootstrap_base.name,
+                bootstrap_base.source,
+                bootstrap_base.remote.as_deref(),
+            )?;
+            db.repo_meta()?
+        };
+        if let Some(remote) = cached_base.base_remote.as_deref()
+            && !git.has_remote(remote)?
+        {
+            return Err(anyhow!(
+                "cached base remote '{}' is no longer configured; restore it before continuing",
+                remote
+            ));
+        }
+        let default_base = git.default_base_branch_with_hint(
+            Some(&cached_base.base_branch),
+            cached_base.base_remote.as_deref(),
+        )?;
         let cached_base_exists = git.branch_exists(&cached_base.base_branch)?;
-        db.reconcile_base_branch(
+        if !cached_base_exists
+            && cached_base.base_branch_source == BaseBranchSource::RemoteHead
+            && default_base.source != BaseBranchSource::RemoteHead
+        {
+            return Err(anyhow!(
+                "cached authoritative base branch '{}' is missing and remote '{}' does not provide a valid local replacement",
+                cached_base.base_branch,
+                cached_base.base_remote.as_deref().unwrap_or("origin")
+            ));
+        }
+        db.reconcile_base_branch_with_remote(
             &cached_base,
             &default_base.name,
             default_base.source,
+            default_base.remote.as_deref(),
             cached_base_exists,
         )?;
-        let base_branch = db.repo_meta()?.base_branch;
-        let base_remote = git.base_remote_for_stack(&base_branch)?;
+        let resolved_meta = db.repo_meta()?;
+        let base_branch = resolved_meta.base_branch;
+        let base_remote = if let Some(remote) = resolved_meta.base_remote {
+            if !git.has_remote(&remote)? {
+                return Err(anyhow!(
+                    "cached base remote '{}' is no longer configured; restore it before continuing",
+                    remote
+                ));
+            }
+            remote
+        } else {
+            git.base_remote_for_stack(&base_branch)?
+        };
         let provider = GithubProvider::new(git.clone(), cli.global.debug);
 
         Ok(Self {

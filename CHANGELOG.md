@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.25 - 2026-07-23
+- Discovered authoritative base HEADs from the cached or inferred base branch's configured custom remote, and from a unique branch-configured remote when starting on an untracked non-conventional branch; a valid `origin/HEAD` still takes precedence over unrelated remotes.
+- Persisted the authoritative base remote in schema v4 and included it in atomic reconciliation checks, while retaining `upstream` preference for fork clones whose clone remote has a custom name; migrated existing remote-HEAD provenance to `origin` and now report removed remote or base authority instead of silently switching targets.
+- Required direct, commit-resolvable tracking refs on real configured remotes, rejecting dangling or chained refs and ambiguous custom-remote HEAD candidates.
+
 ## 0.18.24 - 2026-07-22
 - Anchored open-descendant restacks to the freshly resolved merged PR head, preserving commits inherited from a parent after its PR merged while still dropping commits already represented by a squash merge.
 - Refused ambiguous descendant rewrites when fresh merged-head metadata is missing, cannot be resolved locally, or is not contained in the child; cached merged state alone no longer supplies a destructive replay boundary, and a missing merge commit can fall back only to a freshly advertised remote-base commit.

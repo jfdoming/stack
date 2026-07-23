@@ -32,6 +32,7 @@ pub struct StashHandle {
 pub struct BaseBranchCandidate {
     pub name: String,
     pub source: BaseBranchSource,
+    pub remote: Option<String>,
 }
 
 impl Git {
@@ -392,51 +393,145 @@ impl Git {
     }
 
     pub fn default_base_branch(&self) -> Result<BaseBranchCandidate> {
+        self.default_base_branch_with_hint(None, None)
+    }
+
+    pub fn default_base_branch_with_hint(
+        &self,
+        preferred_branch: Option<&str>,
+        preferred_remote: Option<&str>,
+    ) -> Result<BaseBranchCandidate> {
         let local = self.local_branches()?;
+        let local_candidate = if let Some(name) = ["main", "master", "trunk", "develop"]
+            .into_iter()
+            .find(|conventional| local.iter().any(|branch| branch == conventional))
+        {
+            BaseBranchCandidate {
+                name: name.to_string(),
+                source: BaseBranchSource::LocalConvention,
+                remote: None,
+            }
+        } else {
+            let current = self.current_branch()?;
+            if !current.is_empty() {
+                BaseBranchCandidate {
+                    name: current,
+                    source: BaseBranchSource::CurrentBranch,
+                    remote: None,
+                }
+            } else if let Some(name) = local.first() {
+                BaseBranchCandidate {
+                    name: name.clone(),
+                    source: BaseBranchSource::FirstLocal,
+                    remote: None,
+                }
+            } else {
+                BaseBranchCandidate {
+                    name: "main".to_string(),
+                    source: BaseBranchSource::Default,
+                    remote: None,
+                }
+            }
+        };
+
+        if let Some(remote) = preferred_remote {
+            return Ok(self
+                .remote_head_base_candidate(remote, &local)?
+                .unwrap_or(local_candidate));
+        }
+        if let Some(branch) = preferred_branch
+            && let Some(remote) = self.configured_remote_for_branch(branch)?
+            && let Some(candidate) = self.remote_head_base_candidate(&remote, &local)?
+        {
+            return Ok(candidate);
+        }
+        if let Some(remote) = self.configured_remote_for_branch(&local_candidate.name)?
+            && let Some(candidate) = self.remote_head_base_candidate(&remote, &local)?
+        {
+            return Ok(candidate);
+        }
+
+        if let Some(origin_candidate) = self.remote_head_base_candidate("origin", &local)? {
+            return Ok(origin_candidate);
+        }
+
+        let mut configured_remotes = std::collections::BTreeSet::new();
+        for branch in &local {
+            if let Some(remote) = self.configured_remote_for_branch(branch)?
+                && remote != "."
+                && remote != "origin"
+            {
+                configured_remotes.insert(remote);
+            }
+        }
+        let mut configured_candidates = Vec::new();
+        for remote in configured_remotes {
+            if let Some(candidate) = self.remote_head_base_candidate(&remote, &local)? {
+                configured_candidates.push(candidate);
+            }
+        }
+        if configured_candidates.len() == 1 {
+            return Ok(configured_candidates.remove(0));
+        }
+        if configured_candidates.len() > 1 {
+            let candidates = configured_candidates
+                .iter()
+                .map(|candidate| {
+                    format!(
+                        "{}/{}",
+                        candidate.remote.as_deref().unwrap_or("?"),
+                        candidate.name
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(anyhow!(
+                "ambiguous configured remote HEADs ({candidates}); configure the intended base branch remote explicitly"
+            ));
+        }
+        Ok(local_candidate)
+    }
+
+    fn remote_head_base_candidate(
+        &self,
+        remote: &str,
+        local: &[String],
+    ) -> Result<Option<BaseBranchCandidate>> {
+        if remote == "." || !self.has_remote(remote)? {
+            return Ok(None);
+        }
+        let remote_head_ref = format!("refs/remotes/{remote}/HEAD");
         let output = Command::new("git")
             .current_dir(&self.root)
-            .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+            .args(["symbolic-ref", "--quiet", "--no-recurse", &remote_head_ref])
             .output()
-            .context("failed to read origin/HEAD")?;
+            .with_context(|| format!("failed to read {remote}/HEAD"))?;
 
         if output.status.success() {
             let val = String::from_utf8(output.stdout)?.trim().to_string();
-            if let Some(branch) = val.strip_prefix("refs/remotes/origin/")
+            let remote_prefix = format!("refs/remotes/{remote}/");
+            if let Some(branch) = val.strip_prefix(&remote_prefix)
                 && local.iter().any(|local_branch| local_branch == branch)
-                && self.ref_exists(&format!("refs/remotes/origin/{branch}"))?
             {
-                return Ok(BaseBranchCandidate {
+                let target = format!("{remote_prefix}{branch}");
+                let target_is_symbolic = Command::new("git")
+                    .current_dir(&self.root)
+                    .args(["symbolic-ref", "--quiet", "--no-recurse", &target])
+                    .output()
+                    .with_context(|| format!("failed to inspect {remote}/{branch}"))?
+                    .status
+                    .success();
+                if target_is_symbolic || !self.ref_exists(&target)? {
+                    return Ok(None);
+                }
+                return Ok(Some(BaseBranchCandidate {
                     name: branch.to_string(),
                     source: BaseBranchSource::RemoteHead,
-                });
+                    remote: Some(remote.to_string()),
+                }));
             }
         }
-
-        for conventional in ["main", "master", "trunk", "develop"] {
-            if local.iter().any(|branch| branch == conventional) {
-                return Ok(BaseBranchCandidate {
-                    name: conventional.to_string(),
-                    source: BaseBranchSource::LocalConvention,
-                });
-            }
-        }
-        let current = self.current_branch()?;
-        if !current.is_empty() {
-            return Ok(BaseBranchCandidate {
-                name: current,
-                source: BaseBranchSource::CurrentBranch,
-            });
-        }
-        if let Some(name) = local.into_iter().next() {
-            return Ok(BaseBranchCandidate {
-                name,
-                source: BaseBranchSource::FirstLocal,
-            });
-        }
-        Ok(BaseBranchCandidate {
-            name: "main".to_string(),
-            source: BaseBranchSource::Default,
-        })
+        Ok(None)
     }
 
     pub fn remote_web_url(&self, remote: &str) -> Result<Option<String>> {
@@ -1198,6 +1293,32 @@ mod tests {
         );
 
         git.fetch_remote("--all").expect("fetch only --all remote");
+    }
+
+    #[test]
+    fn sync_remote_selection_preserves_custom_named_forks() {
+        let (repo, git) = init_test_repo();
+        run_test_git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "https://example.invalid/upstream.git",
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "company",
+                "https://example.invalid/company.git",
+            ],
+        );
+
+        assert_eq!(git.preferred_sync_remote("origin").unwrap(), "upstream");
+        assert_eq!(git.preferred_sync_remote("company").unwrap(), "upstream");
     }
 
     #[test]
