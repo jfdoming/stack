@@ -12,7 +12,7 @@ fn push_with_no_tracked_branches_does_not_require_placement() {
 }
 
 #[test]
-fn push_force_with_lease_updates_non_fast_forward_branches() {
+fn push_preserves_existing_upstream_when_configured_policy_remote_is_unavailable() {
     let repo = init_repo();
     let bare = configure_local_push_url(repo.path());
 
@@ -27,6 +27,10 @@ fn push_force_with_lease_updates_non_fast_forward_branches() {
     run_git(repo.path(), &["commit", "-m", "feat/a first"]);
 
     run_git(repo.path(), &["push", "--set-upstream", "origin", "feat/a"]);
+    stack_cmd(repo.path())
+        .args(["config", "push-target", "fork"])
+        .assert()
+        .success();
 
     let old_remote_sha = {
         let output = Command::new("git")

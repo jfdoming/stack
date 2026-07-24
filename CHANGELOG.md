@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.31 - 2026-07-24
+- Preserved valid existing branch upstreams before resolving repository push policy, so an unavailable configured target no longer blocks branches whose placement is already established; explicit overrides remain conflict-checked.
+
 ## 0.18.30 - 2026-07-24
 - Cleared the inherited Git upstream and cached PR identity when `stack split --top-name` renames the top branch, preventing the new branch name from targeting or authorising mutations through the old branch's publication.
 
