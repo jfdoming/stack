@@ -194,11 +194,31 @@ fn split_requires_confirmation_without_yes_in_non_interactive_mode() {
 }
 
 #[test]
-fn split_top_name_renames_current_top_branch() {
-    let repo = init_repo_without_origin();
-    run_git(repo.path(), &["checkout", "-b", "feat/all"]);
+fn split_top_name_renames_current_top_branch_and_clears_old_identity() {
+    let repo = init_repo_with_named_remote("origin");
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/all"])
+        .assert()
+        .success();
     let first = commit_file(repo.path(), "one.txt", "one\n", "one");
     let second = commit_file(repo.path(), "two.txt", "two\n", "two");
+    run_git(
+        repo.path(),
+        &["push", "--set-upstream", "origin", "feat/all"],
+    );
+
+    let db_path = repo.path().join(".git").join("stack.db");
+    let conn = Connection::open(&db_path).expect("open db");
+    conn.execute(
+        "UPDATE branches
+         SET cached_pr_number = 42,
+             cached_pr_state = 'open',
+             cached_pr_head_oid = ?1
+         WHERE name = 'feat/all'",
+        [&second],
+    )
+    .expect("seed cached PR identity");
+    drop(conn);
 
     stack_cmd(repo.path())
         .args([
@@ -222,6 +242,47 @@ fn split_top_name_renames_current_top_branch() {
     assert_eq!(branch_tip(repo.path(), "HEAD"), second);
     assert_eq!(db_parent(repo.path(), "feat/part-1"), "main");
     assert_eq!(db_parent(repo.path(), "feat/top"), "feat/part-1");
+
+    let upstream = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "for-each-ref",
+            "--format=%(upstream:short)",
+            "refs/heads/feat/top",
+        ])
+        .output()
+        .expect("read renamed upstream");
+    assert!(upstream.status.success());
+    assert!(
+        String::from_utf8(upstream.stdout)
+            .expect("upstream utf8")
+            .trim()
+            .is_empty(),
+        "renamed top branch must not retain the old branch's upstream"
+    );
+
+    let conn = Connection::open(&db_path).expect("reopen db");
+    let cached_identity: (Option<i64>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT cached_pr_number, cached_pr_state, cached_pr_head_oid
+             FROM branches
+             WHERE name = 'feat/top'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read renamed PR cache");
+    assert_eq!(cached_identity, (None, None, None));
+
+    run_git(
+        repo.path(),
+        &[
+            "ls-remote",
+            "--exit-code",
+            "--heads",
+            "origin",
+            "refs/heads/feat/all",
+        ],
+    );
 
     let old_ref = Command::new("git")
         .current_dir(repo.path())
