@@ -1,12 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 
-use anyhow::Result;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use anyhow::{Context, Result};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -16,95 +12,101 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
+use crate::ui::terminal_session::{CrosstermControl, TerminalMode, TerminalSession};
 use crate::views::BranchView;
 
 pub fn run_stack_tui(branches: &[BranchView]) -> Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut session = TerminalSession::new(CrosstermControl::stdout(), TerminalMode::Fullscreen);
+    let result = (|| -> Result<()> {
+        session
+            .enable_raw()
+            .context("failed to enable raw mode for stack TUI")?;
+        session
+            .enter_alternate()
+            .context("failed to enter alternate screen for stack TUI")?;
 
-    let ordered = build_tree_rows(branches);
-    let mut selected: usize = 0;
+        let backend = CrosstermBackend::new(io::stdout());
+        let mut terminal = Terminal::new(backend)?;
+        let ordered = build_tree_rows(branches);
+        let mut selected: usize = 0;
 
-    loop {
-        terminal.draw(|f| {
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-                .split(f.area());
+        loop {
+            terminal.draw(|f| {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+                    .split(f.area());
 
-            let items: Vec<ListItem<'_>> = if ordered.is_empty() {
-                vec![ListItem::new(Line::from("(no stack branches tracked)"))]
-            } else {
-                ordered.iter().map(to_list_item).collect()
-            };
+                let items: Vec<ListItem<'_>> = if ordered.is_empty() {
+                    vec![ListItem::new(Line::from("(no stack branches tracked)"))]
+                } else {
+                    ordered.iter().map(to_list_item).collect()
+                };
 
-            let list = List::new(items)
-                .block(
-                    Block::default()
-                        .title("Stack Graph (Interactive)")
-                        .borders(Borders::ALL),
-                )
-                .highlight_symbol("▶ ")
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+                let list = List::new(items)
+                    .block(
+                        Block::default()
+                            .title("Stack Graph (Interactive)")
+                            .borders(Borders::ALL),
+                    )
+                    .highlight_symbol("▶ ")
+                    .highlight_style(Style::default().add_modifier(Modifier::BOLD));
 
-            let details = if let Some(row) = ordered.get(selected.min(ordered.len().saturating_sub(1))) {
-                let branch = row.branch;
-                let parent = branch.parent.as_deref().unwrap_or("<root>");
-                let pr_num = branch
-                    .cached_pr_number
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                let pr_state = branch.cached_pr_state.as_deref().unwrap_or("unknown");
-                let synced = branch
-                    .last_synced_head_sha
-                    .as_deref()
-                    .unwrap_or("unknown");
-                format!(
-                    "Branch: {}\nParent: {}\nPR: #{} ({})\nLast synced SHA: {}\nExists in git: {}\n\nKeys: j/k or arrows to move, q or Ctrl-C to quit",
-                    branch.name, parent, pr_num, pr_state, synced, branch.exists_in_git
-                )
-            } else {
-                "No branch selected\n\nKeys: q or Ctrl-C to quit".to_string()
-            };
+                let details =
+                    if let Some(row) = ordered.get(selected.min(ordered.len().saturating_sub(1))) {
+                        let branch = row.branch;
+                        let parent = branch.parent.as_deref().unwrap_or("<root>");
+                        let pr_num = branch
+                            .cached_pr_number
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "none".to_string());
+                        let pr_state = branch.cached_pr_state.as_deref().unwrap_or("unknown");
+                        let synced = branch
+                            .last_synced_head_sha
+                            .as_deref()
+                            .unwrap_or("unknown");
+                        format!(
+                            "Branch: {}\nParent: {}\nPR: #{} ({})\nLast synced SHA: {}\nExists in git: {}\n\nKeys: j/k or arrows to move, q or Ctrl-C to quit",
+                            branch.name, parent, pr_num, pr_state, synced, branch.exists_in_git
+                        )
+                    } else {
+                        "No branch selected\n\nKeys: q or Ctrl-C to quit".to_string()
+                    };
 
-            let paragraph = Paragraph::new(details)
-                .block(Block::default().title("Details").borders(Borders::ALL));
+                let paragraph = Paragraph::new(details)
+                    .block(Block::default().title("Details").borders(Borders::ALL));
 
-            let mut state = ListState::default();
-            if !ordered.is_empty() {
-                state.select(Some(selected.min(ordered.len() - 1)));
-            }
+                let mut state = ListState::default();
+                if !ordered.is_empty() {
+                    state.select(Some(selected.min(ordered.len() - 1)));
+                }
 
-            f.render_stateful_widget(list, chunks[0], &mut state);
-            f.render_widget(paragraph, chunks[1]);
-        })?;
+                f.render_stateful_widget(list, chunks[0], &mut state);
+                f.render_widget(paragraph, chunks[1]);
+            })?;
 
-        if event::poll(std::time::Duration::from_millis(250))?
-            && let Event::Key(key) = event::read()?
-        {
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if !ordered.is_empty() {
-                        selected = (selected + 1).min(ordered.len() - 1);
+            if event::poll(std::time::Duration::from_millis(250))?
+                && let Event::Key(key) = event::read()?
+            {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if !ordered.is_empty() {
+                            selected = (selected + 1).min(ordered.len() - 1);
+                        }
                     }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = selected.saturating_sub(1);
+                    }
+                    _ => {}
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    selected = selected.saturating_sub(1);
-                }
-                _ => {}
             }
         }
-    }
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-    Ok(())
+        Ok(())
+    })();
+    session.finish(result)
 }
 
 struct TreeRow<'a> {
@@ -161,9 +163,7 @@ fn build_tree_rows(branches: &[BranchView]) -> Vec<TreeRow<'_>> {
             branch: node,
         });
 
-        let next_prefix = if prefix.is_empty() {
-            String::new()
-        } else if is_last {
+        let next_prefix = if is_last {
             format!("{prefix}   ")
         } else {
             format!("{prefix}│  ")
@@ -241,4 +241,46 @@ fn to_list_item(row: &TreeRow<'_>) -> ListItem<'static> {
     spans.push(Span::styled(sync.0, Style::default().fg(sync.1)));
 
     ListItem::new(Line::from(spans))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn branch(name: &str, parent: Option<&str>) -> BranchView {
+        BranchView {
+            name: name.to_string(),
+            parent: parent.map(str::to_string),
+            last_synced_head_sha: None,
+            cached_pr_number: None,
+            cached_pr_state: None,
+            exists_in_git: true,
+        }
+    }
+
+    #[test]
+    fn nested_tree_rows_preserve_ancestor_indentation() {
+        let branches = vec![
+            branch("main", None),
+            branch("feat/a", Some("main")),
+            branch("feat/a/child", Some("feat/a")),
+            branch("feat/b", Some("main")),
+            branch("feat/b/child", Some("feat/b")),
+        ];
+
+        let rendered: Vec<String> = build_tree_rows(&branches)
+            .into_iter()
+            .map(|row| format!("{}{}", row.connector, row.branch.name))
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                "● main",
+                "├─ feat/a",
+                "│  └─ feat/a/child",
+                "└─ feat/b",
+                "   └─ feat/b/child",
+            ]
+        );
+    }
 }

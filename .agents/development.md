@@ -44,6 +44,8 @@
 ## Local behaviour notes
 - `stack` without args prints a one-shot tree visualization by default.
 - `stack --interactive` opens the fullscreen TUI.
+- Fullscreen and inline interactions restore terminal modes, cursor visibility, and screen/prompt state after normal exits, cancellation, setup failures, rendering failures, or input errors; failed explicit cleanup is retried during guard drop.
+- Nested interactive tree rows retain ancestor guide indentation so grandchildren remain visually attached to the correct branch.
 - `stack up`/`stack top` prompt for child selection in TTY mode when the current branch has multiple tracked children; non-interactive mode returns an ambiguity error.
 - Base branch is excluded from stack navigation (`up`, `down`, `top`, `bottom`); run navigation commands from tracked non-base branches.
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.

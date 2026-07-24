@@ -17,6 +17,10 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `src/util/`: shared PR body, URL, and terminal utilities.
 - Application bootstrap dispatches repository-independent completion generation before discovering Git or opening stack metadata; all other commands receive the repository-bound application context.
 
+## Terminal UI behaviour
+- Fullscreen and inline interactions share an injected terminal-session guard that records each possibly applied mode before setup, attempts all relevant inverse actions independently, and retries failed cleanup on drop.
+- Interactive stack rows carry ancestor connector prefixes through every depth so nested branches render beneath the correct sibling path.
+
 ## Persistence
 - DB location: `<git-common-dir>/stack.db` (repo-scoped and shared across linked worktrees; normally `.git/stack.db`).
 - A legacy per-worktree database atomically claims the shared path only when no shared database exists. Concurrent/conflicting losers are preserved without automatic merging and reported for manual reconciliation.
