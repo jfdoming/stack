@@ -58,6 +58,8 @@ stack doctor
 stack completions zsh > ~/.zsh/completions/_stack
 ```
 
+`stack pr --dry-run` stays offline and reports only its local push/link plan without checking for an existing PR. `stack pr` requires a named local head branch and rejects detached HEAD.
+
 ## Fork and maintainer workflows
 
 `stack` stores repository metadata in Git's shared common directory (normally `.git/stack.db`, shared by linked worktrees) and treats the push target separately from the remote tracked by the base branch:

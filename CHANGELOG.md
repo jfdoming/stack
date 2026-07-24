@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.35 - 2026-07-24
+- Made `stack pr --dry-run` fully local by skipping existing-PR and placement-provider lookups, reporting that duplicate status was not checked, and rejecting detached HEAD before treating an empty branch name as a PR head.
+
 ## 0.18.34 - 2026-07-24
 - Kept successful `stack create --insert` and `stack track` topology changes when their post-mutation GitHub metadata refresh cannot run, preserving existing PR cache data and reporting a recoverable warning instead of a false command failure.
 
