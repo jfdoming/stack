@@ -66,7 +66,7 @@ pub trait Provider {
     }
     fn update_pr_body(&self, identity: &PrIdentity, body: &str) -> Result<()>;
     fn update_pr_base(&self, identity: &PrIdentity, base: &str) -> Result<()>;
-    fn delete_pr(&self, identity: &PrIdentity) -> Result<()>;
+    fn close_pr(&self, identity: &PrIdentity) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -540,17 +540,10 @@ impl Provider for GithubProvider {
         Ok(None)
     }
 
-    fn delete_pr(&self, identity: &PrIdentity) -> Result<()> {
+    fn close_pr(&self, identity: &PrIdentity) -> Result<()> {
         validate_pr_identity(identity)?;
         let num = identity.number.to_string();
-        let args = [
-            "pr",
-            "close",
-            &num,
-            "--repo",
-            &identity.repository,
-            "--delete-branch",
-        ];
+        let args = ["pr", "close", &num, "--repo", &identity.repository];
         let _ = self.run_gh_required(&args)?;
         Ok(())
     }

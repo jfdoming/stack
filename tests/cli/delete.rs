@@ -150,6 +150,112 @@ fn delete_verifies_cached_pr_head_identity_and_preserves_repository_scope() {
 
 #[cfg(unix)]
 #[test]
+fn delete_does_not_delegate_local_branch_deletion_to_gh() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-delete-ownership");
+    let gh_log = repo.path().join("delete-ownership.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":42,\"state\":\"OPEN\",\"headRefName\":\"feat/victim\",\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/42\"}}]'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"close\" ]]; then\n  if [[ \"$*\" == *\"--delete-branch\"* ]]; then\n    git branch -D feat/victim\n  fi\n  exit 0\nfi\necho '[]'\n",
+            gh_log.display()
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .success();
+
+    assert!(git_ref_sha(repo.path(), "refs/heads/feat/victim").is_none());
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let tracked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/victim'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count victim records");
+    assert_eq!(tracked, 0);
+
+    let calls = fs::read_to_string(&gh_log).expect("read gh calls");
+    let close = calls
+        .lines()
+        .find(|line| line.starts_with("pr close 42"))
+        .expect("close call");
+    assert!(
+        !close.contains("--delete-branch"),
+        "stack must own local deletion so metadata cleanup can follow: {close}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_skips_close_for_terminal_prs() {
+    for state in ["MERGED", "CLOSED"] {
+        let repo = init_repo();
+        stack_cmd(repo.path())
+            .args(["create", "--parent", "main", "--name", "feat/victim"])
+            .assert()
+            .success();
+        let head = git_ref_sha(repo.path(), "refs/heads/feat/victim").expect("victim head");
+        run_git(repo.path(), &["checkout", "main"]);
+
+        let fake_bin = repo.path().join(format!("fake-bin-delete-{}", state.to_lowercase()));
+        let gh_log = repo.path().join(format!("delete-{}.log", state.to_lowercase()));
+        fs::create_dir_all(&fake_bin).expect("create fake bin");
+        let fake_gh = fake_bin.join("gh");
+        fs::write(
+            &fake_gh,
+            format!(
+                "#!/usr/bin/env bash\necho \"$@\" >> '{}'\nif [[ \"$1\" == \"pr\" && \"$2\" == \"list\" ]]; then\n  echo '[{{\"number\":42,\"state\":\"{}\",\"headRefName\":\"feat/victim\",\"headRefOid\":\"{}\",\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/42\"}}]'\n  exit 0\nfi\nif [[ \"$1\" == \"pr\" && \"$2\" == \"close\" ]]; then\n  echo 'terminal PR must not be closed again' >&2\n  exit 9\nfi\necho '[]'\n",
+                gh_log.display(),
+                state,
+                head
+            ),
+        )
+        .expect("write fake gh");
+        fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755))
+            .expect("chmod fake gh");
+        let test_path = format!(
+            "{}:{}",
+            fake_bin.display(),
+            env::var("PATH").unwrap_or_default()
+        );
+
+        stack_cmd(repo.path())
+            .env("PATH", test_path)
+            .args(["--yes", "delete", "feat/victim"])
+            .assert()
+            .success();
+
+        let calls = fs::read_to_string(&gh_log).expect("read gh calls");
+        assert!(
+            !calls.lines().any(|line| line.starts_with("pr close ")),
+            "{state} PR was closed again: {calls}"
+        );
+        assert!(git_ref_sha(repo.path(), "refs/heads/feat/victim").is_none());
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn delete_does_not_mutate_a_terminal_pr_when_the_local_branch_is_missing() {
     let repo = init_repo();
     stack_cmd(repo.path())

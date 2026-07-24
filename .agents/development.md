@@ -18,7 +18,7 @@
 - `cargo run -- move feat/child --parent feat/new-parent`: move a tracked branch and its descendants under a new parent branch.
 - `cargo run -- split --at <commit> --name feat/part-1 --top-name feat/top`: split the current branch's committed linear history into lower tracked stack branches without rewriting commits.
 - `cargo run -- completions zsh`: print a shell completion script from any directory, including outside Git repositories (works for `bash`, `zsh`, `fish`, `elvish`, `powershell`).
-- `cargo run -- --yes delete <branch>`: close/delete PR, splice branch from stack, and remove local branch.
+- `cargo run -- --yes delete <branch>`: close an open PR, splice the branch from the stack, and remove the local branch.
 - `cargo run -- --debug pr --yes`: include detailed gh parse/debug error output for PR checks.
 - `cargo run -- --debug sync --dry-run`: include sync timing metrics in debug output.
 - `cargo run -- push`: push all tracked non-base branches with `--force-with-lease`.
@@ -95,6 +95,7 @@
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
 - `stack delete` rejects the configured base branch; only tracked non-base branches can be deleted.
+- `stack delete` closes a discovered open PR without delegating branch deletion to `gh`; merged and closed PRs are left unchanged, and stack owns local ref deletion before removing metadata.
 - `stack rename <old> <new>` renames tracked metadata and the local branch in one command.
 - `stack move [target] --parent <parent>` reparents a tracked subtree without changing child links below the moved target.
 - `stack move` can also adopt untracked local branches into the stack by attaching them under a parent branch, tracking any newly linked branches as needed.
