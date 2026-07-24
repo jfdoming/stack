@@ -117,6 +117,15 @@ impl Git {
         self.run(["switch", "--", branch])
     }
 
+    pub fn current_head_oid(&self) -> Result<String> {
+        self.resolve_commit("HEAD")
+    }
+
+    pub fn checkout_detached(&self, oid: &str) -> Result<()> {
+        let oid = self.resolve_object_id(oid)?;
+        self.run(["switch", "--detach", "--", &oid])
+    }
+
     pub fn delete_local_branch(&self, branch: &str) -> Result<()> {
         self.run(["branch", "-D", "--", branch])
     }
