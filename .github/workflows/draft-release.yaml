@@ -33,7 +33,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 1
 
-      - name: Resolve release tag and check if it exists
+      - name: Resolve release tag and state
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,16 +49,27 @@ jobs:
           fi
 
           tag="v${current_version}"
-          release_exists=false
-          if gh release view "$tag" >/dev/null 2>&1; then
-            release_exists=true
+          release_state=missing
+          if is_draft="$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            case "$is_draft" in
+              true)
+                release_state=draft
+                ;;
+              false)
+                release_state=published
+                ;;
+              *)
+                echo "Unexpected draft state for ${tag}: ${is_draft}" >&2
+                exit 1
+                ;;
+            esac
           fi
 
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
+          echo "release_state=${release_state}" >> "$GITHUB_OUTPUT"
 
       - name: Download binary artifacts from CI Build run
-        if: steps.version.outputs.release_exists != 'true'
+        if: steps.version.outputs.release_state != 'published'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -86,7 +97,7 @@ jobs:
           done
 
       - name: Ensure Unix binaries are executable
-        if: steps.version.outputs.release_exists != 'true'
+        if: steps.version.outputs.release_state != 'published'
         shell: bash
         run: |
           set -euo pipefail
@@ -98,8 +109,27 @@ jobs:
             fi
           done
 
-      - name: Create draft release and attach binaries
-        if: steps.version.outputs.release_exists != 'true'
+      - name: Validate complete binary set
+        if: steps.version.outputs.release_state != 'published'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_binaries=(
+            stack-x86_64-unknown-linux-gnu
+            stack-x86_64-apple-darwin
+            stack-aarch64-apple-darwin
+            stack-x86_64-pc-windows-msvc.exe
+          )
+          for binary in "${required_binaries[@]}"; do
+            if [[ ! -f "dist/${binary}" ]]; then
+              echo "Required release binary is missing: ${binary}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Create draft release if missing
+        if: steps.version.outputs.release_state == 'missing'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -115,4 +145,13 @@ jobs:
             --title "$title" \
             --generate-notes
 
+      - name: Attach or refresh draft binaries
+        if: steps.version.outputs.release_state != 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.version.outputs.tag }}"
           gh release upload "$tag" dist/* --clobber

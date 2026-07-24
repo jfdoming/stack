@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.37 - 2026-07-24
+- Distinguished missing, draft, and published releases in the privileged release workflow so incomplete drafts recover a validated complete set of current CI artifacts with clobber uploads while published releases remain untouched.
+
 ## 0.18.36 - 2026-07-24
 - Opened generated PR URLs on Windows by passing the complete URL directly to `explorer.exe`, removing `cmd.exe` interpretation of query-string metacharacters.
 
