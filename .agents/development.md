@@ -117,6 +117,7 @@
 - `stack push` pushes all tracked non-base branches and uses `--force-with-lease` for each branch push.
 - `stack push` skips branches marked as merged in PR cache metadata.
 - If browser auto-open fails, `stack pr` prints a manual fallback link; styled TTY output uses OSC 8 clickable text instead of truncating the URL.
+- On Windows, browser auto-open passes the generated URL directly to `explorer.exe` as one argument, without a command shell.
 - On non-stacked branches, `stack pr` warns and uses the repo base branch as PR base.
 - `stack pr` blocks self-targeted PRs (`base == head`) with a clear message instead of generating a broken compare link.
 - When `stack pr` exits early for self-targeted PRs (`base == head`), it suppresses the redundant non-stacked warning.

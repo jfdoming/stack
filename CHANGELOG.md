@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.36 - 2026-07-24
+- Opened generated PR URLs on Windows by passing the complete URL directly to `explorer.exe`, removing `cmd.exe` interpretation of query-string metacharacters.
+
 ## 0.18.35 - 2026-07-24
 - Made `stack pr --dry-run` fully local by skipping existing-PR and placement-provider lookups, reporting that duplicate status was not checked, and rejecting detached HEAD before treating an empty branch name as a PR head.
 
