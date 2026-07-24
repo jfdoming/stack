@@ -43,6 +43,7 @@ fn pr_push_treats_a_plus_prefixed_branch_as_a_literal_ref() {
     assert_eq!(git_ref_sha(&bare, "refs/heads/+victim"), literal_sha);
 }
 
+#[cfg(unix)]
 #[test]
 fn pr_dry_run_uses_parent_branch_as_base() {
     let repo = init_repo();
@@ -59,14 +60,27 @@ fn pr_dry_run_uses_parent_branch_as_base() {
     run_git(repo.path(), &["checkout", "feat/child"]);
 
     let output = stack_cmd(repo.path())
+        .env("PATH", git_only_path(repo.path()))
         .args(["pr", "--dry-run", "--porcelain"])
         .output()
         .expect("run stack pr --dry-run");
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "dry run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "dry run unexpectedly contacted a provider: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid json");
     assert_eq!(json["head"], "feat/child");
     assert_eq!(json["base"], "feat/parent");
+    assert_eq!(json["existing_pr_checked"], false);
+    assert!(json["existing_pr_number"].is_null());
+    assert!(json["will_open_link"].is_null());
 
     let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
     let stored: Option<String> = conn
@@ -76,6 +90,25 @@ fn pr_dry_run_uses_parent_branch_as_base() {
         .expect("read push target");
     assert!(stored.is_none(), "dry run must not persist first-push config");
 }
+
+#[cfg(unix)]
+#[test]
+fn pr_rejects_detached_head_before_provider_lookup() {
+    let repo = init_repo();
+    stack_cmd(repo.path()).assert().success();
+    run_git(repo.path(), &["checkout", "--detach"]);
+
+    stack_cmd(repo.path())
+        .env("PATH", git_only_path(repo.path()))
+        .args(["pr", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cannot open a PR from detached HEAD",
+        ))
+        .stderr(predicate::str::contains("failed to run gh").not());
+}
+
 #[test]
 fn pr_dry_run_on_untracked_branch_warns_and_uses_base() {
     let repo = init_repo();

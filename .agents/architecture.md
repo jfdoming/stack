@@ -98,6 +98,8 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## PR behaviour
 - `stack pr` uses the tracked parent branch as PR base.
+- Dry-run returns a local-only plan without provider or placement lookup; duplicate-dependent fields explicitly remain unknown.
+- A named attached branch is required before any PR lookup or push planning.
 - PR creation is skipped when a PR already exists for the current head branch.
 - PR creation blocks fork-only child bases that GitHub cannot represent in the canonical repository.
 - PR lookup treats cached numbers as hints, verifies the exact head branch and owner, and retains the base repository scope for any later mutation.

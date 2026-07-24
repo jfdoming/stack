@@ -112,6 +112,7 @@
 - If rename will delete an upstream branch with an open PR, stack warns that deleting the branch may close that PR.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
+- `stack pr --dry-run` performs only local inspection: its porcelain payload sets `existing_pr_checked` to `false` and leaves duplicate-dependent fields null. Detached HEAD is rejected before provider lookup.
 - `stack pr` pushes and auto-opens the PR URL immediately (no confirmation prompt).
 - `stack push` pushes all tracked non-base branches and uses `--force-with-lease` for each branch push.
 - `stack push` skips branches marked as merged in PR cache metadata.

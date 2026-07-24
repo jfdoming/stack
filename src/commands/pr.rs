@@ -45,6 +45,11 @@ pub fn run(
     debug: bool,
 ) -> Result<()> {
     let current = git.current_branch()?;
+    if current.is_empty() {
+        return Err(anyhow!(
+            "cannot open a PR from detached HEAD; switch to a local branch first"
+        ));
+    }
     let records = db.list_branches()?;
     let by_id: HashMap<i64, &BranchRecord> = records.iter().map(|r| (r.id, r)).collect();
     let default_base = db.repo_meta()?.base_branch;
@@ -113,6 +118,25 @@ pub fn run(
         );
     }
 
+    if args.dry_run {
+        let payload = serde_json::json!({
+            "head": current,
+            "base": base,
+            "title": args.title,
+            "draft": args.draft,
+            "dry_run": true,
+            "existing_pr_checked": false,
+            "existing_pr_number": serde_json::Value::Null,
+            "will_open_link": serde_json::Value::Null,
+            "push_target": args.push_target.map(|target| target.as_str()),
+        });
+        if porcelain {
+            return crate::views::print_json(&payload);
+        }
+        println!("would push '{current}' and open a PR link with base={base}");
+        return Ok(());
+    }
+
     let existing = match provider.resolve_pr_by_head(&current, cached_number) {
         Ok(existing) => existing,
         Err(err) => {
@@ -135,31 +159,12 @@ pub fn run(
         "base": base,
         "title": args.title,
         "draft": args.draft,
-        "dry_run": args.dry_run,
+        "dry_run": false,
+        "existing_pr_checked": true,
         "existing_pr_number": existing.as_ref().map(|pr| pr.identity.number),
         "will_open_link": existing.is_none(),
         "push_target": args.push_target.map(|target| target.as_str()),
     });
-
-    if args.dry_run {
-        if porcelain {
-            return crate::views::print_json(&payload);
-        }
-        if let Some(number) = payload["existing_pr_number"].as_i64() {
-            let pr_ref = format_existing_pr_ref(git, &base, &current, number)?;
-            println!(
-                "PR already exists for '{}': {}",
-                payload["head"].as_str().unwrap_or_default(),
-                pr_ref
-            );
-        } else {
-            println!(
-                "would push '{}' and open a PR link with base={}",
-                payload["head"], payload["base"]
-            );
-        }
-        return Ok(());
-    }
 
     if let Some(number) = payload["existing_pr_number"].as_i64() {
         if porcelain {
