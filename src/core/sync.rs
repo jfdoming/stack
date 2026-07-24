@@ -980,20 +980,65 @@ fn branch_depth(
     depth
 }
 
+#[derive(Debug, Clone)]
+enum StartingCheckout {
+    Attached(String),
+    Detached(String),
+}
+
+impl StartingCheckout {
+    fn capture(git: &Git) -> Result<Self> {
+        let branch = git.current_branch()?;
+        if branch.is_empty() {
+            Ok(Self::Detached(git.current_head_oid()?))
+        } else {
+            Ok(Self::Attached(branch))
+        }
+    }
+
+    fn attached_branch(&self) -> Option<&str> {
+        match self {
+            Self::Attached(branch) => Some(branch),
+            Self::Detached(_) => None,
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Attached(branch) => format!("branch '{branch}'"),
+            Self::Detached(oid) => format!("detached HEAD at '{oid}'"),
+        }
+    }
+
+    fn is_restored(&self, git: &Git) -> Result<bool> {
+        match self {
+            Self::Attached(branch) => Ok(git.current_branch()? == *branch),
+            Self::Detached(oid) => {
+                Ok(git.current_branch()?.is_empty() && git.current_head_oid()? == *oid)
+            }
+        }
+    }
+}
+
 pub fn execute_sync_plan(
     db: &Database,
     git: &Git,
     provider: &dyn Provider,
     plan: &SyncPlan,
 ) -> Result<()> {
-    let starting_branch = git.current_branch()?;
+    let starting_checkout = StartingCheckout::capture(git)?;
     let worktree_dirty = git.is_worktree_dirty()?;
-    let starting_branch_will_be_pruned = plan.ops.iter().any(|op| {
-        matches!(
-            op,
-            SyncOp::PruneMergedBranch { branch, .. } if branch == &starting_branch
-        )
-    });
+    let starting_branch_will_be_pruned =
+        starting_checkout
+            .attached_branch()
+            .is_some_and(|starting_branch| {
+                plan.ops.iter().any(|op| {
+                    matches!(
+                        op,
+                        SyncOp::PruneMergedBranch { branch, .. } if branch == starting_branch
+                    )
+                })
+            });
     if worktree_dirty && starting_branch_will_be_pruned {
         return Err(anyhow!(
             "cannot prune the checked-out branch with uncommitted changes; commit or stash the changes, or switch to '{}' before syncing",
@@ -1136,21 +1181,19 @@ pub fn execute_sync_plan(
         Ok(())
     })();
 
-    let restore_branch_result = restore_starting_branch(git, &starting_branch);
+    let restore_checkout_result = restore_starting_checkout(git, &starting_checkout);
+    let starting_checkout_label = starting_checkout.label();
 
     let mut stash_restore_error = None;
     if let Some(stash_handle) = stash {
-        let original_branch_restored = restore_branch_result.is_ok()
-            && !starting_branch.is_empty()
-            && git
-                .current_branch()
-                .is_ok_and(|current| current == starting_branch);
-        if original_branch_restored {
+        let original_checkout_restored =
+            restore_checkout_result.is_ok() && starting_checkout.is_restored(git).unwrap_or(false);
+        if original_checkout_restored {
             if let Err(err) = git.stash_restore(&stash_handle) {
                 stash_restore_error = Some(anyhow!(
-                    "could not auto-restore stash {} on '{}': {err}",
+                    "could not auto-restore stash {} on {}: {err}",
                     stash_handle.reference,
-                    starting_branch
+                    starting_checkout_label
                 ));
             } else {
                 eprintln!(
@@ -1160,27 +1203,27 @@ pub fn execute_sync_plan(
             }
         } else {
             stash_restore_error = Some(anyhow!(
-                "auto-stash {} was left intact because the prior branch '{}' could not be restored safely",
+                "auto-stash {} was left intact because the prior checkout ({}) could not be restored safely",
                 stash_handle.reference,
-                starting_branch
+                starting_checkout_label
             ));
         }
     }
 
-    let mut result = match (op_result, restore_branch_result) {
+    let mut result = match (op_result, restore_checkout_result) {
         (Err(op_err), Err(restore_err)) => Err(anyhow!(format_sync_failure(
             &op_err,
             Some(&restore_err),
-            &starting_branch
+            &starting_checkout_label
         ))),
         (Err(op_err), Ok(())) => Err(anyhow!(format_sync_failure(
             &op_err,
             None,
-            &starting_branch
+            &starting_checkout_label
         ))),
         (Ok(()), Err(restore_err)) => Err(anyhow!(
-            "failed to restore prior branch '{}': {restore_err}",
-            starting_branch
+            "failed to restore prior checkout ({}): {restore_err}",
+            starting_checkout_label
         )),
         (Ok(()), Ok(())) => Ok(()),
     };
@@ -1209,18 +1252,19 @@ fn repo_root_from_pr_url(url: &str) -> Option<&str> {
     url.split_once("/pull/").map(|(root, _)| root)
 }
 
-fn restore_starting_branch(git: &Git, starting_branch: &str) -> Result<()> {
-    if starting_branch.is_empty() {
+fn restore_starting_checkout(git: &Git, starting_checkout: &StartingCheckout) -> Result<()> {
+    if starting_checkout.is_restored(git)? {
         return Ok(());
     }
-    let current_branch = git.current_branch()?;
-    if current_branch == starting_branch {
-        return Ok(());
+    match starting_checkout {
+        StartingCheckout::Attached(branch) => {
+            if !git.branch_exists(branch)? {
+                return Ok(());
+            }
+            git.checkout_branch(branch)
+        }
+        StartingCheckout::Detached(oid) => git.checkout_detached(oid),
     }
-    if !git.branch_exists(starting_branch)? {
-        return Ok(());
-    }
-    git.checkout_branch(starting_branch)
 }
 
 fn summarize_replay_error(err: &anyhow::Error) -> String {
@@ -1237,7 +1281,7 @@ fn summarize_replay_error(err: &anyhow::Error) -> String {
 fn format_sync_failure(
     op_err: &anyhow::Error,
     restore_err: Option<&anyhow::Error>,
-    starting_branch: &str,
+    starting_checkout: &str,
 ) -> String {
     let op_msg = op_err.to_string();
     if is_merge_conflict_error(&op_msg) {
@@ -1246,8 +1290,8 @@ fn format_sync_failure(
 
     if let Some(restore_err) = restore_err {
         return format!(
-            "{op_msg}; additionally failed to restore prior branch '{}': {}",
-            starting_branch, restore_err
+            "{op_msg}; additionally failed to restore prior checkout ({}): {}",
+            starting_checkout, restore_err
         );
     }
 
@@ -1373,12 +1417,12 @@ mod tests {
             "git command failed [\"checkout\", \"main\"]: error: you need to resolve your current index first"
         );
 
-        let got = format_sync_failure(&op_err, Some(&restore_err), "main");
+        let got = format_sync_failure(&op_err, Some(&restore_err), "branch 'main'");
 
         assert!(got.contains("sync stopped due to merge conflicts"));
         assert!(got.contains("git rebase --continue"));
         assert!(got.contains("git rebase --abort"));
-        assert!(!got.contains("failed to restore prior branch"));
+        assert!(!got.contains("failed to restore prior checkout"));
     }
 
     #[test]
@@ -1387,9 +1431,9 @@ mod tests {
         let restore_err =
             anyhow!("git command failed [\"checkout\", \"main\"]: some restore failure");
 
-        let got = format_sync_failure(&op_err, Some(&restore_err), "main");
+        let got = format_sync_failure(&op_err, Some(&restore_err), "branch 'main'");
 
-        assert!(got.contains("failed to restore prior branch 'main'"));
+        assert!(got.contains("failed to restore prior checkout (branch 'main')"));
         assert!(got.contains("fatal: bad remote"));
     }
 }

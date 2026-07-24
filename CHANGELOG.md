@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.32 - 2026-07-24
+- Restored detached HEAD to its exact starting commit after sync operations, and extended auto-stash safety checks to verify detached as well as attached starting checkouts.
+
 ## 0.18.31 - 2026-07-24
 - Preserved valid existing branch upstreams before resolving repository push policy, so an unavailable configured target no longer blocks branches whose placement is already established; explicit overrides remain conflict-checked.
 
