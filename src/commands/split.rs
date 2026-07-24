@@ -94,6 +94,12 @@ pub fn run(
     }
 
     if !args.dry_run {
+        let top_had_upstream = if top.name != current {
+            git.branch_upstream(&current)?.is_some()
+        } else {
+            false
+        };
+
         for point in &split_points {
             git.create_branch_from(&point.name, &point.commit)
                 .with_context(|| format!("failed to create branch {}", point.name))?;
@@ -104,8 +110,17 @@ pub fn run(
                 .with_context(|| {
                     format!("failed to rename top branch {} to {}", current, top.name)
                 })?;
+            if top_had_upstream {
+                git.unset_branch_upstream(&top.name).with_context(|| {
+                    format!(
+                        "failed to clear the inherited upstream from renamed top branch {}",
+                        top.name
+                    )
+                })?;
+            }
             if db.branch_by_name(&current)?.is_some() {
                 db.rename_branch(&current, &top.name)?;
+                db.set_pr_cache(&top.name, None, None, None)?;
             }
         }
 

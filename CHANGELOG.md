@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.30 - 2026-07-24
+- Cleared the inherited Git upstream and cached PR identity when `stack split --top-name` renames the top branch, preventing the new branch name from targeting or authorising mutations through the old branch's publication.
+
 ## 0.18.29 - 2026-07-24
 - Kept `stack delete` in sole control of local branch deletion by closing open PRs without `gh --delete-branch`, preventing a remotely triggered local deletion from leaving stale stack metadata.
 - Left already merged and closed PRs unchanged while still deleting their tracked local branches and splicing stack metadata.

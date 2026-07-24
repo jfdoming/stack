@@ -88,7 +88,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - `stack split` creates new branch refs at selected commits in the current branch's committed history and wires metadata as `parent -> split branches -> current`.
 - Split points are interpreted inclusively: the selected commit becomes the tip of the lower branch, and commits after it appear in the branch above.
 - Parent selection uses `--parent`, then the current branch's tracked parent when present, then the repo base branch.
-- The current branch remains the top branch by default; `--top-name` renames that top branch while preserving its stack metadata, PR cache, and children.
+- The current branch remains the top branch by default; `--top-name` renames that top branch while preserving its stack links, sync metadata, and children, but clears the inherited upstream and cached PR identity so the new name cannot target the old branch's publication.
 - Split supports linear histories only and rejects split points at `HEAD`.
 - Interactive split prompts default to non-conflicting generated names (`<current>-part-N`) for both lower branches and the top branch.
 - Non-porcelain split runs print one planned stack with commits grouped under each branch before applying; non-dry-run splits require confirmation unless `--yes` is passed.

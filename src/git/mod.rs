@@ -198,6 +198,10 @@ impl Git {
         self.run(["branch", "-m", "--", old, new])
     }
 
+    pub fn unset_branch_upstream(&self, branch: &str) -> Result<()> {
+        self.run(["branch", "--unset-upstream", "--", branch])
+    }
+
     pub fn push_branch(&self, remote: &str, branch: &str) -> Result<()> {
         let branch_ref = local_branch_ref(branch);
         let refspec = format!("{branch_ref}:{branch_ref}");

@@ -103,7 +103,7 @@
 - Omitting `stack move` target preselects the current local non-base branch in the TTY picker; in non-interactive mode it defaults only when the current branch is a viable target.
 - After `stack move` updates parent links, it immediately runs the sync planner/executor so branch history is restacked to match the new stack shape.
 - `stack split` turns the current branch's committed linear history into a tracked stack without rewriting commits; each selected `--at` commit becomes the tip of a new lower branch, later commits remain above it, and the current branch remains checked out as the top branch.
-- `stack split --top-name <branch>` renames the current branch while keeping it as the top branch; interactive runs prompt for the top branch name with the next non-conflicting `<current>-part-N` name as the default.
+- `stack split --top-name <branch>` renames the current branch while keeping it as the top branch; the renamed top starts without the old branch's upstream or cached PR identity. Interactive runs prompt for the top branch name with the next non-conflicting `<current>-part-N` name as the default.
 - `stack split --parent <branch>` overrides the branch below the first split branch; otherwise split uses the current tracked parent or the repo base branch.
 - Before applying, non-porcelain `stack split` prints one planned stack with commits grouped under each branch; non-dry-run splits require confirmation unless `--yes` is passed.
 - `stack split --dry-run --porcelain` reports planned branch refs and parent links without mutating git or stack metadata.
