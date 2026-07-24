@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.38 - 2026-07-24
+- Hardened the source installer with locked builds, pre-build option/path validation, literal-safe Bash/Zsh/Fish PATH configuration, automatic Fish config-directory creation, and idempotent config writes.
+
 ## 0.18.37 - 2026-07-24
 - Distinguished missing, draft, and published releases in the privileged release workflow so incomplete drafts recover a validated complete set of current CI artifacts with clobber uploads while published releases remain untouched.
 

@@ -36,9 +36,10 @@
 - Draft release workflow requires the complete four-platform binary set, creates the current version release when missing, and clobber-refreshes its packaged binaries when missing or still draft; published releases are never modified.
 
 ## Install from source
-- `./scripts/install.sh`: build release binary and install to `~/.local/bin/stack`.
-- `./scripts/install.sh --write-shell-config`: also append PATH update to shell config.
-- `STACK_INSTALL_PREFIX=/custom/prefix ./scripts/install.sh`: install under a custom prefix.
+- `./scripts/install.sh`: run `cargo build --release --locked` and install to `~/.local/bin/stack`.
+- `./scripts/install.sh --write-shell-config`: also append a literal-safe, idempotent PATH update to Bash, Zsh, or Fish config, creating the config directory when needed.
+- `STACK_INSTALL_PREFIX=/custom/prefix ./scripts/install.sh`: install under a custom prefix; `:` and newline characters are rejected because one prefix must remain one PATH entry.
+- Unknown installer arguments fail before Cargo or filesystem mutation; `--help` prints the accepted syntax.
 
 ## Local behaviour notes
 - `stack` without args prints a one-shot tree visualization by default.

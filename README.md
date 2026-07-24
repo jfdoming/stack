@@ -10,7 +10,7 @@ Learn more about stacked PR workflows at [stacking.dev](https://www.stacking.dev
 ./scripts/install.sh
 ```
 
-This builds a release binary and installs it to `~/.local/bin/stack` by default.
+This builds the lockfile-pinned release binary and installs it to `~/.local/bin/stack` by default.
 
 If `~/.local/bin` is not in `PATH`, the script prints the exact line to add.
 You can also ask it to update shell config automatically:
@@ -24,6 +24,8 @@ Optional install prefix:
 ```bash
 STACK_INSTALL_PREFIX="$HOME/.cargo" ./scripts/install.sh
 ```
+
+The installer accepts only `--write-shell-config` (plus `--help`) and rejects prefixes containing `:` or newline characters because they cannot be represented safely as one `PATH` entry. Automatic Bash, Zsh, and Fish updates quote the install path literally and create a missing Fish config directory.
 
 ### Manual install
 ```bash
