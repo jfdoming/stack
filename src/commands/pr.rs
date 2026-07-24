@@ -338,6 +338,11 @@ fn build_pr_open_url(
     ))
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_browser_command(url: &str) -> (&'static str, [&str; 1]) {
+    ("explorer.exe", [url])
+}
+
 fn open_url_in_browser(url: &str) -> Result<()> {
     if std::env::var("STACK_MOCK_BROWSER_OPEN").ok().as_deref() == Some("1") {
         return Ok(());
@@ -351,8 +356,9 @@ fn open_url_in_browser(url: &str) -> Result<()> {
     };
     #[cfg(target_os = "windows")]
     let mut cmd = {
-        let mut c = Command::new("cmd");
-        c.args(["/C", "start", "", url]);
+        let (program, args) = windows_browser_command(url);
+        let mut c = Command::new(program);
+        c.args(args);
         c
     };
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -497,5 +503,14 @@ mod tests {
         let url = "https://github.com/acme/repo/compare/main...very/long/branch/name?expand=1";
         let out = format_manual_pr_link(url, false);
         assert_eq!(out, format!("open PR manually: {url}"));
+    }
+
+    #[test]
+    fn windows_browser_command_passes_the_url_directly_without_a_shell() {
+        let url = "https://github.com/acme/repo/compare/main...feat/x?expand=1&title=a%26b";
+        let (program, args) = windows_browser_command(url);
+
+        assert_eq!(program, "explorer.exe");
+        assert_eq!(args, [url]);
     }
 }
