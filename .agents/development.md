@@ -108,7 +108,7 @@
 - `stack split --parent <branch>` overrides the branch below the first split branch; otherwise split uses the current tracked parent or the repo base branch.
 - Before applying, non-porcelain `stack split` prints one planned stack with commits grouped under each branch; non-dry-run splits require confirmation unless `--yes` is passed.
 - `stack split --dry-run --porcelain` reports planned branch refs and parent links without mutating git or stack metadata.
-- Rename only pushes/deletes remote refs when the source branch already has an upstream configured.
+- Rename only pushes/deletes remote refs when the source branch already has an upstream configured, and reads the exact configured remote name so names containing `/` remain intact.
 - If rename will delete an upstream branch with an open PR, stack warns that deleting the branch may close that PR.
 - Omitting `stack completions <shell>` prompts for shell selection in TTY mode.
 - On stacked branches, `stack pr` uses the tracked parent as PR base and skips opening when an existing PR already matches the branch head.
