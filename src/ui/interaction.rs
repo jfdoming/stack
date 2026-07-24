@@ -1,14 +1,13 @@
 use std::io::Write;
 
 use anyhow::{Context, Result};
-use crossterm::cursor::{Hide, MoveToColumn, RestorePosition, SavePosition, Show};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use crossterm::execute;
 use crossterm::style::Stylize;
-use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use dialoguer::console::Term;
 use dialoguer::{Select, theme::ColorfulTheme};
 use thiserror::Error;
+
+use crate::ui::terminal_session::{CrosstermControl, TerminalMode, TerminalSession};
 
 #[derive(Debug, Error)]
 #[error("cancelled by user")]
@@ -37,22 +36,24 @@ pub fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
         return confirm_select_yes_no(prompt);
     }
 
-    let mut out = std::io::stdout();
-    enable_raw_mode().context("failed to enable raw mode for inline confirm")?;
-    execute!(out, Hide).context("failed to hide cursor for inline confirm")?;
-    execute!(out, SavePosition).context("failed to save cursor for inline confirm")?;
-
+    let mut session = TerminalSession::new(CrosstermControl::stdout(), TerminalMode::Inline);
     let result = (|| -> Result<bool> {
+        session
+            .enable_raw()
+            .context("failed to enable raw mode for inline confirm")?;
+        session
+            .hide_cursor()
+            .context("failed to hide cursor for inline confirm")?;
+        session
+            .save_position()
+            .context("failed to save cursor for inline confirm")?;
+
         let mut yes_selected = true;
         loop {
-            execute!(
-                out,
-                RestorePosition,
-                MoveToColumn(0),
-                Clear(ClearType::FromCursorDown)
-            )
-            .context("failed to clear inline confirm area")?;
-            write!(out, "{prompt}  ").context("failed to write prompt")?;
+            session
+                .prepare_inline_redraw()
+                .context("failed to clear inline confirm area")?;
+            write!(session.control_mut(), "{prompt}  ").context("failed to write prompt")?;
 
             let yes = if yes_selected {
                 format!("{} {}", "●".green().bold(), "Yes".green().bold())
@@ -64,8 +65,11 @@ pub fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
             } else {
                 format!("{} {}", "●".yellow().bold(), "No".yellow().bold())
             };
-            write!(out, "{yes}   {no}").context("failed to write options")?;
-            out.flush().context("failed to flush inline confirm")?;
+            write!(session.control_mut(), "{yes}   {no}").context("failed to write options")?;
+            session
+                .control_mut()
+                .flush()
+                .context("failed to flush inline confirm")?;
 
             if let Event::Key(key) =
                 event::read().context("failed to read key for inline confirm")?
@@ -85,10 +89,7 @@ pub fn confirm_inline_yes_no(prompt: &str) -> Result<bool> {
         }
     })();
 
-    let _ = execute!(out, RestorePosition, Show, Clear(ClearType::FromCursorDown));
-    let _ = disable_raw_mode();
-    let _ = writeln!(out);
-    result
+    session.finish(result)
 }
 
 pub fn should_use_inline_confirm(prompt: &str) -> Result<bool> {

@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.39 - 2026-07-24
+- Restored raw mode, cursor state, saved prompt position, and alternate-screen state through a shared drop guard on every fullscreen and inline TUI exit path, including partial setup and cleanup errors.
+- Preserved ancestor connector indentation for nested rows in the interactive stack tree.
+
 ## 0.18.38 - 2026-07-24
 - Hardened the source installer with locked builds, pre-build option/path validation, literal-safe Bash/Zsh/Fish PATH configuration, automatic Fish config-directory creation, and idempotent config writes.
 
