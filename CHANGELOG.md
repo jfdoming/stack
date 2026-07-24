@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.33 - 2026-07-24
+- Preserved slash-containing Git remote names during `stack rename` by reading the exact configured branch remote instead of splitting rendered upstream text.
+
 ## 0.18.32 - 2026-07-24
 - Restored detached HEAD to its exact starting commit after sync operations, and extended auto-stash safety checks to verify detached as well as attached starting checkouts.
 

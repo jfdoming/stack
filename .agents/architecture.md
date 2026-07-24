@@ -74,7 +74,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 ## Rename behaviour
 - `stack rename <old> <new>` renames a tracked branch in local git and updates the existing branch record name in stack metadata.
 - Child/parent links are preserved because rename updates the existing branch record identity rather than deleting/reinserting links.
-- Rename only updates remotes (push new branch + delete old branch) when the source branch already has an upstream configured.
+- Rename only updates remotes (push new branch + delete old branch) when the source branch already has an upstream configured. It reads the remote from structured branch configuration rather than splitting the rendered upstream name, preserving remote names that contain `/`.
 - If an open PR is detected and upstream deletion is planned, rename warns that deleting the remote branch may close that PR.
 
 ## Move behaviour

@@ -51,11 +51,18 @@ pub fn run(
 
     let upstream = git.branch_upstream(&old_branch)?;
     let has_upstream = upstream.is_some();
-    let remote = upstream
-        .as_deref()
-        .and_then(|u| u.split_once('/').map(|(name, _)| name.to_string()))
-        .or(git.remote_for_branch(&old_branch)?)
-        .unwrap_or_else(|| "origin".to_string());
+    let remote = if has_upstream {
+        git.configured_remote_for_branch(&old_branch)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "branch '{}' has an upstream but no configured remote",
+                    old_branch
+                )
+            })?
+    } else {
+        git.remote_for_branch(&old_branch)?
+            .unwrap_or_else(|| "origin".to_string())
+    };
 
     if has_upstream && git.remote_branch_exists(&remote, &new_branch)? {
         return Err(anyhow!(

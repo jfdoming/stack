@@ -388,6 +388,87 @@ fn rename_rejects_an_existing_remote_destination_before_any_mutation() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn rename_supports_slash_containing_remote_names() {
+    let repo = init_repo_without_origin();
+    let bare = repo.path().join("team-origin.git");
+    run_git(
+        repo.path(),
+        &["init", "--bare", bare.to_str().expect("bare remote path")],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "team/origin",
+            "git@github.com:acme/stack-test.git",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "team/origin",
+            bare.to_str().expect("bare remote path"),
+        ],
+    );
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/old"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("old.txt"), "old branch\n").expect("write old branch");
+    run_git(repo.path(), &["add", "old.txt"]);
+    run_git(repo.path(), &["commit", "-m", "old branch"]);
+    run_git(
+        repo.path(),
+        &["push", "--set-upstream", "team/origin", "feat/old"],
+    );
+
+    let fake_bin = repo.path().join("fake-bin-slash-remote");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(&fake_gh, "#!/usr/bin/env bash\necho '[]'\n").expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "rename", "feat/old", "feat/new"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "updated remote 'team/origin'",
+        ));
+
+    assert!(git_ref_sha(&bare, "refs/heads/feat/old").is_none());
+    assert!(git_ref_sha(&bare, "refs/heads/feat/new").is_some());
+    let upstream = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "for-each-ref",
+            "--format=%(upstream:short)",
+            "refs/heads/feat/new",
+        ])
+        .output()
+        .expect("read renamed upstream");
+    assert!(upstream.status.success());
+    assert_eq!(
+        String::from_utf8(upstream.stdout)
+            .expect("upstream utf8")
+            .trim(),
+        "team/origin/feat/new"
+    );
+}
+
 #[test]
 fn rename_does_not_push_or_delete_remote_when_source_branch_has_no_upstream() {
     let repo = init_repo();
