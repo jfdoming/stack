@@ -57,6 +57,7 @@
 - During `stack sync`, open PR bodies are refreshed to keep the managed stack-flow section current; user-written text outside managed markers is preserved.
 - During `stack sync`, open PR base branches are corrected to match each branch’s tracked parent (or the repo base branch when no tracked parent exists).
 - Repository push placement is independent of the base branch's Git tracking remote. New stack roots use the configured `auto`, `upstream`, or `fork` policy; descendants inherit their nearest published ancestor's repository.
+- A valid existing upstream is used before resolving the configured policy remote; an unavailable policy target does not block branches that already have established placement. Explicit command overrides are still resolved and checked for conflicts.
 - `auto` performs one GitHub topology/permission lookup when placement is first needed, persists the policy in `.git/stack.db`, and caches successful detection for 24 hours. Interactive first pushes prompt; non-interactive/`--yes` pushes persist automatic detection.
 - `stack pr --push-target` and `stack push --push-target` override placement for unpushed branches and fail before pushing when an existing upstream conflicts.
 - Remote resolution compares fetch and push URLs separately and supports custom remote names. Rejected upstream pushes stop without a fork fallback.

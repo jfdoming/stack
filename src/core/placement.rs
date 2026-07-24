@@ -191,15 +191,23 @@ pub fn resolve_push_placements(
         topology.permission.as_deref(),
         topology.fork_repo.is_some(),
     );
-    let selected_remote = remote_for_target(&topology, selected)?;
-    let selected_repo = repo_for_remote(git, &selected_remote)?;
+    let selected_remote = if needs_policy || requested.is_some() {
+        Some(remote_for_target(&topology, selected)?)
+    } else {
+        None
+    };
+    let selected_repo = selected_remote
+        .as_deref()
+        .map(|remote| repo_for_remote(git, remote))
+        .transpose()?
+        .flatten();
 
     let mut branch_resolver = BranchRemoteResolver {
         git,
         by_id: &by_id,
         by_name: &by_name,
         base_branch,
-        policy_remote: &selected_remote,
+        policy_remote: selected_remote.as_deref(),
         memo: HashMap::new(),
         resolving: HashSet::new(),
     };
@@ -247,7 +255,7 @@ pub fn resolve_push_placements(
             let (remote, source) = memo
                 .get(branch)
                 .cloned()
-                .unwrap_or_else(|| (selected_remote.clone(), policy_source.to_string()));
+                .ok_or_else(|| anyhow!("push placement was not resolved for '{branch}'"))?;
             let repository = repo_for_remote(git, &remote)?;
             let target = classify_repo(&topology, repository.as_deref()).unwrap_or(selected);
             let cache_age_seconds = cache_age_seconds(topology.checked_at);
@@ -278,7 +286,7 @@ struct BranchRemoteResolver<'a> {
     by_id: &'a HashMap<i64, &'a BranchRecord>,
     by_name: &'a HashMap<&'a str, &'a BranchRecord>,
     base_branch: &'a str,
-    policy_remote: &'a str,
+    policy_remote: Option<&'a str>,
     memo: HashMap<String, (String, String)>,
     resolving: HashSet<String>,
 }
@@ -298,20 +306,27 @@ impl BranchRemoteResolver<'_> {
         } else if let Some(record) = self.by_name.get(branch).copied() {
             if let Some(parent) = record.parent_branch_id.and_then(|id| self.by_id.get(&id)) {
                 if parent.name == self.base_branch {
-                    (self.policy_remote.to_string(), "policy".to_string())
+                    self.resolve_policy_remote()?
                 } else {
                     let (remote, _) = self.resolve(&parent.name)?;
                     (remote, "stack ancestor".to_string())
                 }
             } else {
-                (self.policy_remote.to_string(), "policy".to_string())
+                self.resolve_policy_remote()?
             }
         } else {
-            (self.policy_remote.to_string(), "policy".to_string())
+            self.resolve_policy_remote()?
         };
         self.resolving.remove(branch);
         self.memo.insert(branch.to_string(), resolved.clone());
         Ok(resolved)
+    }
+
+    fn resolve_policy_remote(&self) -> Result<(String, String)> {
+        let remote = self
+            .policy_remote
+            .ok_or_else(|| anyhow!("push placement requires a policy remote"))?;
+        Ok((remote.to_string(), "policy".to_string()))
     }
 }
 
