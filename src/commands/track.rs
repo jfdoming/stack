@@ -348,7 +348,11 @@ pub fn run(
             })
             .collect();
         db.set_parents_batch(&updates)?;
-        refresh_pr_cache_for_tracked_branches(db, provider, &apply_changes)?;
+        if let Err(err) = refresh_pr_cache_for_tracked_branches(db, provider, &apply_changes) {
+            warnings.push(format!(
+                "tracking links were updated, but the PR cache could not be refreshed: {err}"
+            ));
+        }
     }
 
     let changes_payload: Vec<serde_json::Value> = apply_changes

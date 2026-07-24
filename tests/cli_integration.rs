@@ -111,6 +111,18 @@ fn install_fake_browser_openers(fake_bin: &Path, log_path: &Path) {
     }
 }
 
+#[cfg(unix)]
+fn git_only_path(repo: &Path) -> PathBuf {
+    let git = env::split_paths(&env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file())
+        .expect("find git executable");
+    let fake_bin = repo.join("fake-bin-git-only");
+    fs::create_dir_all(&fake_bin).expect("create git-only bin dir");
+    std::os::unix::fs::symlink(git, fake_bin.join("git")).expect("link git executable");
+    fake_bin
+}
+
 fn run_git(repo: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(repo)

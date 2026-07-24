@@ -62,6 +62,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Git ancestry inference prefers chains that recurse toward the configured base branch.
 - Parent inference uses PR base metadata first, then git ancestry heuristics; fork PR lookup retries with `owner:branch` head qualifiers when needed.
 - Batch parent updates are validated for cycles and applied atomically.
+- Post-update PR cache refresh is best-effort: provider failure warns after the relationship transaction commits and leaves existing cache fields unchanged.
 
 ## Untrack behaviour
 - `stack untrack` removes a tracked branch record and splices its children to the removed branch's parent.
@@ -114,7 +115,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Create behaviour
 - `stack create --insert [child]` inserts the new branch between the child's prior parent and the child itself.
-- Insert operations update affected open PR managed-body sections to reflect the new parent/child chain.
+- Insert operations update affected open PR managed-body sections to reflect the new parent/child chain. That post-commit refresh is best-effort; failure warns without misreporting the completed local creation as failed.
 
 ## Security-relevant behaviour
 - Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors. PR close does not pass `--delete-branch`; local branch deletion remains under stack's control so metadata cleanup follows the expected mutation.
@@ -123,7 +124,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
 - Git fetch, URL lookup, remote inspection, and push commands terminate option parsing before dynamic remote operands, so option-like remote names cannot select command modes.
 - Full SHA-1 and SHA-256 object IDs and explicit `refs/` paths remain raw during commit resolution so immutable objects and exact refs take precedence over same-named branches; operations that semantically require a local branch qualify it under `refs/heads/`, including hexadecimal branch names.
-- Optional PR metadata lookups degrade safely with warnings so offline sync/delete workflows can continue.
+- Optional PR metadata lookups degrade safely with warnings so offline sync/delete/create/track workflows can continue without rolling back completed local mutations.
 - Remote URLs derived from git config are sanitised before display to avoid terminal control-character injection; rendered HTTP(S) links are structurally parsed and stripped of user information, query strings, and fragments before they reach terminal, browser, or PR-body output.
 - GitHub GraphQL lookups pass every string variable, including repository scopes and branch names, as raw fields so GitHub CLI cannot apply `@file` substitution or typed-value coercion.
 - The privileged draft-release handoff accepts only successful same-repository `main` push runs and downloads artifacts through the triggering run's ID; pull-request runs cannot cross the privilege boundary even when their head branch is named `main`.

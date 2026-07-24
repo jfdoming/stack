@@ -98,6 +98,78 @@ fn track_refreshes_pr_cache_for_tracked_branch() {
             "https://github.com/acme/stack-test/pull/77",
         ));
 }
+
+#[cfg(unix)]
+#[test]
+fn track_applies_parent_and_preserves_cached_pr_when_gh_is_missing() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/a"])
+        .assert()
+        .success();
+
+    let db_path = repo.path().join(".git/stack.db");
+    let conn = Connection::open(&db_path).expect("open stack db");
+    conn.execute(
+        "UPDATE branches
+         SET cached_pr_number = 77, cached_pr_state = 'open', cached_pr_head_oid = 'cached-head'
+         WHERE name = 'feat/a'",
+        [],
+    )
+    .expect("seed cached PR");
+    drop(conn);
+
+    let output = stack_cmd(repo.path())
+        .env("PATH", git_only_path(repo.path()))
+        .args([
+            "track",
+            "feat/a",
+            "--parent",
+            "feat/parent",
+            "--force",
+            "--porcelain",
+        ])
+        .output()
+        .expect("run track without gh");
+    assert!(
+        output.status.success(),
+        "track failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("valid track JSON");
+    assert_eq!(payload["applied"], true);
+    assert!(
+        payload["warnings"][0]
+            .as_str()
+            .is_some_and(|warning| warning.contains("PR cache") && warning.contains("gh")),
+        "unexpected warnings: {}",
+        payload["warnings"]
+    );
+
+    let conn = Connection::open(db_path).expect("reopen stack db");
+    let (parent, cached_number, cached_state, cached_head): (String, i64, String, String) = conn
+        .query_row(
+            "SELECT parent.name, child.cached_pr_number, child.cached_pr_state,
+                    child.cached_pr_head_oid
+             FROM branches child
+             JOIN branches parent ON parent.id = child.parent_branch_id
+             WHERE child.name = 'feat/a'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("tracked branch state");
+    assert_eq!(parent, "feat/parent");
+    assert_eq!(cached_number, 77);
+    assert_eq!(cached_state, "open");
+    assert_eq!(cached_head, "cached-head");
+}
+
 #[test]
 fn track_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
     let repo = init_repo();

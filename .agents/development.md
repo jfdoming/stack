@@ -46,7 +46,7 @@
 - `stack up`/`stack top` prompt for child selection in TTY mode when the current branch has multiple tracked children; non-interactive mode returns an ambiguity error.
 - Base branch is excluded from stack navigation (`up`, `down`, `top`, `bottom`); run navigation commands from tracked non-base branches.
 - `stack create` switches to the newly created branch and does not print an immediate compare URL because the new branch initially has no diff.
-- `stack create --insert [child]` inserts a new branch between the child's current parent and that child, updates stack metadata links, and refreshes managed sections for affected open PR bodies.
+- `stack create --insert [child]` inserts a new branch between the child's current parent and that child, updates stack metadata links, and then refreshes managed sections for affected open PR bodies. If that auxiliary GitHub refresh is unavailable, creation remains successful and warns that a later `stack sync` can repair the PR bodies.
 - Branch creation and rename reject invalid destination names before invoking Git; dynamic branch operands are passed after an option terminator so malformed legacy refs cannot be interpreted as Git flags.
 - Full SHA-1 and SHA-256 object IDs and explicit `refs/` paths resolve without local-branch DWIM even when a branch has the same name; commands that explicitly accept a local branch still use its exact `refs/heads/` tip, and opposite-length hexadecimal names remain valid branches according to the repository's object format.
 - Non-interactive contexts fall back to plain text (or JSON with `--porcelain`).
@@ -86,7 +86,7 @@
 - Cached PR numbers are only lookup hints. Existing PRs must match the exact head branch and owner, close/edit commands retain the repository scope found during lookup, and schema-v5 terminal cache state is trusted only with its bound PR head OID. Recreating a tracked branch name clears the old PR identity.
 - GitHub GraphQL calls bind every string variable with raw CLI fields, preserving file-like and scalar-like repository scopes and branch names without substitution or type coercion.
 - `stack track` records relationships for existing local branches; it can infer parents from PR base metadata and git ancestry.
-- After non-dry-run `stack track`, PR cache metadata is refreshed for newly tracked branches so `stack` view immediately reflects current PR links/states.
+- After non-dry-run `stack track`, PR cache metadata is refreshed for newly tracked branches so `stack` view immediately reflects current PR links/states. If that auxiliary GitHub refresh is unavailable, the relationship update remains successful, the previous cache is preserved, and a warning is reported.
 - In single-branch track mode, parent inference is attempted by default when `--parent` is omitted.
 - Git-ancestry inference now recursively walks parent candidates until the configured base branch when possible.
 - Omitting `stack track <branch>` follows create/delete selection behaviour: assume when only one viable branch exists, otherwise prompt in TTY mode.

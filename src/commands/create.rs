@@ -135,13 +135,18 @@ pub fn run(
 
     if let Some(before) = inserted_before.as_deref() {
         let base_branch = db.repo_meta()?.base_branch;
-        refresh_managed_pr_bodies(
+        if let Err(err) = refresh_managed_pr_bodies(
             db,
             git,
             provider,
             &base_branch,
             &[parent.clone(), before.to_string()],
-        )?;
+        ) {
+            eprintln!(
+                "warning: created branch '{child}', but managed PR bodies could not be refreshed: \
+                 {err}; run `stack sync` after GitHub CLI access is restored"
+            );
+        }
     }
 
     let out = serde_json::json!({

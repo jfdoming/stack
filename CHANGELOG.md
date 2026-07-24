@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.34 - 2026-07-24
+- Kept successful `stack create --insert` and `stack track` topology changes when their post-mutation GitHub metadata refresh cannot run, preserving existing PR cache data and reporting a recoverable warning instead of a false command failure.
+
 ## 0.18.33 - 2026-07-24
 - Preserved slash-containing Git remote names during `stack rename` by reading the exact configured branch remote instead of splitting rendered upstream text.
 
