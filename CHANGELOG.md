@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.29 - 2026-07-24
+- Kept `stack delete` in sole control of local branch deletion by closing open PRs without `gh --delete-branch`, preventing a remotely triggered local deletion from leaving stale stack metadata.
+- Left already merged and closed PRs unchanged while still deleting their tracked local branches and splicing stack metadata.
+
 ## 0.18.28 - 2026-07-23
 - Passed every GitHub GraphQL string variable through raw CLI fields, preventing repository owners, repository names, and branch heads that resemble files or scalar values from triggering file substitution or unintended type coercion.
 

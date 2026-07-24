@@ -7,7 +7,7 @@ use dialoguer::{Select, theme::ColorfulTheme};
 use crate::args::DeleteArgs;
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
-use crate::provider::Provider;
+use crate::provider::{PrState, Provider};
 use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
 use crate::ui::pickers::build_delete_picker_items;
 
@@ -110,10 +110,23 @@ pub fn run(
         return Ok(());
     }
 
-    if let Some(pr) = pr.as_ref() {
-        provider.delete_pr(&pr.identity)?;
+    let closes_open_pr = pr
+        .as_ref()
+        .is_some_and(|pr| matches!(pr.state, PrState::Open));
+    if let Some(pr) = pr.as_ref()
+        && closes_open_pr
+    {
+        provider.close_pr(&pr.identity)?;
     } else {
-        eprintln!("warning: no upstream PR found for '{}'", branch.name);
+        match pr.as_ref().map(|pr| &pr.state) {
+            None => eprintln!("warning: no upstream PR found for '{}'", branch.name),
+            Some(PrState::Merged | PrState::Closed) => {}
+            Some(PrState::Unknown) => eprintln!(
+                "warning: upstream PR state is unknown for '{}'; leaving it unchanged",
+                branch.name
+            ),
+            Some(PrState::Open) => unreachable!("open PRs are closed above"),
+        }
     }
 
     if current == branch.name {
