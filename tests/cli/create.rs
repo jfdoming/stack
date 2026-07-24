@@ -131,8 +131,9 @@ fn create_rejects_previous_checkout_syntax_as_a_literal_branch_name() {
     assert!(git_ref_sha(repo.path(), "refs/heads/@{-1}").is_none());
 }
 
+#[cfg(unix)]
 #[test]
-fn create_before_inserts_new_branch_between_parent_and_child() {
+fn create_insert_succeeds_when_gh_is_missing_and_preserves_topology() {
     let repo = init_repo();
 
     stack_cmd(repo.path())
@@ -145,6 +146,7 @@ fn create_before_inserts_new_branch_between_parent_and_child() {
         .success();
 
     stack_cmd(repo.path())
+        .env("PATH", git_only_path(repo.path()))
         .args([
             "create",
             "--insert",
@@ -157,7 +159,11 @@ fn create_before_inserts_new_branch_between_parent_and_child() {
         .success()
         .stdout(predicate::str::contains("\"created\": \"feat/mid\""))
         .stdout(predicate::str::contains("\"parent\": \"feat/parent\""))
-        .stdout(predicate::str::contains("\"inserted_before\": \"feat/child\""));
+        .stdout(predicate::str::contains("\"inserted_before\": \"feat/child\""))
+        .stderr(predicate::str::contains(
+            "warning: created branch 'feat/mid', but managed PR bodies could not be refreshed",
+        ))
+        .stderr(predicate::str::contains("gh"));
 
     let db_path = repo.path().join(".git").join("stack.db");
     let conn = Connection::open(db_path).expect("open db");
