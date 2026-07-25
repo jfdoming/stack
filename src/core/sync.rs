@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 
 use crate::db::{BranchRecord, Database};
-use crate::git::{Git, StashHandle};
+use crate::git::{Git, LocalBranchRefTransition, StashHandle};
 use crate::provider::{PrIdentity, PrState, Provider};
 use crate::util::pr_body::{ManagedBranchRef, managed_pr_section, merge_managed_pr_section};
 use crate::util::url::github_repo_slug_from_web_url;
@@ -214,6 +214,80 @@ impl SyncPlan {
             operations,
         }
     }
+
+    pub fn scope_for_move(
+        &mut self,
+        moved_branches: &HashSet<String>,
+        provider_branches: &HashSet<String>,
+    ) -> SyncPlan {
+        let mut local_ops = Vec::new();
+        let mut provider_ops = Vec::new();
+        for op in std::mem::take(&mut self.ops) {
+            match op {
+                SyncOp::Fetch { .. } => local_ops.push(op),
+                SyncOp::Restack { ref branch, .. } if moved_branches.contains(branch) => {
+                    local_ops.push(op);
+                }
+                SyncOp::UpdateSha { ref branch, .. } if moved_branches.contains(branch) => {
+                    local_ops.push(op);
+                }
+                SyncOp::UpdatePrBody { ref branch, .. }
+                | SyncOp::UpdatePrBase { ref branch, .. }
+                    if provider_branches.contains(branch) =>
+                {
+                    provider_ops.push(op);
+                }
+                SyncOp::UpdateBaseToMergedCommits { .. }
+                | SyncOp::Restack { .. }
+                | SyncOp::UpdateSha { .. }
+                | SyncOp::UpdatePrBody { .. }
+                | SyncOp::UpdatePrBase { .. }
+                | SyncOp::PruneMergedBranch { .. } => {}
+            }
+        }
+        self.ops = local_ops;
+        if !self
+            .ops
+            .iter()
+            .any(|op| matches!(op, SyncOp::Restack { .. }))
+        {
+            self.ops.retain(|op| !matches!(op, SyncOp::Fetch { .. }));
+        }
+        SyncPlan {
+            base_branch: self.base_branch.clone(),
+            ops: provider_ops,
+        }
+    }
+}
+
+pub fn execute_move_provider_updates(
+    provider: &dyn Provider,
+    provider_plan: &SyncPlan,
+) -> Result<()> {
+    for op in &provider_plan.ops {
+        match op {
+            SyncOp::UpdatePrBody {
+                branch,
+                identity,
+                body,
+            } => provider
+                .update_pr_body(identity, body)
+                .map_err(|error| anyhow!("failed to refresh PR body for '{branch}': {error}"))?,
+            SyncOp::UpdatePrBase {
+                branch,
+                identity,
+                base,
+            } => provider
+                .update_pr_base(identity, base)
+                .map_err(|error| anyhow!("failed to refresh PR base for '{branch}': {error}"))?,
+            _ => {
+                return Err(anyhow!(
+                    "move provider plan contained a non-provider operation"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn build_sync_plan(
@@ -222,6 +296,27 @@ pub fn build_sync_plan(
     provider: &dyn Provider,
     base_branch: &str,
     base_remote: &str,
+) -> Result<(SyncPlan, SyncPlanTiming)> {
+    build_sync_plan_inner(db, git, provider, base_branch, base_remote, true)
+}
+
+pub fn build_sync_plan_for_move(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    base_branch: &str,
+    base_remote: &str,
+) -> Result<(SyncPlan, SyncPlanTiming)> {
+    build_sync_plan_inner(db, git, provider, base_branch, base_remote, false)
+}
+
+fn build_sync_plan_inner(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    base_branch: &str,
+    base_remote: &str,
+    persist_pr_cache: bool,
 ) -> Result<(SyncPlan, SyncPlanTiming)> {
     #[derive(Clone)]
     struct RestackCandidate {
@@ -351,12 +446,14 @@ pub fn build_sync_plan(
                 PrState::Closed => "closed",
                 PrState::Unknown => "unknown",
             };
-            db.set_pr_cache(
-                &branch.name,
-                Some(pr.identity.number),
-                Some(state),
-                pr.head_ref_oid.as_deref(),
-            )?;
+            if persist_pr_cache {
+                db.set_pr_cache(
+                    &branch.name,
+                    Some(pr.identity.number),
+                    Some(state),
+                    pr.head_ref_oid.as_deref(),
+                )?;
+            }
             is_merged_pr = matches!(pr.state, PrState::Merged);
 
             if matches!(pr.state, PrState::Merged) {
@@ -386,7 +483,7 @@ pub fn build_sync_plan(
         if !branch_is_local {
             continue;
         }
-        if branch.name == base_branch {
+        if persist_pr_cache && branch.name == base_branch {
             db.set_pr_cache(&branch.name, None, None, None)?;
         }
         let current_sha = current_sha.expect("local branch SHA should be available");
@@ -980,6 +1077,49 @@ fn branch_depth(
     depth
 }
 
+#[derive(Debug)]
+pub struct SyncExecutionFailure {
+    pub error: anyhow::Error,
+    pub can_rollback_move_topology: bool,
+}
+
+#[derive(Default)]
+struct LocalRefJournal {
+    transitions: Vec<LocalBranchRefTransition>,
+}
+
+impl LocalRefJournal {
+    fn record(&mut self, branch: &str, before: &str, after: Option<&str>) {
+        if after == Some(before) {
+            return;
+        }
+        if let Some(existing) = self
+            .transitions
+            .iter_mut()
+            .find(|transition| transition.branch == branch)
+        {
+            debug_assert_eq!(existing.after.as_deref(), Some(before));
+            existing.after = after.map(str::to_string);
+            return;
+        }
+        self.transitions.push(LocalBranchRefTransition {
+            branch: branch.to_string(),
+            before: before.to_string(),
+            after: after.map(str::to_string),
+        });
+    }
+
+    fn is_empty(&self) -> bool {
+        self.transitions.is_empty()
+    }
+
+    fn contains_branch(&self, branch: &str) -> bool {
+        self.transitions
+            .iter()
+            .any(|transition| transition.branch == branch)
+    }
+}
+
 #[derive(Debug, Clone)]
 enum StartingCheckout {
     Attached(String),
@@ -1026,8 +1166,31 @@ pub fn execute_sync_plan(
     provider: &dyn Provider,
     plan: &SyncPlan,
 ) -> Result<()> {
-    let starting_checkout = StartingCheckout::capture(git)?;
-    let worktree_dirty = git.is_worktree_dirty()?;
+    execute_sync_plan_inner(db, git, provider, plan, false).map_err(|failure| failure.error)
+}
+
+pub fn execute_sync_plan_for_move(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    plan: &SyncPlan,
+) -> std::result::Result<(), SyncExecutionFailure> {
+    execute_sync_plan_inner(db, git, provider, plan, true)
+}
+
+fn execute_sync_plan_inner(
+    db: &Database,
+    git: &Git,
+    provider: &dyn Provider,
+    plan: &SyncPlan,
+    rollback_local_refs_on_failure: bool,
+) -> std::result::Result<(), SyncExecutionFailure> {
+    let before_apply = |error| SyncExecutionFailure {
+        error,
+        can_rollback_move_topology: true,
+    };
+    let starting_checkout = StartingCheckout::capture(git).map_err(before_apply)?;
+    let worktree_dirty = git.is_worktree_dirty().map_err(before_apply)?;
     let starting_branch_will_be_pruned =
         starting_checkout
             .attached_branch()
@@ -1040,22 +1203,29 @@ pub fn execute_sync_plan(
                 })
             });
     if worktree_dirty && starting_branch_will_be_pruned {
-        return Err(anyhow!(
+        return Err(before_apply(anyhow!(
             "cannot prune the checked-out branch with uncommitted changes; commit or stash the changes, or switch to '{}' before syncing",
             plan.base_branch
-        ));
+        )));
     }
+    let run_id = db.record_sync_start().map_err(before_apply)?;
+    let mut status = "success";
+    let mut summary = None;
     let mut stash: Option<StashHandle> = None;
     if worktree_dirty {
         eprintln!("warning: worktree is dirty; auto-stashing local changes");
-        stash = git.stash_push("stack-sync-auto-stash")?;
+        stash = match git.stash_push("stack-sync-auto-stash") {
+            Ok(stash) => stash,
+            Err(stash_error) => {
+                return Err(fail_started_sync_before_apply(db, run_id, stash_error));
+            }
+        };
     }
 
-    let run_id = db.record_sync_start()?;
-    let mut status = "success";
-    let mut summary = None;
     let replay_supported = git.supports_replay();
     let mut pending_sync_shas: HashMap<String, String> = HashMap::new();
+    let mut pruned_branches = HashSet::new();
+    let mut ref_journal = LocalRefJournal::default();
 
     let op_result: Result<()> = (|| {
         for op in &plan.ops {
@@ -1094,6 +1264,7 @@ pub fn execute_sync_plan(
                     } else {
                         expected_head.clone()
                     };
+                    ref_journal.record(branch, expected_head, Some(&applied_head));
                     pending_sync_shas.insert(branch.clone(), applied_head);
                 }
                 SyncOp::Restack {
@@ -1132,6 +1303,7 @@ pub fn execute_sync_plan(
                         eprintln!("warning: git replay unavailable; using rebase for {branch}");
                         git.rebase_onto(branch, expected_head, old_base, &onto)?
                     };
+                    ref_journal.record(branch, expected_head, Some(&new_head));
                     pending_sync_shas.insert(branch.clone(), new_head);
                 }
                 SyncOp::UpdateSha { branch, sha } => {
@@ -1166,20 +1338,40 @@ pub fn execute_sync_plan(
                             git.checkout_branch(&plan.base_branch)?;
                         }
                         git.delete_local_branch_if_unchanged(branch, &current_head)?;
+                        ref_journal.record(branch, &current_head, None);
                     }
                     if db.branch_by_name(branch)?.is_some() {
                         db.splice_out_branch(branch)?;
                     }
+                    pruned_branches.insert(branch.clone());
                 }
             }
         }
+        let mut sync_sha_updates = Vec::new();
         for (branch, sha) in &pending_sync_shas {
-            if db.branch_by_name(branch)?.is_some() {
-                db.set_sync_sha(branch, sha)?;
+            if !pruned_branches.contains(branch) {
+                sync_sha_updates.push((branch.clone(), sha.clone()));
             }
         }
+        db.set_sync_shas(&sync_sha_updates)?;
         Ok(())
     })();
+
+    let (op_result, can_rollback_move_topology) = match op_result {
+        Err(op_error) if rollback_local_refs_on_failure => {
+            match rollback_move_local_state(git, &ref_journal) {
+                Ok(()) => (Err(op_error), true),
+                Err(rollback_error) => (
+                    Err(anyhow!(
+                        "{op_error}; additionally failed to restore sync-updated local refs: {rollback_error}"
+                    )),
+                    false,
+                ),
+            }
+        }
+        Err(op_error) => (Err(op_error), ref_journal.is_empty()),
+        Ok(()) => (Ok(()), false),
+    };
 
     let restore_checkout_result = restore_starting_checkout(git, &starting_checkout);
     let starting_checkout_label = starting_checkout.label();
@@ -1236,16 +1428,73 @@ pub fn execute_sync_plan(
 
     if let Err(err) = result {
         status = "failed";
-        summary = Some(format!(
-            "{{\"error\":{}}}",
-            serde_json::to_string(&err.to_string())?
-        ));
-        db.record_sync_finish(run_id, status, summary.as_deref())?;
-        return Err(anyhow!("sync failed: {err}"));
+        summary = match serde_json::to_string(&err.to_string()) {
+            Ok(error_json) => Some(format!("{{\"error\":{error_json}}}")),
+            Err(summary_error) => {
+                return Err(SyncExecutionFailure {
+                    error: anyhow!(
+                        "sync failed: {err}; additionally failed to serialize the sync failure: {summary_error}"
+                    ),
+                    can_rollback_move_topology,
+                });
+            }
+        };
+        if let Err(finish_error) = db.record_sync_finish(run_id, status, summary.as_deref()) {
+            return Err(SyncExecutionFailure {
+                error: anyhow!(
+                    "sync failed: {err}; additionally failed to record the failed sync: {finish_error}"
+                ),
+                can_rollback_move_topology,
+            });
+        }
+        return Err(SyncExecutionFailure {
+            error: anyhow!("sync failed: {err}"),
+            can_rollback_move_topology,
+        });
     }
 
-    db.record_sync_finish(run_id, status, summary.as_deref())?;
+    if let Err(finish_error) = db.record_sync_finish(run_id, status, summary.as_deref()) {
+        return Err(SyncExecutionFailure {
+            error: anyhow!("sync applied but its completion could not be recorded: {finish_error}"),
+            can_rollback_move_topology,
+        });
+    }
     Ok(())
+}
+
+fn fail_started_sync_before_apply(
+    db: &Database,
+    run_id: i64,
+    apply_error: anyhow::Error,
+) -> SyncExecutionFailure {
+    let summary = serde_json::json!({ "error": apply_error.to_string() }).to_string();
+    let error = match db.record_sync_finish(run_id, "failed", Some(&summary)) {
+        Ok(()) => anyhow!("sync failed: {apply_error}"),
+        Err(finish_error) => anyhow!(
+            "sync failed: {apply_error}; additionally failed to record the failed sync: {finish_error}"
+        ),
+    };
+    SyncExecutionFailure {
+        error,
+        can_rollback_move_topology: true,
+    }
+}
+
+fn rollback_move_local_state(git: &Git, journal: &LocalRefJournal) -> Result<()> {
+    git.abort_current_process_restack_recovery()?;
+    if journal.is_empty() {
+        return Ok(());
+    }
+    rollback_local_ref_journal(git, journal)
+}
+
+fn rollback_local_ref_journal(git: &Git, journal: &LocalRefJournal) -> Result<()> {
+    let current_branch = git.current_branch()?;
+    if !current_branch.is_empty() && journal.contains_branch(&current_branch) {
+        let current_head = git.current_head_oid()?;
+        git.checkout_detached(&current_head)?;
+    }
+    git.rollback_local_branch_ref_transitions(&journal.transitions)
 }
 
 fn repo_root_from_pr_url(url: &str) -> Option<&str> {
@@ -1379,9 +1628,79 @@ fn can_update_pr_base(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use anyhow::anyhow;
 
-    use super::{RestackTarget, format_sync_failure, summarize_replay_error};
+    use super::{RestackTarget, SyncOp, SyncPlan, format_sync_failure, summarize_replay_error};
+
+    #[test]
+    fn move_execution_is_scoped_and_defers_provider_updates() {
+        let identity = crate::provider::PrIdentity {
+            number: 1,
+            repository: "acme/stack".to_string(),
+            head_ref_name: "feat/a".to_string(),
+            head_repository_owner: "acme".to_string(),
+        };
+        let oid = "a".repeat(40);
+        let mut plan = SyncPlan {
+            base_branch: "main".to_string(),
+            ops: vec![
+                SyncOp::Fetch {
+                    remote: "origin".to_string(),
+                    expected_base_ref: None,
+                    expected_base_sha: None,
+                },
+                SyncOp::UpdateBaseToMergedCommits {
+                    branch: "main".to_string(),
+                    expected_head: oid.clone(),
+                    merge_commits: vec![oid.clone()],
+                },
+                SyncOp::UpdateSha {
+                    branch: "feat/a".to_string(),
+                    sha: oid.clone(),
+                },
+                SyncOp::UpdateSha {
+                    branch: "feat/unrelated".to_string(),
+                    sha: oid,
+                },
+                SyncOp::UpdatePrBase {
+                    branch: "feat/a".to_string(),
+                    identity: identity.clone(),
+                    base: "feat/parent".to_string(),
+                },
+                SyncOp::UpdatePrBody {
+                    branch: "feat/a".to_string(),
+                    identity,
+                    body: "managed body".to_string(),
+                },
+                SyncOp::UpdatePrBody {
+                    branch: "feat/unrelated".to_string(),
+                    identity: crate::provider::PrIdentity {
+                        number: 2,
+                        repository: "acme/stack".to_string(),
+                        head_ref_name: "feat/unrelated".to_string(),
+                        head_repository_owner: "acme".to_string(),
+                    },
+                    body: "unrelated body".to_string(),
+                },
+                SyncOp::PruneMergedBranch {
+                    branch: "feat/merged".to_string(),
+                    merged_head_oid: None,
+                },
+            ],
+        };
+
+        let moved = HashSet::from(["feat/a".to_string()]);
+        let provider_branches = HashSet::from(["feat/a".to_string()]);
+        let provider_plan = plan.scope_for_move(&moved, &provider_branches);
+
+        assert!(matches!(plan.ops.as_slice(), [SyncOp::UpdateSha { .. }]));
+        assert!(matches!(
+            provider_plan.ops.as_slice(),
+            [SyncOp::UpdatePrBase { .. }, SyncOp::UpdatePrBody { .. }]
+        ));
+    }
 
     #[test]
     fn restack_object_targets_require_full_object_ids() {

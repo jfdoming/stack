@@ -5,17 +5,14 @@ use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
 
 use crate::args::MoveArgs;
-use crate::core::{build_sync_plan, execute_sync_plan};
+use crate::core::{
+    build_sync_plan_for_move, execute_move_provider_updates, execute_sync_plan_for_move,
+};
 use crate::db::{BranchRecord, Database};
 use crate::git::Git;
 use crate::provider::Provider;
 use crate::ui::interaction::prompt_or_cancel;
 use crate::ui::pickers::build_branch_picker_items;
-
-enum PreviousTargetState {
-    Tracked { parent: Option<String> },
-    Untracked,
-}
 
 pub fn run(
     db: &Database,
@@ -29,10 +26,6 @@ pub fn run(
     let is_tty = stdout().is_terminal() && stdin().is_terminal();
     let current = git.current_branch()?;
     let tracked = db.list_branches()?;
-    let tracked_by_name: HashMap<String, BranchRecord> = tracked
-        .iter()
-        .map(|branch| (branch.name.clone(), branch.clone()))
-        .collect();
     let local = git.local_branches()?;
 
     let target = resolve_target(
@@ -59,43 +52,25 @@ pub fn run(
         return Err(anyhow!("target and parent branch names are identical"));
     }
 
-    let previous_parent = tracked_by_name
-        .get(&target)
-        .and_then(|branch| branch.parent_branch_id)
-        .and_then(|parent_id| {
-            tracked
-                .iter()
-                .find(|branch| branch.id == parent_id)
-                .map(|branch| branch.name.clone())
-        });
-    let previous_target_state = if tracked_by_name.contains_key(&target) {
-        PreviousTargetState::Tracked {
-            parent: previous_parent.clone(),
-        }
-    } else {
-        PreviousTargetState::Untracked
-    };
-    let parent_was_tracked = tracked_by_name.contains_key(&parent);
-
-    db.set_parent(&target, Some(&parent))?;
-    let sync_result = (|| {
-        let (sync_plan, _) = build_sync_plan(db, git, provider, base_branch, base_remote)?;
-        let sync_view = sync_plan.to_view();
-        if !sync_view.operations.is_empty() {
-            execute_sync_plan(db, git, provider, &sync_plan)?;
-        }
-        Ok(sync_view)
-    })();
-    let sync_view = match sync_result {
-        Ok(sync_view) => sync_view,
+    let mut moved_branches = descendants;
+    moved_branches.insert(target.clone());
+    let topology_change = db.apply_move_topology(&target, &parent)?;
+    let previous_parent = topology_change.previous_parent_name().map(str::to_string);
+    let mut provider_branches = moved_branches.clone();
+    provider_branches.insert(parent.clone());
+    if let Some(previous_parent) = previous_parent.as_ref() {
+        provider_branches.insert(previous_parent.clone());
+    }
+    let (mut sync_plan, _) = match build_sync_plan_for_move(
+        db,
+        git,
+        provider,
+        base_branch,
+        base_remote,
+    ) {
+        Ok(plan) => plan,
         Err(sync_error) => {
-            if let Err(rollback_error) = rollback_move_topology(
-                db,
-                &target,
-                &previous_target_state,
-                &parent,
-                parent_was_tracked,
-            ) {
+            if let Err(rollback_error) = db.rollback_move_topology(&topology_change) {
                 return Err(anyhow!(
                     "{sync_error}; additionally failed to restore move database topology: {rollback_error}"
                 ));
@@ -103,6 +78,34 @@ pub fn run(
             return Err(sync_error);
         }
     };
+    let provider_plan = sync_plan.scope_for_move(&moved_branches, &provider_branches);
+    let mut sync_view = sync_plan.to_view();
+    sync_view
+        .operations
+        .extend(provider_plan.to_view().operations);
+    let sync_applied = !sync_view.operations.is_empty();
+    if !sync_plan.ops.is_empty()
+        && let Err(sync_failure) = execute_sync_plan_for_move(db, git, provider, &sync_plan)
+    {
+        if !sync_failure.can_rollback_move_topology {
+            return Err(anyhow!(
+                "{}; retained the proposed move database topology because sync changes were already applied or could not be restored safely",
+                sync_failure.error
+            ));
+        }
+        if let Err(rollback_error) = db.rollback_move_topology(&topology_change) {
+            return Err(anyhow!(
+                "{}; additionally failed to restore move database topology: {rollback_error}",
+                sync_failure.error
+            ));
+        }
+        return Err(sync_failure.error);
+    }
+    if let Err(provider_error) = execute_move_provider_updates(provider, &provider_plan) {
+        return Err(anyhow!(
+            "move was applied locally, but GitHub PR metadata refresh failed: {provider_error}; run `stack sync` to repair the remaining PR metadata"
+        ));
+    }
 
     let payload = serde_json::json!({
         "action": "move",
@@ -111,7 +114,7 @@ pub fn run(
         "new_parent": parent,
         "applied": true,
         "sync": {
-            "applied": !sync_view.operations.is_empty(),
+            "applied": sync_applied,
             "operations": sync_view.operations,
         }
     });
@@ -125,29 +128,10 @@ pub fn run(
         payload["target"].as_str().unwrap_or_default(),
         payload["new_parent"].as_str().unwrap_or_default()
     );
-    if payload["sync"]["applied"].as_bool().unwrap_or(false) {
+    if sync_applied {
         println!("sync completed");
     } else {
         println!("sync already up to date");
-    }
-    Ok(())
-}
-
-fn rollback_move_topology(
-    db: &Database,
-    target: &str,
-    previous_target_state: &PreviousTargetState,
-    parent: &str,
-    parent_was_tracked: bool,
-) -> Result<()> {
-    match previous_target_state {
-        PreviousTargetState::Tracked {
-            parent: previous_parent,
-        } => db.set_parent(target, previous_parent.as_deref())?,
-        PreviousTargetState::Untracked => db.delete_branch(target)?,
-    }
-    if !parent_was_tracked {
-        db.delete_branch(parent)?;
     }
     Ok(())
 }

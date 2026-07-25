@@ -29,6 +29,13 @@ pub struct StashHandle {
 }
 
 #[derive(Debug, Clone)]
+pub struct LocalBranchRefTransition {
+    pub branch: String,
+    pub before: String,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct BaseBranchCandidate {
     pub name: String,
     pub source: BaseBranchSource,
@@ -222,6 +229,139 @@ impl Git {
             .current_dir(&self.root)
             .args(["config", "--local", "--remove-section", &section])
             .output();
+    }
+
+    pub fn rollback_local_branch_ref_transitions(
+        &self,
+        transitions: &[LocalBranchRefTransition],
+    ) -> Result<()> {
+        if transitions.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(branch) = self.checked_out_transition_branch(transitions)? {
+            return Err(anyhow!(
+                "refusing to restore local branch '{}': branch is checked out in a worktree",
+                sanitize_terminal_text(&branch)
+            ));
+        }
+
+        let mut commands = String::new();
+        for transition in transitions {
+            let branch_ref = local_branch_ref(&transition.branch);
+            match transition.after.as_deref() {
+                Some(after) => {
+                    commands.push_str(&format!(
+                        "update {branch_ref} {} {after}\n",
+                        transition.before
+                    ));
+                }
+                None => {
+                    commands.push_str(&format!("create {branch_ref} {}\n", transition.before));
+                }
+            }
+        }
+        let output = self.run_update_ref_transaction(&commands)?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "could not atomically restore local branch refs: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+
+    fn checked_out_transition_branch(
+        &self,
+        transitions: &[LocalBranchRefTransition],
+    ) -> Result<Option<String>> {
+        for transition in transitions {
+            let branch_ref = local_branch_ref(&transition.branch);
+            if self.branch_checked_out_in_worktree(&branch_ref)? {
+                return Ok(Some(transition.branch.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn abort_current_process_restack_recovery(&self) -> Result<bool> {
+        let mut rebase_in_progress = false;
+        let mut recovery_branch = None;
+        for state_dir in ["rebase-merge", "rebase-apply"] {
+            let path = self.resolve_git_path(["rev-parse", "--git-path", state_dir])?;
+            if !path.exists() {
+                continue;
+            }
+            rebase_in_progress = true;
+            let head_name = std::fs::read_to_string(path.join("head-name"))
+                .context("could not read the active rebase head name")?;
+            recovery_branch = Some(
+                head_name
+                    .trim()
+                    .strip_prefix("refs/heads/")
+                    .filter(|branch| !branch.is_empty())
+                    .ok_or_else(|| anyhow!("active rebase head name is not a local branch"))?
+                    .to_string(),
+            );
+            break;
+        }
+        if recovery_branch.is_none() {
+            recovery_branch = Some(self.current_branch()?);
+        }
+        let recovery_branch = recovery_branch.unwrap_or_default();
+        let Some((run_id, expected_head, _)) = parse_restack_recovery_branch(&recovery_branch)
+        else {
+            return Ok(false);
+        };
+        let process_prefix = format!("{}-", std::process::id());
+        let Some(sequence) = run_id.strip_prefix(&process_prefix) else {
+            return Ok(false);
+        };
+        if sequence.is_empty() || !sequence.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Ok(false);
+        }
+
+        let recovery_ref = local_branch_ref(&recovery_branch);
+        let pending_ref = restack_pending_ref(run_id);
+        if self.exact_ref_oid(&recovery_ref)?.as_deref() != Some(expected_head)
+            || self.exact_ref_oid(&pending_ref)?.as_deref() != Some(expected_head)
+        {
+            return Err(anyhow!(
+                "refusing to abort changed restack recovery state for '{}'",
+                sanitize_terminal_text(&recovery_branch)
+            ));
+        }
+
+        if rebase_in_progress {
+            self.run(["rebase", "--abort"])?;
+        }
+        if self.exact_ref_oid(&recovery_ref)?.as_deref() != Some(expected_head) {
+            return Err(anyhow!(
+                "restack recovery branch '{}' changed while its rebase was being aborted",
+                sanitize_terminal_text(&recovery_branch)
+            ));
+        }
+        let current_branch = self.current_branch()?;
+        if current_branch == recovery_branch {
+            self.checkout_detached(expected_head)?;
+        } else if !current_branch.is_empty() {
+            return Err(anyhow!(
+                "restack recovery abort restored unexpected branch '{}'",
+                sanitize_terminal_text(&current_branch)
+            ));
+        }
+
+        let cleanup = format!(
+            "delete {recovery_ref} {expected_head}\ndelete {pending_ref} {expected_head}\n"
+        );
+        let output = self.run_update_ref_transaction(&cleanup)?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "could not atomically remove move restack recovery refs: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(true)
     }
 
     fn branch_checked_out_in_worktree(&self, branch_ref: &str) -> Result<bool> {
@@ -964,7 +1104,6 @@ impl Git {
 
         let replayed_head = fields[2].to_string();
         self.update_local_branch_if_unchanged(branch, &replayed_head, &expected_head)?;
-        self.checkout_branch(branch)?;
         Ok(replayed_head)
     }
 
@@ -1032,7 +1171,6 @@ impl Git {
             let _ = self.delete_local_branch_if_unchanged(&temporary_branch, &rebased_head);
         }
         update_result?;
-        self.checkout_branch(branch)?;
         Ok(rebased_head)
     }
 
@@ -1762,6 +1900,195 @@ mod tests {
             .capture(["config", "--get", "branch.foo.bar.remote"])
             .unwrap();
         assert_eq!(config.trim(), "namesake");
+    }
+
+    #[test]
+    fn ref_transition_rollback_restores_updated_and_deleted_branches_atomically() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "original"]);
+        let original = git.head_sha("main").unwrap();
+        run_test_git(repo.path(), &["branch", "updated"]);
+        run_test_git(repo.path(), &["branch", "deleted"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "applied"]);
+        let applied = git.head_sha("main").unwrap();
+        run_test_git(
+            repo.path(),
+            &["update-ref", "refs/heads/updated", &applied, &original],
+        );
+        run_test_git(
+            repo.path(),
+            &["update-ref", "-d", "refs/heads/deleted", &original],
+        );
+
+        git.rollback_local_branch_ref_transitions(&[
+            LocalBranchRefTransition {
+                branch: "updated".to_string(),
+                before: original.clone(),
+                after: Some(applied),
+            },
+            LocalBranchRefTransition {
+                branch: "deleted".to_string(),
+                before: original.clone(),
+                after: None,
+            },
+        ])
+        .unwrap();
+
+        assert_eq!(git.head_sha("updated").unwrap(), original);
+        assert_eq!(git.head_sha("deleted").unwrap(), original);
+    }
+
+    #[test]
+    fn ref_transition_rollback_refuses_a_branch_checked_out_in_a_linked_worktree() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "original"]);
+        let original = git.head_sha("main").unwrap();
+        run_test_git(repo.path(), &["branch", "checked-out"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "applied"]);
+        let applied = git.head_sha("main").unwrap();
+        run_test_git(
+            repo.path(),
+            &["update-ref", "refs/heads/checked-out", &applied, &original],
+        );
+        let linked_root = tempfile::tempdir().expect("linked worktree root");
+        let linked = linked_root.path().join("checked-out");
+        run_test_git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                linked.to_str().expect("linked worktree path"),
+                "checked-out",
+            ],
+        );
+
+        let error = git
+            .rollback_local_branch_ref_transitions(&[LocalBranchRefTransition {
+                branch: "checked-out".to_string(),
+                before: original,
+                after: Some(applied.clone()),
+            }])
+            .unwrap_err();
+
+        assert!(error.to_string().contains("checked out in a worktree"));
+        assert_eq!(git.head_sha("checked-out").unwrap(), applied);
+    }
+
+    #[test]
+    fn ref_transition_rollback_does_not_partially_restore_when_a_deleted_branch_is_checked_out() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "original"]);
+        let original = git.head_sha("main").unwrap();
+        run_test_git(repo.path(), &["branch", "deleted"]);
+        run_test_git(repo.path(), &["branch", "free"]);
+        let linked_root = tempfile::tempdir().expect("linked worktree root");
+        let linked = linked_root.path().join("deleted");
+        run_test_git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                linked.to_str().expect("linked worktree path"),
+                "deleted",
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &["update-ref", "-d", "refs/heads/deleted", &original],
+        );
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "applied"]);
+        let applied = git.head_sha("main").unwrap();
+        run_test_git(
+            repo.path(),
+            &["update-ref", "refs/heads/free", &applied, &original],
+        );
+
+        let error = git
+            .rollback_local_branch_ref_transitions(&[
+                LocalBranchRefTransition {
+                    branch: "deleted".to_string(),
+                    before: original.clone(),
+                    after: None,
+                },
+                LocalBranchRefTransition {
+                    branch: "free".to_string(),
+                    before: original,
+                    after: Some(applied.clone()),
+                },
+            ])
+            .unwrap_err();
+
+        assert!(error.to_string().contains("checked out in a worktree"));
+        assert!(!git.branch_exists("deleted").unwrap());
+        assert_eq!(git.head_sha("free").unwrap(), applied);
+    }
+
+    #[test]
+    fn ref_transition_rollback_is_all_or_nothing_on_a_cas_conflict() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "original"]);
+        let original = git.head_sha("main").unwrap();
+        run_test_git(repo.path(), &["branch", "raced"]);
+        run_test_git(repo.path(), &["branch", "unchanged"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "applied"]);
+        let applied = git.head_sha("main").unwrap();
+        for branch in ["raced", "unchanged"] {
+            run_test_git(
+                repo.path(),
+                &[
+                    "update-ref",
+                    &format!("refs/heads/{branch}"),
+                    &applied,
+                    &original,
+                ],
+            );
+        }
+        run_test_git(
+            repo.path(),
+            &["commit", "--allow-empty", "-m", "concurrent"],
+        );
+        let concurrent = git.head_sha("main").unwrap();
+        run_test_git(
+            repo.path(),
+            &["update-ref", "refs/heads/raced", &concurrent, &applied],
+        );
+
+        let err = git
+            .rollback_local_branch_ref_transitions(&[
+                LocalBranchRefTransition {
+                    branch: "raced".to_string(),
+                    before: original.clone(),
+                    after: Some(applied.clone()),
+                },
+                LocalBranchRefTransition {
+                    branch: "unchanged".to_string(),
+                    before: original,
+                    after: Some(applied.clone()),
+                },
+            ])
+            .unwrap_err();
+
+        assert!(err.to_string().contains("atomically restore"));
+        assert_eq!(git.head_sha("raced").unwrap(), concurrent);
+        assert_eq!(git.head_sha("unchanged").unwrap(), applied);
+    }
+
+    #[test]
+    fn move_restack_recovery_refuses_an_unreadable_rebase_head_name() {
+        let (repo, git) = init_test_repo();
+        std::fs::create_dir_all(repo.path().join(".git/rebase-merge")).unwrap();
+
+        let error = git.abort_current_process_restack_recovery().unwrap_err();
+
+        assert!(error.to_string().contains("rebase head name"));
     }
 
     #[test]
