@@ -45,6 +45,14 @@ struct ParentInference {
     confidence: &'static str,
 }
 
+struct ParentInferenceContext<'a> {
+    git: &'a Git,
+    provider: &'a dyn Provider,
+    local: &'a [String],
+    base_branch: &'a str,
+    debug: bool,
+}
+
 #[derive(Debug, Clone)]
 struct TrackChange {
     branch: String,
@@ -159,6 +167,13 @@ pub fn run(
         }
     }
 
+    let inference = ParentInferenceContext {
+        git,
+        provider,
+        local: &local,
+        base_branch,
+        debug: opts.debug,
+    };
     for target in targets {
         if !local_set.contains(&target) {
             return Err(anyhow!("branch '{}' does not exist in git", target));
@@ -172,16 +187,8 @@ pub fn run(
         }
 
         let proposed_changes = if args.all {
-            let inferred = infer_parent_for_branch(
-                git,
-                provider,
-                &target,
-                by_name.get(&target),
-                &local,
-                base_branch,
-                &mut warnings,
-                opts.debug,
-            )?;
+            let inferred =
+                infer_parent_for_branch(&inference, &target, by_name.get(&target), &mut warnings)?;
             inferred
                 .map(|parent| {
                     vec![TrackChange {
@@ -212,15 +219,11 @@ pub fn run(
             }]
         } else {
             let recursive = infer_parent_chain_for_branch(
-                git,
-                provider,
+                &inference,
                 &target,
                 &by_name,
                 &by_id,
-                &local,
-                base_branch,
                 &mut warnings,
-                opts.debug,
             )?;
             if !recursive.is_empty() || args.infer {
                 recursive
@@ -432,21 +435,17 @@ pub fn run(
 }
 
 fn infer_parent_for_branch(
-    git: &Git,
-    provider: &dyn Provider,
+    ctx: &ParentInferenceContext<'_>,
     branch: &str,
     tracked: Option<&BranchRecord>,
-    local: &[String],
-    base_branch: &str,
     warnings: &mut Vec<String>,
-    debug: bool,
 ) -> Result<Option<ParentInference>> {
     let cached_number = tracked.and_then(|r| r.cached_pr_number);
-    match provider.resolve_pr_by_head(branch, cached_number) {
+    match ctx.provider.resolve_pr_by_head(branch, cached_number) {
         Ok(Some(pr)) => {
             if let Some(base) = pr.base_ref_name
                 && base != branch
-                && git.branch_exists(&base)?
+                && ctx.git.branch_exists(&base)?
             {
                 return Ok(Some(ParentInference {
                     parent: base,
@@ -456,10 +455,10 @@ fn infer_parent_for_branch(
             }
         }
         Ok(None) => {}
-        Err(err) => warnings.push(format_pr_metadata_warning(branch, &err, debug)),
+        Err(err) => warnings.push(format_pr_metadata_warning(branch, &err, ctx.debug)),
     }
 
-    infer_parent_from_git(git, branch, local, base_branch)
+    infer_parent_from_git(ctx.git, branch, ctx.local, ctx.base_branch)
 }
 
 fn format_pr_metadata_warning(branch: &str, err: &anyhow::Error, debug: bool) -> String {
@@ -525,31 +524,18 @@ fn infer_parent_from_git(
 }
 
 fn infer_parent_chain_for_branch(
-    git: &Git,
-    provider: &dyn Provider,
+    ctx: &ParentInferenceContext<'_>,
     start_branch: &str,
     by_name: &HashMap<String, BranchRecord>,
     by_id: &HashMap<i64, String>,
-    local: &[String],
-    base_branch: &str,
     warnings: &mut Vec<String>,
-    debug: bool,
 ) -> Result<Vec<TrackChange>> {
     let mut out = Vec::new();
     let mut visited = HashSet::new();
     let mut cursor = start_branch.to_string();
 
-    while cursor != base_branch && visited.insert(cursor.clone()) {
-        let inferred = infer_parent_for_branch(
-            git,
-            provider,
-            &cursor,
-            by_name.get(&cursor),
-            local,
-            base_branch,
-            warnings,
-            debug,
-        )?;
+    while cursor != ctx.base_branch && visited.insert(cursor.clone()) {
+        let inferred = infer_parent_for_branch(ctx, &cursor, by_name.get(&cursor), warnings)?;
         let Some(parent) = inferred else {
             break;
         };
@@ -563,7 +549,7 @@ fn infer_parent_chain_for_branch(
             old_parent,
             new_parent: parent.parent.clone(),
             source: parent.source,
-            confidence: if parent.parent == base_branch {
+            confidence: if parent.parent == ctx.base_branch {
                 "high"
             } else {
                 parent.confidence

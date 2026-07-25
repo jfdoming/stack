@@ -64,10 +64,9 @@ pub fn render_tree(
                 let pr_link = render_pr_link(
                     ctx.pr_base_url,
                     ctx.link_targets.and_then(|m| m.get(&node.name)),
-                    node.cached_pr_number,
+                    node,
                     parent_name,
                     &child_names,
-                    &node.name,
                     ctx.default_base_branch,
                     ctx.color,
                 );
@@ -145,13 +144,14 @@ fn render_sync_state(has_sha: bool, color: bool) -> String {
 fn render_pr_link(
     pr_base_url: Option<&str>,
     link_target: Option<&BranchLinkTarget>,
-    pr_number: Option<i64>,
+    branch: &BranchRecord,
     parent_branch: Option<&str>,
     child_branches: &[String],
-    head_branch: &str,
     default_base_branch: &str,
     color: bool,
 ) -> String {
+    let pr_number = branch.cached_pr_number;
+    let head_branch = branch.name.as_str();
     let base = link_target.map(|t| t.base_url.as_str()).or(pr_base_url);
     let Some(base) = base else {
         return String::new();
