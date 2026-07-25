@@ -126,11 +126,17 @@ impl Git {
         self.run(["switch", "--detach", "--", &oid])
     }
 
-    pub fn delete_local_branch(&self, branch: &str) -> Result<()> {
-        self.run(["branch", "-D", "--", branch])
+    pub fn delete_local_branch_if_unchanged(
+        &self,
+        branch: &str,
+        expected_head: &str,
+    ) -> Result<()> {
+        self.delete_local_branch_ref_if_unchanged(branch, expected_head)?;
+        self.remove_local_branch_config(branch);
+        Ok(())
     }
 
-    pub fn delete_local_branch_if_unchanged(
+    pub fn delete_local_branch_ref_if_unchanged(
         &self,
         branch: &str,
         expected_head: &str,
@@ -156,17 +162,25 @@ impl Git {
             ));
         }
 
-        if self.branch_checked_out_in_worktree(&branch_ref)? {
-            let restore = Command::new("git")
-                .current_dir(&self.root)
-                .args(["update-ref", &branch_ref, expected_head, ""])
-                .output()
-                .with_context(|| format!("failed to restore checked-out branch {branch}"))?;
-            if !restore.status.success() {
+        let checked_out_after_delete = match self.branch_checked_out_in_worktree(&branch_ref) {
+            Ok(checked_out) => checked_out,
+            Err(inspection_error) => {
+                return match self.restore_local_branch_ref_if_missing(branch, expected_head) {
+                    Ok(()) => Err(anyhow!("{inspection_error}; the deleted ref was restored")),
+                    Err(restore_error) => Err(anyhow!(
+                        "{inspection_error}; additionally failed to restore local branch '{}': {restore_error}",
+                        sanitize_terminal_text(branch)
+                    )),
+                };
+            }
+        };
+        if checked_out_after_delete {
+            if let Err(restore_error) =
+                self.restore_local_branch_ref_if_missing(branch, expected_head)
+            {
                 return Err(anyhow!(
-                    "branch '{}' became checked out during deletion and its ref could not be restored safely: {}",
-                    sanitize_terminal_text(branch),
-                    String::from_utf8_lossy(&restore.stderr).trim()
+                    "branch '{}' became checked out during deletion and its ref could not be restored safely: {restore_error}",
+                    sanitize_terminal_text(branch)
                 ));
             }
             return Err(anyhow!(
@@ -175,12 +189,39 @@ impl Git {
             ));
         }
 
+        Ok(())
+    }
+
+    pub fn restore_local_branch_ref_if_missing(
+        &self,
+        branch: &str,
+        expected_head: &str,
+    ) -> Result<()> {
+        let branch_ref = local_branch_ref(branch);
+        let restore = Command::new("git")
+            .current_dir(&self.root)
+            .args(["update-ref", &branch_ref, expected_head, ""])
+            .output()
+            .with_context(|| format!("failed to restore local branch {branch}"))?;
+        if restore.status.success() {
+            return Ok(());
+        }
+        if self.ref_exists(&branch_ref)? && self.resolve_commit(&branch_ref)? == expected_head {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "could not restore local branch '{}': {}",
+            sanitize_terminal_text(branch),
+            String::from_utf8_lossy(&restore.stderr).trim()
+        ))
+    }
+
+    pub fn remove_local_branch_config(&self, branch: &str) {
         let section = format!("branch.{branch}");
         let _ = Command::new("git")
             .current_dir(&self.root)
             .args(["config", "--local", "--remove-section", &section])
             .output();
-        Ok(())
     }
 
     fn branch_checked_out_in_worktree(&self, branch_ref: &str) -> Result<bool> {

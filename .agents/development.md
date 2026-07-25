@@ -101,7 +101,7 @@
 - In non-interactive mode, if untrack auto-assumes a single viable target branch, pass `--yes` or an explicit target branch.
 - `stack untrack main` is allowed as a no-op and reports that the base branch remains the stack root.
 - `stack delete` rejects the configured base branch; only tracked non-base branches can be deleted.
-- `stack delete` closes a discovered open PR without delegating branch deletion to `gh`; merged and closed PRs are left unchanged, and stack owns local ref deletion before removing metadata.
+- `stack delete` conditionally removes the unchanged local ref and atomically splices metadata before closing a discovered open PR, without delegating branch deletion to `gh`. Local failures restore the ref and original checkout while leaving the PR open; a close-command failure reports that local deletion completed and asks the user to inspect the PR. Merged and closed PRs are left unchanged.
 - `stack rename <old> <new>` renames tracked metadata and the local branch in one command.
 - `stack move [target] --parent <parent>` reparents a tracked subtree without changing child links below the moved target.
 - `stack move` can also adopt untracked local branches into the stack by attaching them under a parent branch, tracking any newly linked branches as needed.

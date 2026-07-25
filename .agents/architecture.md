@@ -76,7 +76,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Delete behaviour
 - `stack delete` refuses the configured base branch before any provider, Git, or metadata mutation.
-- Deleting a tracked non-base branch closes its discovered PR only when it is open, deletes the local ref itself, and splices children to the deleted branch's parent. It never lets `gh` delete the local branch, and already merged or closed PRs are left unchanged.
+- Deleting a tracked non-base branch validates and conditionally deletes the unchanged local ref, atomically splices children to the deleted branch's parent, and only then closes a discovered open PR. Checkout or database failures restore the local ref and starting checkout before leaving the PR unchanged; an ambiguous provider-close failure instead reports the completed local deletion for manual PR inspection. It never lets `gh` delete the local branch, and already merged or closed PRs are left unchanged.
 
 ## Rename behaviour
 - `stack rename <old> <new>` renames a tracked branch in local git and updates the existing branch record name in stack metadata.
@@ -127,7 +127,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Insert operations update affected open PR managed-body sections to reflect the new parent/child chain. That post-commit refresh is best-effort; failure warns without misreporting the completed local creation as failed.
 
 ## Security-relevant behaviour
-- Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors. PR close does not pass `--delete-branch`; local branch deletion remains under stack's control so metadata cleanup follows the expected mutation.
+- Mutating GitHub provider commands fail closed: `gh` non-zero exits during PR create/close are surfaced as errors. PR close does not pass `--delete-branch`; local branch deletion and atomic metadata splicing remain under stack's control and must finish before the remote PR is closed.
 - Existing PR close/body/base mutations use the repository and verified head identity returned by lookup; bare PR numbers are never mutated outside their repository scope.
 - Merged and closed PR lookups require their preserved `headRefOid` to be on the local branch's first-parent history before cached-number or recency selection; terminal name-only matches cannot authorize mutation when the local ref is missing.
 - Git branch mutations validate newly created names and terminate option parsing before dynamic branch operands, preventing branch names from selecting destructive Git modes.
