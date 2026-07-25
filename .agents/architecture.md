@@ -90,6 +90,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Move rejects parents inside the target subtree so longer descendant cycles cannot be introduced.
 - Move requires the selected parent to have a local Git ref even when stale stack metadata still tracks that name.
 - After updating stack metadata, move immediately builds and applies a sync plan so the git branch ancestry is restacked onto the new parent relationship.
+- If sync planning or execution fails, move restores the target's previous parent relationship and removes target or parent records that the attempted move introduced.
 
 ## Split behaviour
 - `stack split` creates new branch refs at selected commits in the current branch's committed history and wires metadata as `parent -> split branches -> current`.

@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.41 - 2026-07-24
+- Restored the previous stack topology when `stack move` sync planning or execution fails, including removing branch records introduced only by the failed move.
+
 ## 0.18.40 - 2026-07-24
 - Rendered literal branch names and optional PR numbers in human-readable create/delete output, reserving JSON quoting and nulls for porcelain output.
 - Rejected self-parent tracking relationships instead of treating them as a successful no-op.
