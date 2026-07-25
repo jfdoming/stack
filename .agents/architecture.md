@@ -50,7 +50,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - When the base already contains a merged direct child's merge commit, sync records the base's current SHA instead of leaving the prior merge SHA stale.
 - Sync planning prunes no-op operations (fetch/update-sha/update-base) when branch sync state is already current.
 - Sync execution short-circuits when the computed plan has zero operations.
-- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged and every present local tip is contained in its fresh merged PR head. The executor revalidates this proof before each deletion, checks linked-worktree occupancy before and after deletion, restores a ref that raced with checkout, deletes with the validated tip as an expected-old compare-and-swap, and best-effort removes only the exact branch's stale configuration after success.
+- Sync branch pruning is all-or-nothing: merged branch refs/metadata are pruned only when the entire tracked non-base stack is merged and every present local tip is contained in its fresh merged PR head. The executor revalidates this proof before each deletion, checks linked-worktree occupancy before and after deletion, requires removal of only the exact branch's stale configuration, deletes with the validated tip as an expected-old compare-and-swap, and restores the configuration if that ref deletion fails.
 - Restores the checkout that existed before sync once plan execution completes, including the exact immutable commit for detached HEAD. A clean starting branch that is pruned lands on the base branch; a dirty starting branch is never pruned.
 - For open PRs discovered during sync, updates the managed stack-flow section in PR bodies while preserving non-managed body text.
 - For open PRs discovered during sync, updates both the PR base branch and the managed stack-flow section so GitHub metadata stays aligned with the tracked stack shape.
@@ -77,7 +77,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Delete behaviour
 - `stack delete` refuses the configured base branch before any provider, Git, or metadata mutation.
-- Deleting a tracked non-base branch validates and conditionally deletes the unchanged local ref, atomically splices children to the deleted branch's parent, and only then closes a discovered open PR. Checkout or database failures restore the local ref and starting checkout before leaving the PR unchanged; an ambiguous provider-close failure instead reports the completed local deletion for manual PR inspection. It never lets `gh` delete the local branch, and already merged or closed PRs are left unchanged.
+- Deleting a tracked non-base branch first snapshots and removes its exact `branch.<name>` configuration, then validates and conditionally deletes the unchanged local ref, atomically splices children to the deleted branch's parent, and only then closes a discovered open PR. Configuration-lock, ref, checkout, or database failures restore all reversible local state before leaving the PR unchanged; an ambiguous provider-close failure instead reports the completed local deletion for manual PR inspection. It never lets `gh` delete the local branch, preserves prefix-named configuration sections, and leaves already merged or closed PRs unchanged.
 
 ## Rename behaviour
 - `stack rename <old> <new>` renames a tracked branch in local git and updates the existing branch record name in stack metadata.

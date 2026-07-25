@@ -36,6 +36,12 @@ pub struct LocalBranchRefTransition {
 }
 
 #[derive(Debug, Clone)]
+pub struct LocalBranchConfig {
+    branch: String,
+    entries: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct BaseBranchCandidate {
     pub name: String,
     pub source: BaseBranchSource,
@@ -138,8 +144,17 @@ impl Git {
         branch: &str,
         expected_head: &str,
     ) -> Result<()> {
-        self.delete_local_branch_ref_if_unchanged(branch, expected_head)?;
-        self.remove_local_branch_config(branch);
+        let config = self.remove_local_branch_config(branch)?;
+        if let Err(delete_error) = self.delete_local_branch_ref_if_unchanged(branch, expected_head)
+        {
+            return match self.restore_local_branch_config(&config) {
+                Ok(()) => Err(delete_error),
+                Err(restore_error) => Err(anyhow!(
+                    "{delete_error}; additionally failed to restore local Git configuration for branch '{}': {restore_error}",
+                    sanitize_terminal_text(branch)
+                )),
+            };
+        }
         Ok(())
     }
 
@@ -223,12 +238,107 @@ impl Git {
         ))
     }
 
-    pub fn remove_local_branch_config(&self, branch: &str) {
+    pub fn remove_local_branch_config(&self, branch: &str) -> Result<LocalBranchConfig> {
+        let config = self.local_branch_config(branch)?;
+        if config.entries.is_empty() {
+            return Ok(config);
+        }
+
         let section = format!("branch.{branch}");
-        let _ = Command::new("git")
+        let output = Command::new("git")
             .current_dir(&self.root)
             .args(["config", "--local", "--remove-section", &section])
-            .output();
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to remove local Git configuration for branch '{}'",
+                    sanitize_terminal_text(branch)
+                )
+            })?;
+        if output.status.success() {
+            return Ok(config);
+        }
+        Err(anyhow!(
+            "could not remove local Git configuration for branch '{}': {}",
+            sanitize_terminal_text(branch),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+
+    pub fn restore_local_branch_config(&self, config: &LocalBranchConfig) -> Result<()> {
+        if config.entries.is_empty() {
+            return Ok(());
+        }
+        if !self.local_branch_config(&config.branch)?.entries.is_empty() {
+            return Err(anyhow!(
+                "refusing to overwrite new local Git configuration for branch '{}'",
+                sanitize_terminal_text(&config.branch)
+            ));
+        }
+
+        for (key, value) in &config.entries {
+            let output = Command::new("git")
+                .current_dir(&self.root)
+                .args(["config", "--local", "--add", key, value])
+                .output()
+                .with_context(|| {
+                    format!(
+                        "failed to restore local Git configuration for branch '{}'",
+                        sanitize_terminal_text(&config.branch)
+                    )
+                })?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "could not restore local Git configuration for branch '{}': {}",
+                    sanitize_terminal_text(&config.branch),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn local_branch_config(&self, branch: &str) -> Result<LocalBranchConfig> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["config", "--local", "--null", "--get-regexp", r"^branch\."])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to read local Git configuration for branch '{}'",
+                    sanitize_terminal_text(branch)
+                )
+            })?;
+        if !output.status.success() && output.status.code() != Some(1) {
+            return Err(anyhow!(
+                "could not read local Git configuration for branch '{}': {}",
+                sanitize_terminal_text(branch),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        let prefix = format!("branch.{branch}.");
+        let mut entries = Vec::new();
+        if output.status.success() {
+            let config_output = String::from_utf8(output.stdout)
+                .context("local Git branch configuration is not valid UTF-8")?;
+            for record in config_output.split_terminator('\0') {
+                let (key, value) = record
+                    .split_once('\n')
+                    .ok_or_else(|| anyhow!("invalid local Git branch configuration output"))?;
+                if key
+                    .strip_prefix(&prefix)
+                    .is_some_and(|name| !name.is_empty() && !name.contains('.'))
+                {
+                    entries.push((key.to_string(), value.to_string()));
+                }
+            }
+        }
+
+        Ok(LocalBranchConfig {
+            branch: branch.to_string(),
+            entries,
+        })
     }
 
     pub fn rollback_local_branch_ref_transitions(
@@ -1805,6 +1915,20 @@ mod tests {
         run_test_git(repo.path(), &["add", "file.txt"]);
         run_test_git(repo.path(), &["commit", "-m", "initial"]);
         run_test_git(repo.path(), &["branch", "victim"]);
+        run_test_git(repo.path(), &["config", "branch.victim.remote", "origin"]);
+        run_test_git(
+            repo.path(),
+            &[
+                "config",
+                "--add",
+                "branch.victim.merge",
+                "refs/heads/victim",
+            ],
+        );
+        run_test_git(
+            repo.path(),
+            &["config", "--add", "branch.victim.merge", "refs/heads/other"],
+        );
         let expected = git.head_sha("victim").unwrap();
 
         std::fs::write(repo.path().join("file.txt"), "advanced\n").unwrap();
@@ -1818,6 +1942,19 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("changed"));
         assert_eq!(git.head_sha("victim").unwrap(), advanced);
+        assert_eq!(
+            git.capture(["config", "--get", "branch.victim.remote"])
+                .unwrap()
+                .trim(),
+            "origin"
+        );
+        assert_eq!(
+            git.capture(["config", "--get-all", "branch.victim.merge"])
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["refs/heads/victim", "refs/heads/other"]
+        );
     }
 
     #[test]
@@ -1875,6 +2012,33 @@ mod tests {
             .output()
             .unwrap();
         assert!(!config.status.success());
+    }
+
+    #[test]
+    fn conditional_branch_delete_restores_the_ref_when_configuration_cleanup_fails() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        std::fs::write(repo.path().join("file.txt"), "initial\n").unwrap();
+        run_test_git(repo.path(), &["add", "file.txt"]);
+        run_test_git(repo.path(), &["commit", "-m", "initial"]);
+        run_test_git(repo.path(), &["branch", "victim"]);
+        run_test_git(repo.path(), &["config", "branch.victim.remote", "origin"]);
+        let expected = git.head_sha("victim").unwrap();
+        std::fs::write(repo.path().join(".git/config.lock"), "held\n").unwrap();
+
+        let error = git
+            .delete_local_branch_if_unchanged("victim", &expected)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("could not lock config file"));
+        assert_eq!(git.head_sha("victim").unwrap(), expected);
+        assert_eq!(
+            git.capture(["config", "--get", "branch.victim.remote"])
+                .unwrap()
+                .trim(),
+            "origin"
+        );
     }
 
     #[test]

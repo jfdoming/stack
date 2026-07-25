@@ -287,6 +287,18 @@ fn delete_keeps_open_pr_and_restores_local_ref_when_database_splice_fails() {
         ])
         .assert()
         .success();
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/victim.remote", "origin"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "branch.feat/victim.merge",
+            "refs/heads/feat/victim",
+        ],
+    );
 
     let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
     conn.execute_batch(
@@ -343,6 +355,94 @@ fn delete_keeps_open_pr_and_restores_local_ref_when_database_splice_fails() {
         )
         .expect("child parent");
     assert_eq!(child_parent, "feat/victim");
+    let remote = Command::new("git")
+        .current_dir(repo.path())
+        .args(["config", "--get", "branch.feat/victim.remote"])
+        .output()
+        .expect("read restored branch remote");
+    assert!(remote.status.success());
+    assert_eq!(
+        String::from_utf8(remote.stdout)
+            .expect("utf8 branch remote")
+            .trim(),
+        "origin"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_fails_without_mutation_when_branch_configuration_cannot_be_removed() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    let victim_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/victim").expect("victim branch head");
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/victim.remote", "origin"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "branch.feat/victim.merge",
+            "refs/heads/feat/victim",
+        ],
+    );
+    let (test_path, gh_log) = install_open_pr_delete_fixture(repo.path(), "config-lock", 0);
+    fs::write(repo.path().join(".git/config.lock"), "held\n").expect("hold config lock");
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("could not lock config file"));
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/victim"),
+        Some(victim_head)
+    );
+    let current = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "--show-current"])
+        .output()
+        .expect("read restored checkout");
+    assert!(current.status.success());
+    assert_eq!(
+        String::from_utf8(current.stdout)
+            .expect("utf8 current branch")
+            .trim(),
+        "feat/victim"
+    );
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let tracked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/victim'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count victim");
+    assert_eq!(tracked, 1);
+    let remote = Command::new("git")
+        .current_dir(repo.path())
+        .args(["config", "--get", "branch.feat/victim.remote"])
+        .output()
+        .expect("read retained branch remote");
+    assert!(remote.status.success());
+    assert_eq!(
+        String::from_utf8(remote.stdout)
+            .expect("utf8 branch remote")
+            .trim(),
+        "origin"
+    );
+    let calls = fs::read_to_string(gh_log).expect("read gh calls");
+    assert!(
+        !calls.lines().any(|line| line.starts_with("pr close ")),
+        "the PR must remain open when branch configuration cleanup fails: {calls}"
+    );
 }
 
 #[cfg(unix)]
