@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.46 - 2026-07-24
+- Added a schema-v6 monotonic branch-topology revision so failed `stack move` compensation rejects concurrent away-and-back parent changes instead of accepting an ABA-equivalent graph and overwriting newer linked-worktree intent.
+
 ## 0.18.45 - 2026-07-24
 - Made failed `stack move` operations compensate their moved-subtree Git refs and database topology together with atomic compare-and-swap guards, safe fallback-rebase and checkout recovery, transactional sync metadata, and explicit preservation of concurrent or already-committed state; affected PR metadata now refreshes only after the local move commits.
 

@@ -425,7 +425,7 @@ echo '[]'
 
 #[cfg(unix)]
 #[test]
-fn move_preserves_a_concurrent_database_reparent_when_topology_rollback_is_stale() {
+fn move_preserves_a_concurrent_database_parent_aba_when_topology_rollback_is_stale() {
     let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
@@ -537,6 +537,17 @@ exec \"$STACK_TEST_REAL_GIT\" \"$@\"
             )
             .expect("concurrently reparent target");
         assert_eq!(updated, 1);
+        let restored = conn
+            .execute(
+                "UPDATE branches
+                 SET parent_branch_id = (
+                     SELECT id FROM branches WHERE name = 'feat/new-parent'
+                 )
+                 WHERE name = 'feat/target'",
+                [],
+            )
+            .expect("restore target to attempted parent");
+        assert_eq!(restored, 1);
         fs::write(writer_done, "done\n").expect("signal concurrent reparent");
     });
 
@@ -580,8 +591,8 @@ exec \"$STACK_TEST_REAL_GIT\" \"$@\"
         )
         .expect("target parent");
     assert_eq!(
-        target_parent, "feat/concurrent-parent",
-        "stale move rollback must preserve the concurrent topology"
+        target_parent, "feat/new-parent",
+        "stale move rollback must preserve the concurrent writer's final topology"
     );
 }
 
