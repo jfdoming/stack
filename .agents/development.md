@@ -34,7 +34,7 @@
 - The build workflow uses a read-only repository token; only the trusted draft-release job receives `contents: write` alongside `actions: read`.
 - Workflow `uses:` action refs are pinned to full commit SHAs for supply-chain hardening; update those pins deliberately when bumping action versions.
 - Build workflow packages release executables for Linux (`x86_64-unknown-linux-gnu`), macOS (`x86_64-apple-darwin`, `aarch64-apple-darwin`), and Windows (`x86_64-pc-windows-msvc`) on `main` pushes.
-- Draft release workflow requires the complete four-platform binary set, creates the current version release when missing, and clobber-refreshes its packaged binaries when missing or still draft; published releases are never modified.
+- Draft release workflow requires the complete four-platform binary set, creates a missing release at the triggering commit, and retargets an existing draft to that commit before clobber-refreshing its packaged binaries; published releases are never modified.
 
 ## Install from source
 - `./scripts/install.sh`: run `cargo build --release --locked` and install to `~/.local/bin/stack`.
