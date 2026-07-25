@@ -595,6 +595,43 @@ impl Database {
         Ok(())
     }
 
+    pub fn splice_out_branch_if_unchanged(&self, expected: &BranchRecord) -> Result<()> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let current: Option<(i64, Option<i64>)> = tx
+            .query_row(
+                "SELECT id, parent_branch_id FROM branches WHERE name = ?1",
+                params![expected.name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((branch_id, parent_branch_id)) = current else {
+            return Err(anyhow!("branch '{}' is no longer tracked", expected.name));
+        };
+        if branch_id != expected.id || parent_branch_id != expected.parent_branch_id {
+            return Err(anyhow!(
+                "branch '{}' topology changed before deletion",
+                expected.name
+            ));
+        }
+        tx.execute(
+            "UPDATE branches SET parent_branch_id = ?1 WHERE parent_branch_id = ?2",
+            params![parent_branch_id, branch_id],
+        )?;
+        let deleted = tx.execute(
+            "DELETE FROM branches
+             WHERE id = ?1 AND name = ?2 AND parent_branch_id IS ?3",
+            params![branch_id, expected.name, parent_branch_id],
+        )?;
+        if deleted != 1 {
+            return Err(anyhow!(
+                "branch '{}' topology changed before deletion",
+                expected.name
+            ));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn record_sync_start(&self) -> Result<i64> {
         self.conn
             .execute("INSERT INTO sync_runs(status) VALUES ('running')", [])?;
@@ -880,6 +917,26 @@ mod tests {
         assert!(err.to_string().contains("forced victim delete failure"));
         let victim = db.branch_by_name("victim").unwrap().unwrap();
         let child = db.branch_by_name("child").unwrap().unwrap();
+        assert_eq!(child.parent_branch_id, Some(victim.id));
+    }
+
+    #[test]
+    fn conditional_splice_rejects_stale_topology_without_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("victim", Some("main")).unwrap();
+        db.set_parent("child", Some("victim")).unwrap();
+        db.set_parent("replacement", Some("main")).unwrap();
+        let expected = db.branch_by_name("victim").unwrap().unwrap();
+
+        db.set_parent("victim", Some("replacement")).unwrap();
+        let err = db.splice_out_branch_if_unchanged(&expected).unwrap_err();
+
+        assert!(err.to_string().contains("topology changed"));
+        let victim = db.branch_by_name("victim").unwrap().unwrap();
+        let replacement = db.branch_by_name("replacement").unwrap().unwrap();
+        let child = db.branch_by_name("child").unwrap().unwrap();
+        assert_eq!(victim.parent_branch_id, Some(replacement.id));
         assert_eq!(child.parent_branch_id, Some(victim.id));
     }
 

@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.43 - 2026-07-24
+- Kept discovered open PRs unchanged until conditional local ref deletion and atomic database splicing succeed, restoring the original ref and checkout on local failure and reporting ambiguous close failures as partial completion.
+
 ## 0.18.42 - 2026-07-24
 - Made branch deletion and splicing atomic immediate transactions so failed row deletion cannot leave children detached or reparented, and concurrent writers cannot race the splice topology read.
 

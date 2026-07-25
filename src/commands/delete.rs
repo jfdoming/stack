@@ -71,6 +71,7 @@ pub fn run(
         .and_then(|id| by_id.get(&id).map(|b| b.name.as_str()))
         .unwrap_or(base_branch)
         .to_string();
+    let expected_head = git.head_sha(&branch.name)?;
 
     let pr = provider.resolve_pr_by_head(&branch.name, branch.cached_pr_number)?;
     let pr_number = pr.as_ref().map(|pr| pr.identity.number);
@@ -116,11 +117,7 @@ pub fn run(
     let closes_open_pr = pr
         .as_ref()
         .is_some_and(|pr| matches!(pr.state, PrState::Open));
-    if let Some(pr) = pr.as_ref()
-        && closes_open_pr
-    {
-        provider.close_pr(&pr.identity)?;
-    } else {
+    if !closes_open_pr {
         match pr.as_ref().map(|pr| &pr.state) {
             None => eprintln!("warning: no upstream PR found for '{}'", branch.name),
             Some(PrState::Merged | PrState::Closed) => {}
@@ -132,6 +129,7 @@ pub fn run(
         }
     }
 
+    let restore_checkout = current == branch.name;
     if current == branch.name {
         if parent_name == branch.name {
             return Err(anyhow!(
@@ -142,8 +140,51 @@ pub fn run(
         git.checkout_branch(&parent_name)?;
     }
 
-    git.delete_local_branch(&branch.name)?;
-    db.splice_out_branch(&branch.name)?;
+    if let Err(delete_error) =
+        git.delete_local_branch_ref_if_unchanged(&branch.name, &expected_head)
+    {
+        let restore_result = if restore_checkout {
+            git.checkout_branch(&branch.name)
+        } else {
+            Ok(())
+        };
+        return match restore_result {
+            Ok(()) => Err(delete_error),
+            Err(restore_error) => Err(anyhow!(
+                "{delete_error}; additionally failed to restore checkout of '{}': {restore_error}",
+                branch.name
+            )),
+        };
+    }
+    if let Err(splice_error) = db.splice_out_branch_if_unchanged(&branch) {
+        let restore_result = (|| {
+            git.restore_local_branch_ref_if_missing(&branch.name, &expected_head)?;
+            if restore_checkout {
+                git.checkout_branch(&branch.name)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })();
+        return match restore_result {
+            Ok(()) => Err(splice_error),
+            Err(restore_error) => Err(anyhow!(
+                "{splice_error}; additionally failed to restore local branch '{}': {restore_error}",
+                branch.name
+            )),
+        };
+    }
+    git.remove_local_branch_config(&branch.name);
+
+    if let Some(pr) = pr.as_ref()
+        && closes_open_pr
+        && let Err(close_error) = provider.close_pr(&pr.identity)
+    {
+        return Err(anyhow!(
+            "deleted local branch '{}' and spliced stack metadata, but could not confirm closure of PR #{} in '{}': {close_error}; inspect the PR and close it manually if it remains open",
+            branch.name,
+            pr.identity.number,
+            pr.identity.repository
+        ));
+    }
 
     if porcelain {
         return crate::views::print_json(&serde_json::json!({
