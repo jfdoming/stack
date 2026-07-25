@@ -1,9 +1,12 @@
+use std::collections::BTreeSet;
+use std::fs::{self, File, OpenOptions, Permissions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
+use tempfile::NamedTempFile;
 use url::Url;
 
 use crate::db::BaseBranchSource;
@@ -35,10 +38,15 @@ pub struct LocalBranchRefTransition {
     pub after: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct LocalBranchConfig {
+pub struct LocalBranchConfigRemoval {
     branch: String,
-    entries: Vec<(String, String)>,
+    config_path: PathBuf,
+    lock_path: PathBuf,
+    lock_file: Option<File>,
+    original: Vec<u8>,
+    permissions: Option<Permissions>,
+    applied: bool,
+    settled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +54,70 @@ pub struct BaseBranchCandidate {
     pub name: String,
     pub source: BaseBranchSource,
     pub remote: Option<String>,
+}
+
+impl LocalBranchConfigRemoval {
+    pub fn commit(mut self) -> Result<()> {
+        self.settled = true;
+        self.release_lock()
+    }
+
+    pub fn rollback(mut self) -> Result<()> {
+        let restore_result = self.restore_original();
+        self.settled = true;
+        let unlock_result = self.release_lock();
+        match (restore_result, unlock_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(restore_error), Ok(())) => Err(restore_error),
+            (Ok(()), Err(unlock_error)) => Err(unlock_error),
+            (Err(restore_error), Err(unlock_error)) => {
+                Err(anyhow!("{restore_error}; additionally {unlock_error}"))
+            }
+        }
+    }
+
+    fn restore_original(&mut self) -> Result<()> {
+        if !self.applied {
+            return Ok(());
+        }
+        atomic_replace_file(
+            &self.config_path,
+            &self.original,
+            self.permissions
+                .clone()
+                .ok_or_else(|| anyhow!("local Git configuration permissions are unavailable"))?,
+        )
+        .with_context(|| {
+            format!(
+                "failed to restore local Git configuration for branch '{}'",
+                sanitize_terminal_text(&self.branch)
+            )
+        })?;
+        self.applied = false;
+        Ok(())
+    }
+
+    fn release_lock(&mut self) -> Result<()> {
+        let Some(lock_file) = self.lock_file.take() else {
+            return Ok(());
+        };
+        drop(lock_file);
+        fs::remove_file(&self.lock_path).with_context(|| {
+            format!(
+                "failed to release local Git configuration lock '{}'",
+                self.lock_path.display()
+            )
+        })
+    }
+}
+
+impl Drop for LocalBranchConfigRemoval {
+    fn drop(&mut self) {
+        if !self.settled {
+            let _ = self.restore_original();
+        }
+        let _ = self.release_lock();
+    }
 }
 
 impl Git {
@@ -139,15 +211,16 @@ impl Git {
         self.run(["switch", "--detach", "--", &oid])
     }
 
+    #[cfg(test)]
     pub fn delete_local_branch_if_unchanged(
         &self,
         branch: &str,
         expected_head: &str,
     ) -> Result<()> {
-        let config = self.remove_local_branch_config(branch)?;
+        let config = self.prepare_local_branch_config_removal(branch)?;
         if let Err(delete_error) = self.delete_local_branch_ref_if_unchanged(branch, expected_head)
         {
-            return match self.restore_local_branch_config(&config) {
+            return match config.rollback() {
                 Ok(()) => Err(delete_error),
                 Err(restore_error) => Err(anyhow!(
                     "{delete_error}; additionally failed to restore local Git configuration for branch '{}': {restore_error}",
@@ -155,7 +228,7 @@ impl Git {
                 )),
             };
         }
-        Ok(())
+        config.commit()
     }
 
     pub fn delete_local_branch_ref_if_unchanged(
@@ -238,107 +311,239 @@ impl Git {
         ))
     }
 
-    pub fn remove_local_branch_config(&self, branch: &str) -> Result<LocalBranchConfig> {
-        let config = self.local_branch_config(branch)?;
-        if config.entries.is_empty() {
-            return Ok(config);
-        }
-
-        let section = format!("branch.{branch}");
-        let output = Command::new("git")
-            .current_dir(&self.root)
-            .args(["config", "--local", "--remove-section", &section])
-            .output()
+    pub fn prepare_local_branch_config_removal(
+        &self,
+        branch: &str,
+    ) -> Result<LocalBranchConfigRemoval> {
+        let config_path = self.common_git_dir()?.join("config");
+        let lock_path = config_lock_path(&config_path);
+        let lock_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
             .with_context(|| {
                 format!(
-                    "failed to remove local Git configuration for branch '{}'",
-                    sanitize_terminal_text(branch)
+                    "could not lock config file '{}'",
+                    sanitize_terminal_text(&config_path.display().to_string())
                 )
             })?;
-        if output.status.success() {
-            return Ok(config);
-        }
-        Err(anyhow!(
-            "could not remove local Git configuration for branch '{}': {}",
-            sanitize_terminal_text(branch),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
+        let mut removal = LocalBranchConfigRemoval {
+            branch: branch.to_string(),
+            config_path,
+            lock_path,
+            lock_file: Some(lock_file),
+            original: Vec::new(),
+            permissions: None,
+            applied: false,
+            settled: false,
+        };
 
-    pub fn restore_local_branch_config(&self, config: &LocalBranchConfig) -> Result<()> {
-        if config.entries.is_empty() {
-            return Ok(());
-        }
-        if !self.local_branch_config(&config.branch)?.entries.is_empty() {
+        let metadata = fs::symlink_metadata(&removal.config_path).with_context(|| {
+            format!(
+                "failed to inspect local Git configuration '{}'",
+                removal.config_path.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
             return Err(anyhow!(
-                "refusing to overwrite new local Git configuration for branch '{}'",
-                sanitize_terminal_text(&config.branch)
+                "refusing to edit unsupported local Git configuration path '{}'",
+                removal.config_path.display()
+            ));
+        }
+        removal.permissions = Some(metadata.permissions());
+        removal.original = fs::read(&removal.config_path).with_context(|| {
+            format!(
+                "failed to read local Git configuration '{}'",
+                removal.config_path.display()
+            )
+        })?;
+
+        let entries = self.config_entries(&removal.config_path)?;
+        if self
+            .config_bool(&removal.config_path, "extensions.worktreeConfig")?
+            .unwrap_or(false)
+        {
+            return Err(anyhow!(
+                "cannot safely delete branch '{}' while extensions.worktreeConfig=true; move branch configuration into '{}' and disable worktree configuration before retrying",
+                sanitize_terminal_text(branch),
+                removal.config_path.display()
+            ));
+        }
+        if let Some((key, _)) = entries.iter().find(|(key, _)| is_config_include_key(key)) {
+            let key = sanitize_terminal_text(key);
+            return Err(anyhow!(
+                "cannot safely delete branch '{}' while repository-local Git configuration uses {key}; remove the include or move its branch configuration into '{}' before retrying",
+                sanitize_terminal_text(branch),
+                removal.config_path.display()
             ));
         }
 
-        for (key, value) in &config.entries {
-            let output = Command::new("git")
-                .current_dir(&self.root)
-                .args(["config", "--local", "--add", key, value])
-                .output()
-                .with_context(|| {
-                    format!(
-                        "failed to restore local Git configuration for branch '{}'",
-                        sanitize_terminal_text(&config.branch)
-                    )
-                })?;
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "could not restore local Git configuration for branch '{}': {}",
-                    sanitize_terminal_text(&config.branch),
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    fn local_branch_config(&self, branch: &str) -> Result<LocalBranchConfig> {
-        let output = Command::new("git")
-            .current_dir(&self.root)
-            .args(["config", "--local", "--null", "--get-regexp", r"^branch\."])
-            .output()
+        let keys: BTreeSet<String> = entries
+            .iter()
+            .filter(|(key, _)| branch_config_key_matches(key, branch))
+            .map(|(key, _)| key.clone())
+            .collect();
+        if !keys.is_empty() {
+            let staged = self.stage_config_without_keys(
+                &removal.config_path,
+                &removal.original,
+                removal.permissions.clone().ok_or_else(|| {
+                    anyhow!("local Git configuration permissions are unavailable")
+                })?,
+                &keys,
+                branch,
+            )?;
+            atomic_replace_file(
+                &removal.config_path,
+                &staged,
+                removal.permissions.clone().ok_or_else(|| {
+                    anyhow!("local Git configuration permissions are unavailable")
+                })?,
+            )
             .with_context(|| {
                 format!(
-                    "failed to read local Git configuration for branch '{}'",
+                    "failed to apply local Git configuration cleanup for branch '{}'",
                     sanitize_terminal_text(branch)
                 )
             })?;
-        if !output.status.success() && output.status.code() != Some(1) {
+            removal.applied = true;
+        }
+
+        let remaining = self.config_entries(&removal.config_path)?;
+        if remaining
+            .iter()
+            .any(|(key, _)| branch_config_key_matches(key, branch))
+        {
             return Err(anyhow!(
-                "could not read local Git configuration for branch '{}': {}",
-                sanitize_terminal_text(branch),
+                "local Git configuration cleanup for branch '{}' was incomplete",
+                sanitize_terminal_text(branch)
+            ));
+        }
+        Ok(removal)
+    }
+
+    fn config_entries(&self, path: &Path) -> Result<Vec<(String, String)>> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["config", "--file"])
+            .arg(path)
+            .args(["--null", "--list"])
+            .output()
+            .with_context(|| format!("failed to read Git configuration '{}'", path.display()))?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "could not read Git configuration '{}': {}",
+                path.display(),
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
 
-        let prefix = format!("branch.{branch}.");
-        let mut entries = Vec::new();
-        if output.status.success() {
-            let config_output = String::from_utf8(output.stdout)
-                .context("local Git branch configuration is not valid UTF-8")?;
-            for record in config_output.split_terminator('\0') {
+        let config_output = String::from_utf8(output.stdout)
+            .context("local Git configuration is not valid UTF-8")?;
+        config_output
+            .split_terminator('\0')
+            .map(|record| {
                 let (key, value) = record
                     .split_once('\n')
-                    .ok_or_else(|| anyhow!("invalid local Git branch configuration output"))?;
-                if key
-                    .strip_prefix(&prefix)
-                    .is_some_and(|name| !name.is_empty() && !name.contains('.'))
-                {
-                    entries.push((key.to_string(), value.to_string()));
-                }
+                    .ok_or_else(|| anyhow!("invalid local Git configuration output"))?;
+                Ok((key.to_string(), value.to_string()))
+            })
+            .collect()
+    }
+
+    fn config_bool(&self, path: &Path, key: &str) -> Result<Option<bool>> {
+        let output = Command::new("git")
+            .current_dir(&self.root)
+            .args(["config", "--file"])
+            .arg(path)
+            .args(["--type=bool", "--get", key])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to read boolean Git configuration '{}' from '{}'",
+                    sanitize_terminal_text(key),
+                    path.display()
+                )
+            })?;
+        if output.status.code() == Some(1) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err(anyhow!(
+                "could not read boolean Git configuration '{}' from '{}': {}",
+                sanitize_terminal_text(key),
+                path.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        match String::from_utf8(output.stdout)
+            .context("boolean Git configuration is not valid UTF-8")?
+            .trim()
+        {
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            value => Err(anyhow!(
+                "Git returned invalid boolean value '{}' for '{}'",
+                sanitize_terminal_text(value),
+                sanitize_terminal_text(key)
+            )),
+        }
+    }
+
+    fn stage_config_without_keys(
+        &self,
+        config_path: &Path,
+        original: &[u8],
+        permissions: Permissions,
+        keys: &BTreeSet<String>,
+        branch: &str,
+    ) -> Result<Vec<u8>> {
+        let parent = config_path.parent().ok_or_else(|| {
+            anyhow!(
+                "local Git configuration '{}' has no parent directory",
+                config_path.display()
+            )
+        })?;
+        let mut staged = NamedTempFile::new_in(parent)
+            .context("failed to create staged local Git configuration")?;
+        staged
+            .as_file_mut()
+            .write_all(original)
+            .context("failed to stage local Git configuration")?;
+        staged
+            .as_file_mut()
+            .sync_all()
+            .context("failed to flush staged local Git configuration")?;
+        staged
+            .as_file()
+            .set_permissions(permissions)
+            .context("failed to preserve local Git configuration permissions")?;
+        let staged_path = staged.into_temp_path();
+
+        for key in keys {
+            let output = Command::new("git")
+                .current_dir(&self.root)
+                .args(["config", "--file"])
+                .arg(&staged_path)
+                .args(["--unset-all", key])
+                .output()
+                .with_context(|| {
+                    format!(
+                        "failed to stage local Git configuration cleanup for branch '{}'",
+                        sanitize_terminal_text(branch)
+                    )
+                })?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "could not stage local Git configuration cleanup for branch '{}': {}",
+                    sanitize_terminal_text(branch),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
             }
         }
 
-        Ok(LocalBranchConfig {
-            branch: branch.to_string(),
-            entries,
-        })
+        fs::read(&staged_path).context("failed to read staged local Git configuration")
     }
 
     pub fn rollback_local_branch_ref_transitions(
@@ -1278,7 +1483,7 @@ impl Git {
             );
             let _ = self.run_update_ref_transaction(&cleanup);
         } else {
-            let _ = self.delete_local_branch_if_unchanged(&temporary_branch, &rebased_head);
+            let _ = self.delete_local_branch_ref_if_unchanged(&temporary_branch, &rebased_head);
         }
         update_result?;
         Ok(rebased_head)
@@ -1318,7 +1523,7 @@ impl Git {
         }
 
         self.checkout_branch(target_branch)?;
-        let _ = self.delete_local_branch_if_unchanged(&recovery_branch, &rebased_head);
+        let _ = self.delete_local_branch_ref_if_unchanged(&recovery_branch, &rebased_head);
         Ok(Some(target_branch.to_string()))
     }
 
@@ -1507,6 +1712,48 @@ impl Git {
         }
         Ok(())
     }
+}
+
+fn config_lock_path(config_path: &Path) -> PathBuf {
+    let mut lock_path = config_path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    PathBuf::from(lock_path)
+}
+
+fn atomic_replace_file(path: &Path, contents: &[u8], permissions: Permissions) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("configuration path '{}' has no parent", path.display()))?;
+    let mut replacement =
+        NamedTempFile::new_in(parent).context("failed to create replacement configuration")?;
+    replacement
+        .as_file_mut()
+        .write_all(contents)
+        .context("failed to write replacement configuration")?;
+    replacement
+        .as_file_mut()
+        .sync_all()
+        .context("failed to flush replacement configuration")?;
+    replacement
+        .as_file()
+        .set_permissions(permissions)
+        .context("failed to preserve replacement configuration permissions")?;
+    replacement
+        .persist(path)
+        .map_err(|error| error.error)
+        .map(|_| ())
+        .with_context(|| format!("failed to replace configuration '{}'", path.display()))
+}
+
+fn is_config_include_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key == "include.path" || (key.starts_with("includeif.") && key.ends_with(".path"))
+}
+
+fn branch_config_key_matches(key: &str, branch: &str) -> bool {
+    let prefix = format!("branch.{branch}.");
+    key.strip_prefix(&prefix)
+        .is_some_and(|name| !name.is_empty() && !name.contains('.'))
 }
 
 fn local_branch_ref(branch: &str) -> String {

@@ -6,7 +6,7 @@ use dialoguer::{Select, theme::ColorfulTheme};
 
 use crate::args::DeleteArgs;
 use crate::db::{BranchRecord, Database};
-use crate::git::{Git, LocalBranchConfig};
+use crate::git::{Git, LocalBranchConfigRemoval};
 use crate::provider::{PrState, Provider};
 use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
 use crate::ui::pickers::build_delete_picker_items;
@@ -130,39 +130,29 @@ pub fn run(
     }
 
     let restore_checkout = current == branch.name;
-    if current == branch.name {
-        if parent_name == branch.name {
-            return Err(anyhow!(
-                "cannot delete current branch '{}' without switching branches",
-                branch.name
-            ));
-        }
-        git.checkout_branch(&parent_name)?;
+    if current == branch.name && parent_name == branch.name {
+        return Err(anyhow!(
+            "cannot delete current branch '{}' without switching branches",
+            branch.name
+        ));
     }
 
-    let branch_config = match git.remove_local_branch_config(&branch.name) {
-        Ok(config) => config,
-        Err(config_error) => {
-            let restore_result = if restore_checkout {
-                git.checkout_branch(&branch.name)
-            } else {
-                Ok(())
-            };
-            return match restore_result {
-                Ok(()) => Err(config_error),
-                Err(restore_error) => Err(anyhow!(
-                    "{config_error}; additionally failed to restore checkout of '{}': {restore_error}",
-                    branch.name
-                )),
-            };
-        }
-    };
+    let branch_config = git.prepare_local_branch_config_removal(&branch.name)?;
+    if restore_checkout && let Err(checkout_error) = git.checkout_branch(&parent_name) {
+        return match branch_config.rollback() {
+            Ok(()) => Err(checkout_error),
+            Err(restore_error) => Err(anyhow!(
+                "{checkout_error}; additionally failed to restore local Git configuration for branch '{}': {restore_error}",
+                branch.name
+            )),
+        };
+    }
 
     if let Err(delete_error) =
         git.delete_local_branch_ref_if_unchanged(&branch.name, &expected_head)
     {
         let restore_result =
-            restore_local_delete_state(git, &branch.name, None, &branch_config, restore_checkout);
+            restore_local_delete_state(git, &branch.name, None, branch_config, restore_checkout);
         return match restore_result {
             Ok(()) => Err(delete_error),
             Err(restore_error) => Err(anyhow!(
@@ -176,7 +166,7 @@ pub fn run(
             git,
             &branch.name,
             Some(&expected_head),
-            &branch_config,
+            branch_config,
             restore_checkout,
         );
         return match restore_result {
@@ -187,6 +177,7 @@ pub fn run(
             )),
         };
     }
+    branch_config.commit()?;
 
     if let Some(pr) = pr.as_ref()
         && closes_open_pr
@@ -219,7 +210,7 @@ fn restore_local_delete_state(
     git: &Git,
     branch: &str,
     deleted_head: Option<&str>,
-    config: &LocalBranchConfig,
+    config: LocalBranchConfigRemoval,
     restore_checkout: bool,
 ) -> Result<()> {
     let mut errors = Vec::new();
@@ -228,7 +219,7 @@ fn restore_local_delete_state(
     {
         errors.push(format!("ref: {error}"));
     }
-    if let Err(error) = git.restore_local_branch_config(config) {
+    if let Err(error) = config.rollback() {
         errors.push(format!("configuration: {error}"));
     }
     if restore_checkout && let Err(error) = git.checkout_branch(branch) {

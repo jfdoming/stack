@@ -397,9 +397,7 @@ echo '[]'
         .assert()
         .failure()
         .stderr(predicate::str::contains("move was applied locally"))
-        .stderr(predicate::str::contains(
-            "forced PR body refresh failure",
-        ))
+        .stderr(predicate::str::contains("forced PR body refresh failure"))
         .stderr(predicate::str::contains("run `stack sync`"));
 
     let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
@@ -424,8 +422,15 @@ echo '[]'
 }
 
 #[cfg(unix)]
-#[test]
-fn move_preserves_a_concurrent_database_parent_aba_when_topology_rollback_is_stale() {
+enum ConcurrentMoveTopologyMutation {
+    TargetParentAba,
+    UnrelatedReparent,
+}
+
+#[cfg(unix)]
+fn run_failed_move_with_concurrent_topology_mutation(
+    mutation: ConcurrentMoveTopologyMutation,
+) -> (TempDir, String, String) {
     let repo = init_repo_without_origin();
 
     stack_cmd(repo.path())
@@ -440,6 +445,7 @@ fn move_preserves_a_concurrent_database_parent_aba_when_topology_rollback_is_sta
     for (branch, file) in [
         ("feat/new-parent", "new-parent.txt"),
         ("feat/concurrent-parent", "concurrent-parent.txt"),
+        ("feat/unrelated", "unrelated.txt"),
     ] {
         stack_cmd(repo.path())
             .args(["create", "--parent", "main", "--name", branch])
@@ -526,28 +532,45 @@ exec \"$STACK_TEST_REAL_GIT\" \"$@\"
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let conn = Connection::open(writer_db_path).expect("open concurrent stack db");
-        let updated = conn
-            .execute(
-                "UPDATE branches
-                 SET parent_branch_id = (
-                     SELECT id FROM branches WHERE name = 'feat/concurrent-parent'
-                 )
-                 WHERE name = 'feat/target'",
-                [],
-            )
-            .expect("concurrently reparent target");
-        assert_eq!(updated, 1);
-        let restored = conn
-            .execute(
-                "UPDATE branches
-                 SET parent_branch_id = (
-                     SELECT id FROM branches WHERE name = 'feat/new-parent'
-                 )
-                 WHERE name = 'feat/target'",
-                [],
-            )
-            .expect("restore target to attempted parent");
-        assert_eq!(restored, 1);
+        match mutation {
+            ConcurrentMoveTopologyMutation::TargetParentAba => {
+                let updated = conn
+                    .execute(
+                        "UPDATE branches
+                         SET parent_branch_id = (
+                             SELECT id FROM branches WHERE name = 'feat/concurrent-parent'
+                         )
+                         WHERE name = 'feat/target'",
+                        [],
+                    )
+                    .expect("concurrently reparent target");
+                assert_eq!(updated, 1);
+                let restored = conn
+                    .execute(
+                        "UPDATE branches
+                         SET parent_branch_id = (
+                             SELECT id FROM branches WHERE name = 'feat/new-parent'
+                         )
+                         WHERE name = 'feat/target'",
+                        [],
+                    )
+                    .expect("restore target to attempted parent");
+                assert_eq!(restored, 1);
+            }
+            ConcurrentMoveTopologyMutation::UnrelatedReparent => {
+                let updated = conn
+                    .execute(
+                        "UPDATE branches
+                         SET parent_branch_id = (
+                             SELECT id FROM branches WHERE name = 'feat/concurrent-parent'
+                         )
+                         WHERE name = 'feat/unrelated'",
+                        [],
+                    )
+                    .expect("concurrently reparent unrelated branch");
+                assert_eq!(updated, 1);
+            }
+        }
         fs::write(writer_done, "done\n").expect("signal concurrent reparent");
     });
 
@@ -565,6 +588,16 @@ exec \"$STACK_TEST_REAL_GIT\" \"$@\"
     assert!(!output.status.success(), "move unexpectedly succeeded");
     let stderr = String::from_utf8(output.stderr).expect("utf8 move stderr");
     assert!(stderr.contains("forced concurrent topology sync failure"));
+    (repo, original_target, stderr)
+}
+
+#[cfg(unix)]
+#[test]
+fn move_preserves_a_concurrent_database_parent_aba_when_topology_rollback_is_stale() {
+    let (repo, original_target, stderr) = run_failed_move_with_concurrent_topology_mutation(
+        ConcurrentMoveTopologyMutation::TargetParentAba,
+    );
+
     assert!(
         stderr.contains("additionally failed to restore move database topology"),
         "missing topology rollback failure: {stderr}"
@@ -579,7 +612,7 @@ exec \"$STACK_TEST_REAL_GIT\" \"$@\"
         Some(original_target.as_str()),
         "Git rollback should still restore the target ref"
     );
-    let conn = Connection::open(db_path).expect("open stack db");
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack database");
     let target_parent: String = conn
         .query_row(
             "SELECT p.name
@@ -594,6 +627,42 @@ exec \"$STACK_TEST_REAL_GIT\" \"$@\"
         target_parent, "feat/new-parent",
         "stale move rollback must preserve the concurrent writer's final topology"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_move_restores_git_and_database_after_an_unrelated_topology_change() {
+    let (repo, original_target, stderr) = run_failed_move_with_concurrent_topology_mutation(
+        ConcurrentMoveTopologyMutation::UnrelatedReparent,
+    );
+
+    assert!(
+        !stderr.contains("additionally failed to restore move database topology"),
+        "unrelated topology should not block database rollback: {stderr}"
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/target").as_deref(),
+        Some(original_target.as_str()),
+        "Git rollback should restore the target ref"
+    );
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack database");
+    for (branch, expected_parent) in [
+        ("feat/target", "main"),
+        ("feat/unrelated", "feat/concurrent-parent"),
+    ] {
+        let actual_parent: String = conn
+            .query_row(
+                "SELECT p.name
+                 FROM branches c
+                 JOIN branches p ON p.id = c.parent_branch_id
+                 WHERE c.name = ?1",
+                [branch],
+                |row| row.get(0),
+            )
+            .expect("branch parent");
+        assert_eq!(actual_parent, expected_parent);
+    }
 }
 
 #[cfg(unix)]

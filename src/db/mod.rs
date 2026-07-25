@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug, Clone)]
 pub struct BranchRecord {
@@ -90,7 +90,9 @@ pub struct MoveTopologyChange {
     parent_id: i64,
     parent_name: String,
     parent_was_inserted: bool,
-    topology_revision: i64,
+    target_topology_revision: i64,
+    parent_topology_revision: i64,
+    previous_parent_topology_revision: Option<i64>,
 }
 
 impl MoveTopologyChange {
@@ -106,6 +108,7 @@ struct MoveRollbackBranchState {
     cached_pr_number: Option<i64>,
     cached_pr_state: Option<String>,
     cached_pr_head_oid: Option<String>,
+    topology_revision: i64,
 }
 
 impl MoveRollbackBranchState {
@@ -145,6 +148,8 @@ impl Database {
                 cached_pr_number INTEGER NULL,
                 cached_pr_state TEXT NULL,
                 cached_pr_head_oid TEXT NULL,
+                topology_revision INTEGER NOT NULL DEFAULT 0
+                    CHECK (topology_revision >= 0 AND typeof(topology_revision) = 'integer'),
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(parent_branch_id) REFERENCES branches(id) ON DELETE SET NULL
@@ -176,23 +181,6 @@ impl Database {
             INSERT INTO topology_state(id, revision)
             VALUES (1, 0)
             ON CONFLICT(id) DO NOTHING;
-            CREATE TRIGGER IF NOT EXISTS branches_topology_revision_after_insert
-            AFTER INSERT ON branches
-            BEGIN
-                UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
-            END;
-            CREATE TRIGGER IF NOT EXISTS branches_topology_revision_after_delete
-            AFTER DELETE ON branches
-            BEGIN
-                UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
-            END;
-            CREATE TRIGGER IF NOT EXISTS branches_topology_revision_after_update
-            AFTER UPDATE OF name, parent_branch_id ON branches
-            WHEN OLD.name IS NOT NEW.name
-                 OR OLD.parent_branch_id IS NOT NEW.parent_branch_id
-            BEGIN
-                UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
-            END;
             ",
         )?;
         if !Self::branches_has_column(&tx, "cached_pr_head_oid")? {
@@ -201,6 +189,46 @@ impl Database {
                 [],
             )?;
         }
+        if !Self::branches_has_column(&tx, "topology_revision")? {
+            tx.execute(
+                "ALTER TABLE branches
+                 ADD COLUMN topology_revision INTEGER NOT NULL DEFAULT 0
+                     CHECK (topology_revision >= 0 AND typeof(topology_revision) = 'integer')",
+                [],
+            )?;
+        }
+        tx.execute_batch(
+            "DROP TRIGGER IF EXISTS branches_topology_revision_after_insert;
+             DROP TRIGGER IF EXISTS branches_topology_revision_after_delete;
+             DROP TRIGGER IF EXISTS branches_topology_revision_after_update;
+             CREATE TRIGGER branches_topology_revision_after_insert
+             AFTER INSERT ON branches
+             BEGIN
+                 UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
+                 UPDATE branches
+                 SET topology_revision = (
+                     SELECT revision FROM topology_state WHERE id = 1
+                 )
+                 WHERE id = NEW.id;
+             END;
+             CREATE TRIGGER branches_topology_revision_after_delete
+             AFTER DELETE ON branches
+             BEGIN
+                 UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
+             END;
+             CREATE TRIGGER branches_topology_revision_after_update
+             AFTER UPDATE OF name, parent_branch_id ON branches
+             WHEN OLD.name IS NOT NEW.name
+                  OR OLD.parent_branch_id IS NOT NEW.parent_branch_id
+             BEGIN
+                 UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
+                 UPDATE branches
+                 SET topology_revision = (
+                     SELECT revision FROM topology_state WHERE id = 1
+                 )
+                 WHERE id = NEW.id;
+             END;",
+        )?;
         for (name, ty) in [
             ("base_branch_source", "TEXT NOT NULL DEFAULT 'legacy'"),
             ("base_remote", "TEXT NULL"),
@@ -542,7 +570,11 @@ impl Database {
              WHERE id = ?2",
             params![parent_id, target_id],
         )?;
-        let topology_revision = topology_revision_on(&tx)?;
+        let target_topology_revision = branch_topology_revision_on(&tx, target_id)?;
+        let parent_topology_revision = branch_topology_revision_on(&tx, parent_id)?;
+        let previous_parent_topology_revision = previous_parent_id
+            .map(|id| branch_topology_revision_on(&tx, id))
+            .transpose()?;
         tx.commit()?;
 
         Ok(MoveTopologyChange {
@@ -554,7 +586,9 @@ impl Database {
             parent_id,
             parent_name: parent_name.to_string(),
             parent_was_inserted,
-            topology_revision,
+            target_topology_revision,
+            parent_topology_revision,
+            previous_parent_topology_revision,
         })
     }
 
@@ -574,6 +608,14 @@ impl Database {
                 "move topology changed before rollback: target '{}' no longer has attempted parent '{}'",
                 change.target_name,
                 change.parent_name
+            ));
+        }
+        if current_target.topology_revision != change.target_topology_revision {
+            return Err(anyhow!(
+                "move topology changed before rollback: target '{}' revision advanced from {} to {}",
+                change.target_name,
+                change.target_topology_revision,
+                current_target.topology_revision
             ));
         }
         if change.target_was_inserted && current_target.has_sync_or_pr_metadata() {
@@ -597,6 +639,14 @@ impl Database {
                 change.parent_name
             ));
         }
+        if current_parent.topology_revision != change.parent_topology_revision {
+            return Err(anyhow!(
+                "move topology changed before rollback: attempted parent '{}' revision advanced from {} to {}",
+                change.parent_name,
+                change.parent_topology_revision,
+                current_parent.topology_revision
+            ));
+        }
         if change.parent_was_inserted && current_parent.has_sync_or_pr_metadata() {
             return Err(anyhow!(
                 "move-inserted parent '{}' gained sync or PR metadata before rollback",
@@ -608,14 +658,13 @@ impl Database {
             change.previous_parent_id,
             change.previous_parent_name.as_deref(),
         ) {
-            let previous_parent_matches: bool = tx.query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM branches WHERE id = ?1 AND name = ?2
-                 )",
-                params![previous_parent_id, previous_parent_name],
-                |row| row.get(0),
-            )?;
-            if !previous_parent_matches {
+            let previous_parent = move_rollback_branch_state_on(&tx, previous_parent_id)?;
+            let expected_revision = change
+                .previous_parent_topology_revision
+                .ok_or_else(|| anyhow!("previous move parent revision is missing"))?;
+            if previous_parent.as_ref().is_none_or(|parent| {
+                parent.name != previous_parent_name || parent.topology_revision != expected_revision
+            }) {
                 return Err(anyhow!(
                     "move topology changed before rollback: previous parent '{}' changed",
                     previous_parent_name
@@ -650,15 +699,6 @@ impl Database {
                     change.parent_name
                 ));
             }
-        }
-
-        let current_topology_revision = topology_revision_on(&tx)?;
-        if current_topology_revision != change.topology_revision {
-            return Err(anyhow!(
-                "move topology changed before rollback: topology revision advanced from {} to {}",
-                change.topology_revision,
-                current_topology_revision
-            ));
         }
 
         if change.target_was_inserted {
@@ -974,6 +1014,7 @@ fn upsert_branch_on(conn: &Connection, name: &str) -> Result<i64> {
     .ok_or_else(|| anyhow!("failed to upsert branch {name}"))
 }
 
+#[cfg(test)]
 fn topology_revision_on(conn: &Connection) -> Result<i64> {
     conn.query_row(
         "SELECT revision FROM topology_state WHERE id = 1",
@@ -981,6 +1022,15 @@ fn topology_revision_on(conn: &Connection) -> Result<i64> {
         |row| row.get(0),
     )
     .context("topology revision is missing")
+}
+
+fn branch_topology_revision_on(conn: &Connection, branch_id: i64) -> Result<i64> {
+    conn.query_row(
+        "SELECT topology_revision FROM branches WHERE id = ?1",
+        params![branch_id],
+        |row| row.get(0),
+    )
+    .with_context(|| format!("topology revision is missing for branch id {branch_id}"))
 }
 
 fn list_branches_on(conn: &Connection) -> Result<Vec<BranchRecord>> {
@@ -1010,7 +1060,7 @@ fn move_rollback_branch_state_on(
 ) -> Result<Option<MoveRollbackBranchState>> {
     conn.query_row(
         "SELECT name, parent_branch_id, last_synced_head_sha, cached_pr_number,
-                cached_pr_state, cached_pr_head_oid
+                cached_pr_state, cached_pr_head_oid, topology_revision
          FROM branches
          WHERE id = ?1",
         params![id],
@@ -1022,6 +1072,7 @@ fn move_rollback_branch_state_on(
                 cached_pr_number: row.get(3)?,
                 cached_pr_state: row.get(4)?,
                 cached_pr_head_oid: row.get(5)?,
+                topology_revision: row.get(6)?,
             })
         },
     )
@@ -1104,7 +1155,7 @@ mod tests {
     }
 
     #[test]
-    fn topology_revision_tracks_branch_graph_changes_only() {
+    fn topology_revisions_track_branch_graph_changes_only() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("stack.db")).unwrap();
         let initial = topology_revision_on(&db.conn).unwrap();
@@ -1117,6 +1168,10 @@ mod tests {
             .unwrap();
         let after_inserts = topology_revision_on(&db.conn).unwrap();
         assert!(after_inserts > initial);
+        let parent = db.branch_by_name("parent").unwrap().unwrap();
+        let child = db.branch_by_name("child").unwrap().unwrap();
+        let parent_revision = branch_topology_revision_on(&db.conn, parent.id).unwrap();
+        let inserted_child_revision = branch_topology_revision_on(&db.conn, child.id).unwrap();
 
         db.conn
             .execute(
@@ -1128,6 +1183,13 @@ mod tests {
             .unwrap();
         let after_parent_change = topology_revision_on(&db.conn).unwrap();
         assert!(after_parent_change > after_inserts);
+        let reparented_child_revision = branch_topology_revision_on(&db.conn, child.id).unwrap();
+        assert!(reparented_child_revision > inserted_child_revision);
+        assert_eq!(
+            branch_topology_revision_on(&db.conn, parent.id).unwrap(),
+            parent_revision,
+            "changing one branch must not advance an unrelated branch stamp"
+        );
 
         db.conn
             .execute(
@@ -1139,6 +1201,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(topology_revision_on(&db.conn).unwrap(), after_parent_change);
+        assert_eq!(
+            branch_topology_revision_on(&db.conn, child.id).unwrap(),
+            reparented_child_revision
+        );
 
         db.conn
             .execute(
@@ -1148,6 +1214,9 @@ mod tests {
             .unwrap();
         let after_rename = topology_revision_on(&db.conn).unwrap();
         assert!(after_rename > after_parent_change);
+        assert!(
+            branch_topology_revision_on(&db.conn, child.id).unwrap() > reparented_child_revision
+        );
 
         db.conn
             .execute("DELETE FROM branches WHERE name = 'renamed-child'", [])
@@ -1283,7 +1352,7 @@ mod tests {
 
         let change = db.apply_move_topology("target", "new-parent").unwrap();
         assert_eq!(change.previous_parent_name(), Some("main"));
-        let applied_revision = change.topology_revision;
+        let applied_revision = topology_revision_on(&db.conn).unwrap();
 
         db.rollback_move_topology(&change).unwrap();
 
@@ -1361,6 +1430,45 @@ mod tests {
     }
 
     #[test]
+    fn failed_move_topology_rollback_allows_an_unrelated_concurrent_reparent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let failed_move_db = Database::open(&path).unwrap();
+        failed_move_db.set_parent("target", Some("main")).unwrap();
+        failed_move_db
+            .set_parent("unrelated", Some("main"))
+            .unwrap();
+        failed_move_db
+            .set_parent("replacement", Some("main"))
+            .unwrap();
+        let change = failed_move_db
+            .apply_move_topology("target", "new-parent")
+            .unwrap();
+
+        let concurrent_db = Database::open(&path).unwrap();
+        concurrent_db
+            .set_parent("unrelated", Some("replacement"))
+            .unwrap();
+        failed_move_db.rollback_move_topology(&change).unwrap();
+
+        let target = failed_move_db.branch_by_name("target").unwrap().unwrap();
+        let main = failed_move_db.branch_by_name("main").unwrap().unwrap();
+        assert_eq!(target.parent_branch_id, Some(main.id));
+        assert!(
+            failed_move_db
+                .branch_by_name("new-parent")
+                .unwrap()
+                .is_none()
+        );
+        let unrelated = failed_move_db.branch_by_name("unrelated").unwrap().unwrap();
+        let replacement = failed_move_db
+            .branch_by_name("replacement")
+            .unwrap()
+            .unwrap();
+        assert_eq!(unrelated.parent_branch_id, Some(replacement.id));
+    }
+
+    #[test]
     fn failed_move_topology_rollback_does_not_detach_a_child_of_an_inserted_target() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("stack.db")).unwrap();
@@ -1425,7 +1533,7 @@ mod tests {
         let db = Database::open(&dir.path().join("stack.db")).unwrap();
         db.set_parent("target", Some("main")).unwrap();
         let change = db.apply_move_topology("target", "inserted-parent").unwrap();
-        let applied_revision = change.topology_revision;
+        let applied_revision = topology_revision_on(&db.conn).unwrap();
         db.conn
             .execute_batch(
                 "CREATE TEMP TRIGGER fail_inserted_parent_delete
@@ -1939,7 +2047,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_schema_v5_adds_a_monotonic_topology_revision() {
+    fn opening_schema_v6_adds_per_branch_topology_revisions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stack.db");
         let conn = Connection::open(&path).unwrap();
@@ -1966,13 +2074,37 @@ mod tests {
                 canonical_repo TEXT NULL,
                 fork_repo TEXT NULL,
                 push_permission TEXT NULL,
-                permission_checked_at INTEGER NULL
+                 permission_checked_at INTEGER NULL
              );
+             CREATE TABLE topology_state (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 revision INTEGER NOT NULL
+                     CHECK (revision >= 0 AND typeof(revision) = 'integer')
+             );
+             INSERT INTO topology_state(id, revision) VALUES (1, 12);
+             CREATE TRIGGER branches_topology_revision_after_insert
+             AFTER INSERT ON branches
+             BEGIN
+                 UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
+             END;
+             CREATE TRIGGER branches_topology_revision_after_delete
+             AFTER DELETE ON branches
+             BEGIN
+                 UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
+             END;
+             CREATE TRIGGER branches_topology_revision_after_update
+             AFTER UPDATE OF name, parent_branch_id ON branches
+             WHEN OLD.name IS NOT NEW.name
+                  OR OLD.parent_branch_id IS NOT NEW.parent_branch_id
+             BEGIN
+                 UPDATE topology_state SET revision = revision + 1 WHERE id = 1;
+             END;
              INSERT INTO branches(id, name) VALUES (1, 'main');
              INSERT INTO branches(id, name, parent_branch_id) VALUES (2, 'target', 1);
+             UPDATE topology_state SET revision = 12 WHERE id = 1;
              INSERT INTO repo_meta(
                  id, base_branch, base_branch_source, base_remote, schema_version
-             ) VALUES (1, 'main', 'remote_head', 'origin', 5);",
+             ) VALUES (1, 'main', 'remote_head', 'origin', 6);",
         )
         .unwrap();
         drop(conn);
@@ -1981,28 +2113,42 @@ mod tests {
         let target = db.branch_by_name("target").unwrap().unwrap();
         let main = db.branch_by_name("main").unwrap().unwrap();
         assert_eq!(target.parent_branch_id, Some(main.id));
-        let (version, initial_revision): (i64, i64) = db
+        let (version, initial_revision, initial_target_revision): (i64, i64, i64) = db
             .conn
             .query_row(
-                "SELECT repo_meta.schema_version, topology_state.revision
-                 FROM repo_meta CROSS JOIN topology_state
+                "SELECT repo_meta.schema_version, topology_state.revision,
+                        branches.topology_revision
+                 FROM repo_meta
+                 CROSS JOIN topology_state
+                 JOIN branches ON branches.name = 'target'
                  WHERE repo_meta.id = 1 AND topology_state.id = 1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
-        assert_eq!(initial_revision, 0);
+        assert_eq!(initial_revision, 12);
+        assert_eq!(initial_target_revision, 0);
 
         db.set_pr_cache("target", Some(42), Some("open"), Some("abc"))
             .unwrap();
         assert_eq!(topology_revision_on(&db.conn).unwrap(), initial_revision);
+        assert_eq!(
+            branch_topology_revision_on(&db.conn, target.id).unwrap(),
+            initial_target_revision
+        );
         db.set_parent("target", None).unwrap();
         assert!(topology_revision_on(&db.conn).unwrap() > initial_revision);
+        let updated_target_revision = branch_topology_revision_on(&db.conn, target.id).unwrap();
+        assert!(updated_target_revision > initial_target_revision);
         drop(db);
 
         let reopened = Database::open(&path).unwrap();
-        assert_eq!(topology_revision_on(&reopened.conn).unwrap(), 1);
+        assert_eq!(topology_revision_on(&reopened.conn).unwrap(), 13);
+        assert_eq!(
+            branch_topology_revision_on(&reopened.conn, target.id).unwrap(),
+            updated_target_revision
+        );
     }
 
     #[test]
