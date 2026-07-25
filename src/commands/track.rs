@@ -286,7 +286,10 @@ pub fn run(
 
         for change in proposed_changes {
             if change.new_parent == change.branch {
-                continue;
+                return Err(anyhow!(
+                    "branch '{}' cannot be its own parent",
+                    change.branch
+                ));
             }
             if !local_set.contains(&change.new_parent) {
                 return Err(anyhow!(

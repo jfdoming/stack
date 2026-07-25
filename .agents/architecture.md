@@ -65,6 +65,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - In single-branch mode, missing `--parent` first tries inference (PR base, then git ancestry), then falls back to the same assumption/prompt pattern when unresolved.
 - Git ancestry inference prefers chains that recurse toward the configured base branch.
 - Parent inference uses PR base metadata first, then git ancestry heuristics; fork PR lookup retries with `owner:branch` head qualifiers when needed.
+- Proposed self-parent relationships are rejected before they can become a successful no-op or reach persistence.
 - Batch parent updates are validated for cycles and applied atomically.
 - Post-update PR cache refresh is best-effort: provider failure warns after the relationship transaction commits and leaves existing cache fields unchanged.
 

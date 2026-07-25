@@ -130,6 +130,16 @@ fn delete_verifies_cached_pr_head_identity_and_preserves_repository_scope() {
     );
 
     stack_cmd(repo.path())
+        .env("PATH", &test_path)
+        .args(["delete", "feat/victim", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "would delete branch 'feat/victim' (PR: #77) and splice children under 'main'",
+        ))
+        .stdout(predicate::str::contains("Number(").not());
+
+    stack_cmd(repo.path())
         .env("PATH", test_path)
         .args(["--yes", "delete", "feat/victim"])
         .assert()
@@ -318,7 +328,12 @@ fn delete_without_branch_in_non_interactive_mode_assumes_only_viable_branch() {
         .success()
         .stdout(predicate::str::contains(
             "assuming target branch 'feat/a' (only viable branch)",
-        ));
+        ))
+        .stdout(predicate::str::contains(
+            "would delete branch 'feat/a' (PR: none) and splice children under 'main'",
+        ))
+        .stdout(predicate::str::contains("Null").not())
+        .stdout(predicate::str::contains("\"feat/a\"").not());
 }
 #[test]
 fn delete_without_branch_in_non_interactive_mode_requires_argument_when_multiple_tracked() {

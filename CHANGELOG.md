@@ -4,6 +4,10 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.40 - 2026-07-24
+- Rendered literal branch names and optional PR numbers in human-readable create/delete output, reserving JSON quoting and nulls for porcelain output.
+- Rejected self-parent tracking relationships instead of treating them as a successful no-op.
+
 ## 0.18.39 - 2026-07-24
 - Restored raw mode, cursor state, saved prompt position, and alternate-screen state through a shared drop guard on every fullscreen and inline TUI exit path, including partial setup and cleanup errors.
 - Preserved ancestor connector indentation for nested rows in the interactive stack tree.
