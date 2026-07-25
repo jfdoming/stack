@@ -86,9 +86,12 @@ pub fn run(
         if porcelain {
             return crate::views::print_json(&payload);
         }
+        let pr_label = pr_number
+            .map(|number| format!("#{number}"))
+            .unwrap_or_else(|| "none".to_string());
         println!(
-            "would delete branch '{}' (PR: {:?}) and splice children under '{}'",
-            payload["branch"], payload["pr_number"], payload["parent"]
+            "would delete branch '{}' (PR: {}) and splice children under '{}'",
+            branch.name, pr_label, parent_name
         );
         return Ok(());
     }
@@ -98,7 +101,7 @@ pub fn run(
     } else if stdout().is_terminal() && stdin().is_terminal() {
         confirm_inline_yes_no(&format!(
             "Delete '{}' and close its upstream PR?",
-            payload["branch"]
+            branch.name
         ))?
     } else {
         false

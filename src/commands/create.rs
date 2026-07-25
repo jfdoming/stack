@@ -165,31 +165,28 @@ pub fn run(
         if use_color {
             println!(
                 "created stack branch: {} -> {}{}",
-                out["parent"].as_str().unwrap_or("<unknown>").green().bold(),
-                out["created"].as_str().unwrap_or("<unknown>").cyan().bold(),
-                if out["create_url"].as_str().unwrap_or_default().is_empty() {
+                parent.green().bold(),
+                child.cyan().bold(),
+                if create_url.is_empty() {
                     String::new()
                 } else {
                     format!(
                         " {}",
-                        osc8_hyperlink(
-                            out["create_url"].as_str().unwrap_or_default(),
-                            "open compare",
-                        )
-                        .dark_grey()
-                        .underlined()
+                        osc8_hyperlink(&create_url, "open compare")
+                            .dark_grey()
+                            .underlined()
                     )
                 }
             );
         } else {
             println!(
                 "created stack branch: {} -> {}{}",
-                out["parent"],
-                out["created"],
-                if out["create_url"].as_str().unwrap_or_default().is_empty() {
+                parent,
+                child,
+                if create_url.is_empty() {
                     String::new()
                 } else {
-                    format!(" {}", out["create_url"])
+                    format!(" {create_url}")
                 }
             );
         }

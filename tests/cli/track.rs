@@ -64,6 +64,21 @@ fn track_command_sets_parent_for_existing_branch() {
     assert_eq!(json["changes"][0]["source"], "explicit");
 }
 
+#[test]
+fn track_rejects_an_explicit_self_parent() {
+    let repo = init_repo();
+    run_git(repo.path(), &["checkout", "-b", "feat/a"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    stack_cmd(repo.path())
+        .args(["track", "feat/a", "--parent", "feat/a", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "branch 'feat/a' cannot be its own parent",
+        ));
+}
+
 #[cfg(unix)]
 #[test]
 fn track_refreshes_pr_cache_for_tracked_branch() {

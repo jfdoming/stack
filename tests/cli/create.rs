@@ -87,7 +87,12 @@ fn create_without_parent_in_non_interactive_mode_assumes_only_viable_branch() {
         .success()
         .stdout(predicate::str::contains(
             "assuming parent branch 'main' (only viable branch)",
-        ));
+        ))
+        .stdout(predicate::str::contains(
+            "created stack branch: main -> feat/a",
+        ))
+        .stdout(predicate::str::contains("\"main\"").not())
+        .stdout(predicate::str::contains("\"feat/a\"").not());
 }
 
 #[test]
