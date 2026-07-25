@@ -29,6 +29,7 @@
 - GitHub Actions workflow `.github/workflows/build.yaml` runs tests unconditionally (pull requests and `main` pushes).
 - In `build.yaml`, non-release compile (`cargo build --locked --verbose`) runs on pull requests.
 - On `main` pushes, `build.yaml` skips non-release compile and only packages release binaries for artifact publishing.
+- The build workflow audits the checked-in lockfile with the official RustSec action at a pinned revision and rejects vulnerability, unsound, unmaintained, and yanked findings.
 - GitHub Actions workflow `.github/workflows/draft-release.yaml` runs only after a successful same-repository `CI Build` push on `main`, classifies the current version release as missing, draft, or published, and downloads artifacts from that exact triggering run for every non-published state.
 - The build workflow uses a read-only repository token; only the trusted draft-release job receives `contents: write` alongside `actions: read`.
 - Workflow `uses:` action refs are pinned to full commit SHAs for supply-chain hardening; update those pins deliberately when bumping action versions.
