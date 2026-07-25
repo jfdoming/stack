@@ -78,6 +78,42 @@ pub struct ParentUpdate {
     pub parent_name: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MoveTopologyChange {
+    target_id: i64,
+    target_name: String,
+    previous_parent_id: Option<i64>,
+    previous_parent_name: Option<String>,
+    target_was_inserted: bool,
+    parent_id: i64,
+    parent_name: String,
+    parent_was_inserted: bool,
+}
+
+impl MoveTopologyChange {
+    pub fn previous_parent_name(&self) -> Option<&str> {
+        self.previous_parent_name.as_deref()
+    }
+}
+
+struct MoveRollbackBranchState {
+    name: String,
+    parent_branch_id: Option<i64>,
+    last_synced_head_sha: Option<String>,
+    cached_pr_number: Option<i64>,
+    cached_pr_state: Option<String>,
+    cached_pr_head_oid: Option<String>,
+}
+
+impl MoveRollbackBranchState {
+    fn has_sync_or_pr_metadata(&self) -> bool {
+        self.last_synced_head_sha.is_some()
+            || self.cached_pr_number.is_some()
+            || self.cached_pr_state.is_some()
+            || self.cached_pr_head_oid.is_some()
+    }
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -423,6 +459,216 @@ impl Database {
         Ok(())
     }
 
+    pub fn apply_move_topology(
+        &self,
+        target_name: &str,
+        parent_name: &str,
+    ) -> Result<MoveTopologyChange> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let previous_target: Option<(i64, Option<i64>)> = tx
+            .query_row(
+                "SELECT id, parent_branch_id FROM branches WHERE name = ?1",
+                params![target_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let previous_parent: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM branches WHERE name = ?1",
+                params![parent_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let target_was_inserted = previous_target.is_none();
+        let parent_was_inserted = previous_parent.is_none();
+        let target_id = match previous_target {
+            Some((id, _)) => id,
+            None => upsert_branch_on(&tx, target_name)?,
+        };
+        let parent_id = match previous_parent {
+            Some(id) => id,
+            None => upsert_branch_on(&tx, parent_name)?,
+        };
+        ensure_no_cycle_on(&tx, target_id, parent_id)?;
+
+        let previous_parent_id = previous_target.and_then(|(_, parent_id)| parent_id);
+        let previous_parent_name = previous_parent_id
+            .map(|id| {
+                tx.query_row(
+                    "SELECT name FROM branches WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow!("previous move parent record is missing"))
+            })
+            .transpose()?;
+
+        tx.execute(
+            "UPDATE branches
+             SET parent_branch_id = ?1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?2",
+            params![parent_id, target_id],
+        )?;
+        tx.commit()?;
+
+        Ok(MoveTopologyChange {
+            target_id,
+            target_name: target_name.to_string(),
+            previous_parent_id,
+            previous_parent_name,
+            target_was_inserted,
+            parent_id,
+            parent_name: parent_name.to_string(),
+            parent_was_inserted,
+        })
+    }
+
+    pub fn rollback_move_topology(&self, change: &MoveTopologyChange) -> Result<()> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let Some(current_target) = move_rollback_branch_state_on(&tx, change.target_id)? else {
+            return Err(anyhow!(
+                "move topology changed before rollback: target '{}' no longer has attempted parent '{}'",
+                change.target_name,
+                change.parent_name
+            ));
+        };
+        if current_target.name != change.target_name
+            || current_target.parent_branch_id != Some(change.parent_id)
+        {
+            return Err(anyhow!(
+                "move topology changed before rollback: target '{}' no longer has attempted parent '{}'",
+                change.target_name,
+                change.parent_name
+            ));
+        }
+        if change.target_was_inserted && current_target.has_sync_or_pr_metadata() {
+            return Err(anyhow!(
+                "move-inserted target '{}' gained sync or PR metadata before rollback",
+                change.target_name
+            ));
+        }
+
+        let Some(current_parent) = move_rollback_branch_state_on(&tx, change.parent_id)? else {
+            return Err(anyhow!(
+                "move topology changed before rollback: attempted parent '{}' is missing",
+                change.parent_name
+            ));
+        };
+        if current_parent.name != change.parent_name
+            || (change.parent_was_inserted && current_parent.parent_branch_id.is_some())
+        {
+            return Err(anyhow!(
+                "move topology changed before rollback: attempted parent '{}' changed",
+                change.parent_name
+            ));
+        }
+        if change.parent_was_inserted && current_parent.has_sync_or_pr_metadata() {
+            return Err(anyhow!(
+                "move-inserted parent '{}' gained sync or PR metadata before rollback",
+                change.parent_name
+            ));
+        }
+
+        if let (Some(previous_parent_id), Some(previous_parent_name)) = (
+            change.previous_parent_id,
+            change.previous_parent_name.as_deref(),
+        ) {
+            let previous_parent_matches: bool = tx.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM branches WHERE id = ?1 AND name = ?2
+                 )",
+                params![previous_parent_id, previous_parent_name],
+                |row| row.get(0),
+            )?;
+            if !previous_parent_matches {
+                return Err(anyhow!(
+                    "move topology changed before rollback: previous parent '{}' changed",
+                    previous_parent_name
+                ));
+            }
+            ensure_no_cycle_on(&tx, change.target_id, previous_parent_id)?;
+        }
+
+        if change.target_was_inserted {
+            let child_count: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM branches WHERE parent_branch_id = ?1",
+                params![change.target_id],
+                |row| row.get(0),
+            )?;
+            if child_count != 0 {
+                return Err(anyhow!(
+                    "move-inserted target '{}' gained children before rollback",
+                    change.target_name
+                ));
+            }
+        }
+        if change.parent_was_inserted {
+            let other_child_count: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM branches
+                 WHERE parent_branch_id = ?1 AND id != ?2",
+                params![change.parent_id, change.target_id],
+                |row| row.get(0),
+            )?;
+            if other_child_count != 0 {
+                return Err(anyhow!(
+                    "move-inserted parent '{}' gained children before rollback",
+                    change.parent_name
+                ));
+            }
+        }
+
+        if change.target_was_inserted {
+            let deleted = tx.execute(
+                "DELETE FROM branches
+                 WHERE id = ?1 AND name = ?2 AND parent_branch_id = ?3",
+                params![change.target_id, change.target_name, change.parent_id],
+            )?;
+            if deleted != 1 {
+                return Err(anyhow!(
+                    "move topology changed before rollback: target '{}' changed",
+                    change.target_name
+                ));
+            }
+        } else {
+            let restored = tx.execute(
+                "UPDATE branches
+                 SET parent_branch_id = ?1, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?2 AND name = ?3 AND parent_branch_id = ?4",
+                params![
+                    change.previous_parent_id,
+                    change.target_id,
+                    change.target_name,
+                    change.parent_id
+                ],
+            )?;
+            if restored != 1 {
+                return Err(anyhow!(
+                    "move topology changed before rollback: target '{}' changed",
+                    change.target_name
+                ));
+            }
+        }
+
+        if change.parent_was_inserted {
+            let deleted = tx.execute(
+                "DELETE FROM branches
+                 WHERE id = ?1 AND name = ?2 AND parent_branch_id IS NULL",
+                params![change.parent_id, change.parent_name],
+            )?;
+            if deleted != 1 {
+                return Err(anyhow!(
+                    "move topology changed before rollback: inserted parent '{}' changed",
+                    change.parent_name
+                ));
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn set_parents_batch(&self, updates: &[ParentUpdate]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
@@ -503,6 +749,25 @@ impl Database {
             "UPDATE branches SET last_synced_head_sha = ?1, updated_at = CURRENT_TIMESTAMP WHERE name = ?2",
             params![sha, branch_name],
         )?;
+        Ok(())
+    }
+
+    pub fn set_sync_shas(&self, updates: &[(String, String)]) -> Result<()> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        for (branch_name, sha) in updates {
+            let updated = tx.execute(
+                "UPDATE branches
+                 SET last_synced_head_sha = ?1, updated_at = CURRENT_TIMESTAMP
+                 WHERE name = ?2",
+                params![sha, branch_name],
+            )?;
+            if updated != 1 {
+                return Err(anyhow!(
+                    "cannot persist sync SHA: tracked branch '{branch_name}' is missing"
+                ));
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -686,6 +951,31 @@ fn list_branches_on(conn: &Connection) -> Result<Vec<BranchRecord>> {
         });
     }
     Ok(out)
+}
+
+fn move_rollback_branch_state_on(
+    conn: &Connection,
+    id: i64,
+) -> Result<Option<MoveRollbackBranchState>> {
+    conn.query_row(
+        "SELECT name, parent_branch_id, last_synced_head_sha, cached_pr_number,
+                cached_pr_state, cached_pr_head_oid
+         FROM branches
+         WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(MoveRollbackBranchState {
+                name: row.get(0)?,
+                parent_branch_id: row.get(1)?,
+                last_synced_head_sha: row.get(2)?,
+                cached_pr_number: row.get(3)?,
+                cached_pr_state: row.get(4)?,
+                cached_pr_head_oid: row.get(5)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 fn ensure_no_cycle_on(conn: &Connection, child_id: i64, mut parent_id: i64) -> Result<()> {
@@ -883,6 +1173,149 @@ mod tests {
     }
 
     #[test]
+    fn failed_move_topology_rollback_restores_target_and_removes_inserted_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("target", Some("main")).unwrap();
+
+        let change = db.apply_move_topology("target", "new-parent").unwrap();
+        assert_eq!(change.previous_parent_name(), Some("main"));
+
+        db.rollback_move_topology(&change).unwrap();
+
+        let target = db.branch_by_name("target").unwrap().unwrap();
+        let main = db.branch_by_name("main").unwrap().unwrap();
+        assert_eq!(target.parent_branch_id, Some(main.id));
+        assert!(db.branch_by_name("new-parent").unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_move_topology_rollback_removes_inserted_target_and_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        let change = db
+            .apply_move_topology("inserted-target", "inserted-parent")
+            .unwrap();
+
+        db.rollback_move_topology(&change).unwrap();
+
+        assert!(db.branch_by_name("inserted-target").unwrap().is_none());
+        assert!(db.branch_by_name("inserted-parent").unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_move_topology_rollback_rejects_a_concurrent_target_reparent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("target", Some("main")).unwrap();
+        db.set_parent("replacement", Some("main")).unwrap();
+        let change = db.apply_move_topology("target", "new-parent").unwrap();
+
+        db.set_parent("target", Some("replacement")).unwrap();
+        let err = db.rollback_move_topology(&change).unwrap_err();
+
+        assert!(err.to_string().contains("topology changed"));
+        let target = db.branch_by_name("target").unwrap().unwrap();
+        let replacement = db.branch_by_name("replacement").unwrap().unwrap();
+        assert_eq!(target.parent_branch_id, Some(replacement.id));
+        assert!(
+            db.branch_by_name("new-parent").unwrap().is_some(),
+            "a rejected rollback must not partially remove the inserted parent"
+        );
+    }
+
+    #[test]
+    fn failed_move_topology_rollback_does_not_detach_a_child_of_an_inserted_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("parent", Some("main")).unwrap();
+        let change = db.apply_move_topology("inserted-target", "parent").unwrap();
+
+        db.set_parent("concurrent-child", Some("inserted-target"))
+            .unwrap();
+        let err = db.rollback_move_topology(&change).unwrap_err();
+
+        assert!(err.to_string().contains("gained children"));
+        let target = db.branch_by_name("inserted-target").unwrap().unwrap();
+        let child = db.branch_by_name("concurrent-child").unwrap().unwrap();
+        assert_eq!(child.parent_branch_id, Some(target.id));
+    }
+
+    #[test]
+    fn failed_move_topology_rollback_does_not_remove_an_inserted_parent_with_a_new_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("target", Some("main")).unwrap();
+        let change = db.apply_move_topology("target", "inserted-parent").unwrap();
+
+        db.set_parent("concurrent-child", Some("inserted-parent"))
+            .unwrap();
+        let err = db.rollback_move_topology(&change).unwrap_err();
+
+        assert!(err.to_string().contains("gained children"));
+        let parent = db.branch_by_name("inserted-parent").unwrap().unwrap();
+        let target = db.branch_by_name("target").unwrap().unwrap();
+        let child = db.branch_by_name("concurrent-child").unwrap().unwrap();
+        assert_eq!(target.parent_branch_id, Some(parent.id));
+        assert_eq!(child.parent_branch_id, Some(parent.id));
+    }
+
+    #[test]
+    fn failed_move_topology_rollback_preserves_metadata_added_to_inserted_rows() {
+        for metadata_branch in ["inserted-target", "inserted-parent"] {
+            let dir = tempfile::tempdir().unwrap();
+            let db = Database::open(&dir.path().join("stack.db")).unwrap();
+            let change = db
+                .apply_move_topology("inserted-target", "inserted-parent")
+                .unwrap();
+            if metadata_branch == "inserted-target" {
+                db.set_pr_cache(metadata_branch, Some(42), Some("open"), Some("abc"))
+                    .unwrap();
+            } else {
+                db.set_sync_sha(metadata_branch, "concurrent-sha").unwrap();
+            }
+
+            let err = db.rollback_move_topology(&change).unwrap_err();
+
+            assert!(err.to_string().contains("gained sync or PR metadata"));
+            assert!(db.branch_by_name("inserted-target").unwrap().is_some());
+            assert!(db.branch_by_name("inserted-parent").unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn failed_move_topology_rollback_is_atomic_when_inserted_parent_deletion_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("target", Some("main")).unwrap();
+        let change = db.apply_move_topology("target", "inserted-parent").unwrap();
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER fail_inserted_parent_delete
+                 BEFORE DELETE ON branches
+                 WHEN OLD.name = 'inserted-parent'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced inserted parent delete failure');
+                 END;",
+            )
+            .unwrap();
+
+        let err = db.rollback_move_topology(&change).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("forced inserted parent delete failure")
+        );
+        let parent = db.branch_by_name("inserted-parent").unwrap().unwrap();
+        let target = db.branch_by_name("target").unwrap().unwrap();
+        assert_eq!(
+            target.parent_branch_id,
+            Some(parent.id),
+            "the target restore must roll back with parent cleanup"
+        );
+    }
+
+    #[test]
     fn splice_out_branch_relinks_children_to_parent() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("stack.db")).unwrap();
@@ -938,6 +1371,65 @@ mod tests {
         let child = db.branch_by_name("child").unwrap().unwrap();
         assert_eq!(victim.parent_branch_id, Some(replacement.id));
         assert_eq!(child.parent_branch_id, Some(victim.id));
+    }
+
+    #[test]
+    fn sync_sha_batch_rolls_back_every_update_when_one_branch_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("a", Some("main")).unwrap();
+        db.set_parent("b", Some("main")).unwrap();
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER fail_b_sync_sha
+                 BEFORE UPDATE OF last_synced_head_sha ON branches
+                 WHEN OLD.name = 'b'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced sync SHA failure');
+                 END;",
+            )
+            .unwrap();
+
+        let err = db
+            .set_sync_shas(&[
+                ("a".to_string(), "sha-a".to_string()),
+                ("b".to_string(), "sha-b".to_string()),
+            ])
+            .unwrap_err();
+
+        assert!(err.to_string().contains("forced sync SHA failure"));
+        for branch in ["a", "b"] {
+            assert!(
+                db.branch_by_name(branch)
+                    .unwrap()
+                    .unwrap()
+                    .last_synced_head_sha
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn sync_sha_batch_rejects_a_missing_branch_without_partial_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("a", Some("main")).unwrap();
+
+        let err = db
+            .set_sync_shas(&[
+                ("a".to_string(), "sha-a".to_string()),
+                ("missing".to_string(), "sha-missing".to_string()),
+            ])
+            .unwrap_err();
+
+        assert!(err.to_string().contains("missing"));
+        assert!(
+            db.branch_by_name("a")
+                .unwrap()
+                .unwrap()
+                .last_synced_head_sha
+                .is_none()
+        );
     }
 
     #[test]

@@ -356,17 +356,45 @@ fn sync_refuses_a_restacked_target_that_changes_before_its_child() {
     let fake_git = fake_bin.join("git");
     fs::write(
         &fake_git,
-        format!(
-            "#!/usr/bin/env bash\nif [[ \"$1\" == \"replay\" || \"$1\" == \"rebase\" ]]; then\n  '{}' \"$@\"\n  status=$?\n  if [[ $status -eq 0 ]]; then : > '{}'; fi\n  exit $status\nfi\nif [[ \"$1\" == \"switch\" && \"${{@: -1}}\" == \"feat/child\" && -f '{}' ]]; then\n  '{}' \"$@\"\n  status=$?\n  if [[ $status -eq 0 ]]; then\n    '{}' update-ref refs/heads/feat/child '{}'\n    rm -f '{}'\n  fi\n  exit $status\nfi\nexec '{}' \"$@\"\n",
-            real_git,
-            marker.display(),
-            marker.display(),
-            real_git,
-            real_git,
-            concurrent_child,
-            marker.display(),
-            real_git
-        ),
+        "#!/usr/bin/env bash
+set -uo pipefail
+
+advance_child() {
+  \"$STACK_TEST_REAL_GIT\" update-ref \
+    refs/heads/feat/child \"$STACK_TEST_CONCURRENT_CHILD\"
+  rm -f \"$STACK_TEST_RESTACK_MARKER\"
+}
+
+if [[ \"$1\" == \"replay\" || \"$1\" == \"rebase\" ]]; then
+  \"$STACK_TEST_REAL_GIT\" \"$@\"
+  status=$?
+  if [[ $status -eq 0 ]]; then : > \"$STACK_TEST_RESTACK_MARKER\"; fi
+  exit $status
+fi
+
+if [[ \"$1\" == \"update-ref\" && -f \"$STACK_TEST_RESTACK_MARKER\" ]]; then
+  if [[ \"$2\" == \"refs/heads/feat/child\" ]]; then
+    \"$STACK_TEST_REAL_GIT\" \"$@\"
+    status=$?
+    if [[ $status -eq 0 ]]; then advance_child; fi
+    exit $status
+  fi
+  if [[ \"$2\" == \"--stdin\" ]]; then
+    input_file=\"${STACK_TEST_RESTACK_MARKER}.stdin\"
+    cat > \"$input_file\"
+    \"$STACK_TEST_REAL_GIT\" \"$@\" < \"$input_file\"
+    status=$?
+    if [[ $status -eq 0 ]] &&
+       grep -q '^update refs/heads/feat/child ' \"$input_file\"; then
+      advance_child
+    fi
+    rm -f \"$input_file\"
+    exit $status
+  fi
+fi
+
+exec \"$STACK_TEST_REAL_GIT\" \"$@\"
+",
     )
     .expect("write fake git");
     fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
@@ -378,6 +406,9 @@ fn sync_refuses_a_restacked_target_that_changes_before_its_child() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
+        .env("STACK_TEST_REAL_GIT", real_git)
+        .env("STACK_TEST_RESTACK_MARKER", marker)
+        .env("STACK_TEST_CONCURRENT_CHILD", &concurrent_child)
         .args(["sync", "--yes"])
         .assert()
         .failure()
@@ -1318,6 +1349,58 @@ fn sync_restores_dirty_detached_head_and_worktree() {
     assert_eq!(
         fs::read_to_string(repo.path().join("README.md")).expect("read restored worktree"),
         "detached worktree change\n"
+    );
+}
+
+#[test]
+fn sync_does_not_stash_when_run_record_cannot_start() {
+    let repo = init_repo_without_origin();
+    prepare_inherited_child_restack(repo.path());
+    let original_parent =
+        git_ref_sha(repo.path(), "refs/heads/feat/parent").expect("original parent head");
+    let original_child =
+        git_ref_sha(repo.path(), "refs/heads/feat/child").expect("original child head");
+    fs::write(repo.path().join("README.md"), "uncommitted sync change\n")
+        .expect("write dirty worktree");
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_sync_start
+         BEFORE INSERT ON sync_runs
+         BEGIN
+             SELECT RAISE(ABORT, 'forced sync start failure');
+         END;",
+    )
+    .expect("install sync start failure");
+    drop(conn);
+
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("forced sync start failure"));
+
+    assert_eq!(
+        fs::read_to_string(repo.path().join("README.md")).expect("read dirty worktree"),
+        "uncommitted sync change\n"
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/parent").as_deref(),
+        Some(original_parent.as_str())
+    );
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/child").as_deref(),
+        Some(original_child.as_str())
+    );
+    let stash_list = Command::new("git")
+        .current_dir(repo.path())
+        .args(["stash", "list"])
+        .output()
+        .expect("list stashes");
+    assert!(stash_list.status.success());
+    assert!(
+        stash_list.stdout.is_empty(),
+        "sync must not stash before its run record is created"
     );
 }
 
