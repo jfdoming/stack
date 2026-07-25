@@ -6,7 +6,7 @@ use dialoguer::{Select, theme::ColorfulTheme};
 
 use crate::args::DeleteArgs;
 use crate::db::{BranchRecord, Database};
-use crate::git::Git;
+use crate::git::{Git, LocalBranchConfig};
 use crate::provider::{PrState, Provider};
 use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
 use crate::ui::pickers::build_delete_picker_items;
@@ -140,30 +140,45 @@ pub fn run(
         git.checkout_branch(&parent_name)?;
     }
 
+    let branch_config = match git.remove_local_branch_config(&branch.name) {
+        Ok(config) => config,
+        Err(config_error) => {
+            let restore_result = if restore_checkout {
+                git.checkout_branch(&branch.name)
+            } else {
+                Ok(())
+            };
+            return match restore_result {
+                Ok(()) => Err(config_error),
+                Err(restore_error) => Err(anyhow!(
+                    "{config_error}; additionally failed to restore checkout of '{}': {restore_error}",
+                    branch.name
+                )),
+            };
+        }
+    };
+
     if let Err(delete_error) =
         git.delete_local_branch_ref_if_unchanged(&branch.name, &expected_head)
     {
-        let restore_result = if restore_checkout {
-            git.checkout_branch(&branch.name)
-        } else {
-            Ok(())
-        };
+        let restore_result =
+            restore_local_delete_state(git, &branch.name, None, &branch_config, restore_checkout);
         return match restore_result {
             Ok(()) => Err(delete_error),
             Err(restore_error) => Err(anyhow!(
-                "{delete_error}; additionally failed to restore checkout of '{}': {restore_error}",
+                "{delete_error}; additionally failed to restore local branch '{}': {restore_error}",
                 branch.name
             )),
         };
     }
     if let Err(splice_error) = db.splice_out_branch_if_unchanged(&branch) {
-        let restore_result = (|| {
-            git.restore_local_branch_ref_if_missing(&branch.name, &expected_head)?;
-            if restore_checkout {
-                git.checkout_branch(&branch.name)?;
-            }
-            Ok::<(), anyhow::Error>(())
-        })();
+        let restore_result = restore_local_delete_state(
+            git,
+            &branch.name,
+            Some(&expected_head),
+            &branch_config,
+            restore_checkout,
+        );
         return match restore_result {
             Ok(()) => Err(splice_error),
             Err(restore_error) => Err(anyhow!(
@@ -172,7 +187,6 @@ pub fn run(
             )),
         };
     }
-    git.remove_local_branch_config(&branch.name);
 
     if let Some(pr) = pr.as_ref()
         && closes_open_pr
@@ -198,4 +212,31 @@ pub fn run(
         branch.name, parent_name
     );
     Ok(())
+}
+
+fn restore_local_delete_state(
+    git: &Git,
+    branch: &str,
+    deleted_head: Option<&str>,
+    config: &LocalBranchConfig,
+    restore_checkout: bool,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    if let Some(expected_head) = deleted_head
+        && let Err(error) = git.restore_local_branch_ref_if_missing(branch, expected_head)
+    {
+        errors.push(format!("ref: {error}"));
+    }
+    if let Err(error) = git.restore_local_branch_config(config) {
+        errors.push(format!("configuration: {error}"));
+    }
+    if restore_checkout && let Err(error) = git.checkout_branch(branch) {
+        errors.push(format!("checkout: {error}"));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(errors.join("; ")))
+    }
 }
