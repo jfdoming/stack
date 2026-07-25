@@ -4,6 +4,11 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.49 - 2026-07-25
+- Replaced repository-wide failed-move rollback gating with schema-v7 per-branch topology stamps, preserving participant ABA detection while allowing compensation after unrelated topology changes.
+- Compensated failed merged-branch pruning by restoring the deleted ref and exact branch configuration when SQLite splicing fails, including guarded stale-configuration cleanup when the ref is already missing.
+- Made branch configuration cleanup race-safe with a common-config lock held through ref deletion and database splicing, supported mixed-case Git keys, and failed closed before mutation for repository-local includes or enabled worktree configuration.
+
 ## 0.18.48 - 2026-07-24
 - Corrected `stack delete --porcelain` so `closed_pr_number` is populated only when the command successfully closes an open PR, while merged, closed, and missing PRs report `null`.
 

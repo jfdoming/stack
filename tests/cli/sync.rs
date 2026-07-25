@@ -3131,6 +3131,104 @@ fn sync_prunes_fully_merged_stack_branches() {
 
 #[cfg(unix)]
 #[test]
+fn sync_restores_branch_ref_and_config_when_merged_metadata_pruning_fails() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    let victim_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/victim").expect("victim branch head");
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/victim.remote", "origin"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "branch.feat/victim.merge",
+            "refs/heads/feat/victim",
+        ],
+    );
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_victim_sync_splice
+         BEFORE DELETE ON branches
+         WHEN OLD.name = 'feat/victim'
+         BEGIN
+             SELECT RAISE(ABORT, 'forced victim sync splice failure');
+         END;",
+    )
+    .expect("install splice failure");
+    drop(conn);
+
+    let fake_bin = repo.path().join("fake-bin-prune-splice-failure");
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(
+        &fake_gh,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"repo\" && \"$2\" == \"view\" ]]; then\n  echo '{{\"nameWithOwner\":\"acme/stack-test\"}}'\n  exit 0\nfi\nif [[ \"$1\" == \"api\" && \"$2\" == \"graphql\" ]]; then\n  echo '{{\"data\":{{\"repository\":{{\"h0\":{{\"nodes\":[{{\"number\":11,\"state\":\"MERGED\",\"baseRefName\":\"main\",\"headRefName\":\"feat/victim\",\"headRefOid\":\"{}\",\"mergeCommit\":{{\"oid\":\"{}\"}},\"headRepositoryOwner\":{{\"login\":\"acme\"}},\"url\":\"https://github.com/acme/stack-test/pull/11\",\"body\":\"\"}}]}}}}}}}}'\n  exit 0\nfi\necho '[]'\n",
+            victim_head, victim_head
+        ),
+    )
+    .expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["sync", "--yes"])
+        .assert()
+        .failure();
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/victim"),
+        Some(victim_head),
+        "the deleted branch ref must be restored when metadata pruning fails"
+    );
+    for (key, expected) in [
+        ("branch.feat/victim.remote", "origin"),
+        ("branch.feat/victim.merge", "refs/heads/feat/victim"),
+    ] {
+        let value = Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--get", key])
+            .output()
+            .expect("read restored branch configuration");
+        assert!(value.status.success(), "missing restored config key {key}");
+        assert_eq!(
+            String::from_utf8(value.stdout)
+                .expect("utf8 branch configuration")
+                .trim(),
+            expected
+        );
+    }
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let parent: String = conn
+        .query_row(
+            "SELECT parent.name
+             FROM branches victim
+             JOIN branches parent ON parent.id = victim.parent_branch_id
+             WHERE victim.name = 'feat/victim'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read retained victim topology");
+    assert_eq!(parent, "main");
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_prunes_metadata_when_merged_branch_ref_is_already_missing() {
     let repo = init_repo_without_origin();
 
@@ -3144,6 +3242,10 @@ fn sync_prunes_metadata_when_merged_branch_ref_is_already_missing() {
         .success();
     run_git(repo.path(), &["checkout", "main"]);
 
+    run_git(
+        repo.path(),
+        &["config", "branch.feat/child.remote", "stale"],
+    );
     run_git(repo.path(), &["branch", "-D", "feat/child"]);
 
     let main_sha = {
@@ -3208,6 +3310,15 @@ fn sync_prunes_metadata_when_merged_branch_ref_is_already_missing() {
     assert!(
         !child_exists.success(),
         "expected missing merged child branch ref to remain absent"
+    );
+    let child_config = Command::new("git")
+        .current_dir(repo.path())
+        .args(["config", "--get", "branch.feat/child.remote"])
+        .output()
+        .expect("read missing child branch configuration");
+    assert!(
+        !child_config.status.success(),
+        "expected stale configuration for the missing child ref to be pruned"
     );
 
     let db_path = repo.path().join(".git").join("stack.db");

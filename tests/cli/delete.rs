@@ -28,6 +28,19 @@ fn install_open_pr_delete_fixture(
     (test_path, gh_log)
 }
 
+#[cfg(unix)]
+fn resolve_real_git_for_delete() -> String {
+    let output = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string()
+}
+
 #[test]
 fn delete_command_splices_children_and_deletes_local_branch() {
     let repo = init_repo();
@@ -300,6 +313,20 @@ fn delete_keeps_open_pr_and_restores_local_ref_when_database_splice_fails() {
             "refs/heads/feat/victim",
         ],
     );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--add",
+            "branch.feat/victim.merge",
+            "refs/heads/other",
+        ],
+    );
+    let config_path = repo.path().join(".git/config");
+    let mut config_with_comment = fs::read(&config_path).expect("read branch configuration");
+    config_with_comment.extend_from_slice(b"# preserve this branch config formatting\n");
+    fs::write(&config_path, config_with_comment).expect("add branch config comment");
+    let config_before = fs::read(&config_path).expect("snapshot branch configuration");
 
     let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
     conn.execute_batch(
@@ -367,6 +394,11 @@ fn delete_keeps_open_pr_and_restores_local_ref_when_database_splice_fails() {
             .expect("utf8 branch remote")
             .trim(),
         "origin"
+    );
+    assert_eq!(
+        fs::read(config_path).expect("read restored branch configuration"),
+        config_before,
+        "database failure must restore the exact original config bytes"
     );
 }
 
@@ -443,6 +475,354 @@ fn delete_fails_without_mutation_when_branch_configuration_cannot_be_removed() {
     assert!(
         !calls.lines().any(|line| line.starts_with("pr close ")),
         "the PR must remain open when branch configuration cleanup fails: {calls}"
+    );
+}
+
+#[test]
+fn delete_refuses_local_includes_without_mutating_branch_state() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    let victim_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/victim").expect("victim branch head");
+
+    let included_config = repo.path().join(".git/stack-branches.config");
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--file",
+            included_config.to_str().expect("included config path"),
+            "branch.feat/victim.remote",
+            "stale",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--file",
+            included_config.to_str().expect("included config path"),
+            "branch.feat/victim.merge",
+            "refs/heads/feat/victim",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["config", "--local", "include.path", "stack-branches.config"],
+    );
+
+    stack_cmd(repo.path())
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("include.path"));
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/victim"),
+        Some(victim_head),
+        "the ref must remain when included configuration cannot be cleaned safely"
+    );
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let tracked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/victim'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count victim");
+    assert_eq!(tracked, 1, "the database row must remain");
+    let stale_remote = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "config",
+            "--local",
+            "--includes",
+            "--get",
+            "branch.feat/victim.remote",
+        ])
+        .output()
+        .expect("read effective branch remote");
+    assert!(
+        stale_remote.status.success(),
+        "fail-closed deletion must preserve the included configuration"
+    );
+    assert_eq!(
+        String::from_utf8(stale_remote.stdout)
+            .expect("utf8 branch remote")
+            .trim(),
+        "stale"
+    );
+    let current = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "--show-current"])
+        .output()
+        .expect("read current branch");
+    assert_eq!(
+        String::from_utf8(current.stdout)
+            .expect("utf8 current branch")
+            .trim(),
+        "feat/victim",
+        "include validation must run before switching away from the target"
+    );
+}
+
+#[test]
+fn delete_refuses_worktree_config_without_mutating_branch_state() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    let victim_head =
+        git_ref_sha(repo.path(), "refs/heads/feat/victim").expect("victim branch head");
+
+    let included_config = repo.path().join(".git/stack-worktree-branches.config");
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--file",
+            included_config.to_str().expect("included config path"),
+            "branch.feat/victim.remote",
+            "worktree-stale",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--local",
+            "extensions.worktreeConfig",
+            "true",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--worktree",
+            "include.path",
+            "stack-worktree-branches.config",
+        ],
+    );
+
+    stack_cmd(repo.path())
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("extensions.worktreeConfig"));
+
+    assert_eq!(
+        git_ref_sha(repo.path(), "refs/heads/feat/victim"),
+        Some(victim_head),
+        "the ref must remain when worktree configuration cannot share the transaction"
+    );
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let tracked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/victim'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count victim");
+    assert_eq!(tracked, 1, "the database row must remain");
+    let stale_remote = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "config",
+            "--includes",
+            "--get",
+            "branch.feat/victim.remote",
+        ])
+        .output()
+        .expect("read effective worktree branch remote");
+    assert!(stale_remote.status.success());
+    assert_eq!(
+        String::from_utf8(stale_remote.stdout)
+            .expect("utf8 branch remote")
+            .trim(),
+        "worktree-stale"
+    );
+    let current = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "--show-current"])
+        .output()
+        .expect("read current branch");
+    assert_eq!(
+        String::from_utf8(current.stdout)
+            .expect("utf8 current branch")
+            .trim(),
+        "feat/victim"
+    );
+}
+
+#[test]
+fn delete_removes_mixed_case_branch_configuration() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--local",
+            "extensions.worktreeConfig",
+            "false",
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["config", "--local", "Branch.feat/victim.Remote", "origin"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--local",
+            "Branch.feat/victim.Merge",
+            "refs/heads/feat/victim",
+        ],
+    );
+
+    stack_cmd(repo.path())
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .success();
+
+    assert_eq!(git_ref_sha(repo.path(), "refs/heads/feat/victim"), None);
+    let stale_remote = Command::new("git")
+        .current_dir(repo.path())
+        .args(["config", "--local", "--get", "branch.feat/victim.remote"])
+        .output()
+        .expect("read branch remote");
+    assert!(!stale_remote.status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_blocks_a_config_write_during_cleanup_snapshot() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+    run_git(
+        repo.path(),
+        &[
+            "config",
+            "--local",
+            "branch.feat/victim.remote",
+            "origin",
+        ],
+    );
+
+    let (test_path, _gh_log) = install_open_pr_delete_fixture(repo.path(), "config-read-race", 0);
+    let fake_bin = repo.path().join("fake-bin-delete-config-read-race");
+    let writer_status = repo.path().join("delete-config-read-race.log");
+    let real_git = resolve_real_git_for_delete();
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"config\" && ( \" $* \" == *\" --get-regexp \"* || \" $* \" == *\" --list \"* ) && ! -e '{}' ]]; then\n  '{}' config --local branch.feat/victim.pushRemote concurrent >/dev/null 2>&1\n  printf '%s\\n' \"$?\" > '{}'\nfi\nexec '{}' \"$@\"\n",
+            writer_status.display(),
+            real_git,
+            writer_status.display(),
+            real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .success();
+
+    let status = fs::read_to_string(&writer_status).expect("read racing writer status");
+    assert_ne!(
+        status.trim(),
+        "0",
+        "the Git config lock must block the racing writer"
+    );
+    assert_eq!(git_ref_sha(repo.path(), "refs/heads/feat/victim"), None);
+    let stale_push_remote = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "config",
+            "--local",
+            "--get",
+            "branch.feat/victim.pushRemote",
+        ])
+        .output()
+        .expect("read stale push remote");
+    assert!(
+        !stale_push_remote.status.success(),
+        "the blocked writer must not leave stale branch configuration"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_blocks_a_config_write_between_cleanup_and_ref_deletion() {
+    let repo = init_repo();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/victim"])
+        .assert()
+        .success();
+
+    let (test_path, _gh_log) =
+        install_open_pr_delete_fixture(repo.path(), "config-update-ref-race", 0);
+    let fake_bin = repo
+        .path()
+        .join("fake-bin-delete-config-update-ref-race");
+    let writer_status = repo.path().join("delete-config-update-ref-race.log");
+    let real_git = resolve_real_git_for_delete();
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"update-ref\" && \"$2\" == \"-d\" && \"$3\" == \"refs/heads/feat/victim\" ]]; then\n  '{}' config --local branch.feat/victim.pushRemote concurrent >/dev/null 2>&1\n  printf '%s\\n' \"$?\" > '{}'\nfi\nexec '{}' \"$@\"\n",
+            real_git,
+            writer_status.display(),
+            real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["--yes", "delete", "feat/victim"])
+        .assert()
+        .success();
+
+    let status = fs::read_to_string(&writer_status).expect("read racing writer status");
+    assert_ne!(
+        status.trim(),
+        "0",
+        "the Git config lock must remain held through ref deletion even when no target config existed"
+    );
+    assert_eq!(git_ref_sha(repo.path(), "refs/heads/feat/victim"), None);
+    let stale_push_remote = Command::new("git")
+        .current_dir(repo.path())
+        .args([
+            "config",
+            "--local",
+            "--get",
+            "branch.feat/victim.pushRemote",
+        ])
+        .output()
+        .expect("read stale push remote");
+    assert!(
+        !stale_push_remote.status.success(),
+        "a configuration write must not survive a successful branch deletion"
     );
 }
 

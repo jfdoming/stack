@@ -1319,7 +1319,7 @@ fn execute_sync_plan_inner(
                     branch,
                     merged_head_oid,
                 } => {
-                    if git.branch_exists(branch)? {
+                    let current_head = if git.branch_exists(branch)? {
                         let expected_head = merged_head_oid.as_deref().ok_or_else(|| {
                             anyhow!(
                                 "refusing to prune '{}': merged PR head is unavailable",
@@ -1334,14 +1334,65 @@ fn execute_sync_plan_inner(
                                 branch
                             ));
                         }
-                        if git.current_branch()? == *branch {
-                            git.checkout_branch(&plan.base_branch)?;
+                        Some(current_head)
+                    } else {
+                        None
+                    };
+
+                    let config = git.prepare_local_branch_config_removal(branch)?;
+                    if let Some(current_head) = current_head.as_deref() {
+                        if git.current_branch()? == *branch
+                            && let Err(checkout_error) = git.checkout_branch(&plan.base_branch)
+                        {
+                            return match config.rollback() {
+                                Ok(()) => Err(checkout_error),
+                                Err(restore_error) => Err(anyhow!(
+                                    "{checkout_error}; additionally failed to restore local Git configuration for branch '{branch}': {restore_error}"
+                                )),
+                            };
                         }
-                        git.delete_local_branch_if_unchanged(branch, &current_head)?;
-                        ref_journal.record(branch, &current_head, None);
+                        if let Err(delete_error) =
+                            git.delete_local_branch_ref_if_unchanged(branch, current_head)
+                        {
+                            return match config.rollback() {
+                                Ok(()) => Err(delete_error),
+                                Err(restore_error) => Err(anyhow!(
+                                    "{delete_error}; additionally failed to restore local Git configuration for branch '{branch}': {restore_error}"
+                                )),
+                            };
+                        }
                     }
-                    if db.branch_by_name(branch)?.is_some() {
-                        db.splice_out_branch(branch)?;
+
+                    let splice_result = match db.branch_by_name(branch) {
+                        Ok(Some(_)) => db.splice_out_branch(branch),
+                        Ok(None) => Ok(()),
+                        Err(error) => Err(error),
+                    };
+                    if let Err(splice_error) = splice_result {
+                        let mut compensation_errors = Vec::new();
+                        if let Some(current_head) = current_head.as_deref()
+                            && let Err(error) =
+                                git.restore_local_branch_ref_if_missing(branch, current_head)
+                        {
+                            compensation_errors
+                                .push(format!("failed to restore local branch ref: {error}"));
+                        }
+                        if let Err(error) = config.rollback() {
+                            compensation_errors.push(format!(
+                                "failed to restore local Git configuration: {error}"
+                            ));
+                        }
+                        if compensation_errors.is_empty() {
+                            return Err(splice_error);
+                        }
+                        return Err(anyhow!(
+                            "{splice_error}; additionally failed to compensate branch pruning: {}",
+                            compensation_errors.join("; ")
+                        ));
+                    }
+                    config.commit()?;
+                    if let Some(current_head) = current_head.as_deref() {
+                        ref_journal.record(branch, current_head, None);
                     }
                     pruned_branches.insert(branch.clone());
                 }
