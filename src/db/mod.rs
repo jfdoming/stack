@@ -564,22 +564,34 @@ impl Database {
     }
 
     pub fn delete_branch(&self, branch_name: &str) -> Result<()> {
-        self.conn.execute("UPDATE branches SET parent_branch_id = NULL WHERE parent_branch_id = (SELECT id FROM branches WHERE name = ?1)", params![branch_name])?;
-        self.conn
-            .execute("DELETE FROM branches WHERE name = ?1", params![branch_name])?;
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE branches SET parent_branch_id = NULL
+             WHERE parent_branch_id = (SELECT id FROM branches WHERE name = ?1)",
+            params![branch_name],
+        )?;
+        tx.execute("DELETE FROM branches WHERE name = ?1", params![branch_name])?;
+        tx.commit()?;
         Ok(())
     }
 
     pub fn splice_out_branch(&self, branch_name: &str) -> Result<()> {
-        let branch = self
-            .branch_by_name(branch_name)?
-            .ok_or_else(|| anyhow!("branch '{branch_name}' is not tracked"))?;
-        self.conn.execute(
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let branch: Option<(i64, Option<i64>)> = tx
+            .query_row(
+                "SELECT id, parent_branch_id FROM branches WHERE name = ?1",
+                params![branch_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (branch_id, parent_branch_id) =
+            branch.ok_or_else(|| anyhow!("branch '{branch_name}' is not tracked"))?;
+        tx.execute(
             "UPDATE branches SET parent_branch_id = ?1 WHERE parent_branch_id = ?2",
-            params![branch.parent_branch_id, branch.id],
+            params![parent_branch_id, branch_id],
         )?;
-        self.conn
-            .execute("DELETE FROM branches WHERE id = ?1", params![branch.id])?;
+        tx.execute("DELETE FROM branches WHERE id = ?1", params![branch_id])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -680,9 +692,38 @@ fn ensure_temp_id(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier};
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::{Duration, Instant};
 
     use super::*;
+
+    static SPLICE_WRITER_BLOCKED: AtomicBool = AtomicBool::new(false);
+
+    fn record_splice_writer_block(_: i32) -> bool {
+        SPLICE_WRITER_BLOCKED.store(true, Ordering::Release);
+        true
+    }
+
+    fn database_with_failing_victim_delete() -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("stack.db")).unwrap();
+        db.set_parent("victim", Some("main")).unwrap();
+        db.set_parent("child", Some("victim")).unwrap();
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER fail_victim_delete
+                 BEFORE DELETE ON branches
+                 WHEN OLD.name = 'victim'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced victim delete failure');
+                 END;",
+            )
+            .unwrap();
+        (dir, db)
+    }
 
     #[test]
     fn prevents_cycles() {
@@ -816,6 +857,74 @@ mod tests {
         let main = db.branch_by_name("main").unwrap().unwrap();
         assert_eq!(b.parent_branch_id, Some(main.id));
         assert!(db.branch_by_name("a").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_branch_rolls_back_child_detachment_when_delete_fails() {
+        let (_dir, db) = database_with_failing_victim_delete();
+
+        let err = db.delete_branch("victim").unwrap_err();
+
+        assert!(err.to_string().contains("forced victim delete failure"));
+        let victim = db.branch_by_name("victim").unwrap().unwrap();
+        let child = db.branch_by_name("child").unwrap().unwrap();
+        assert_eq!(child.parent_branch_id, Some(victim.id));
+    }
+
+    #[test]
+    fn splice_out_branch_rolls_back_child_relink_when_delete_fails() {
+        let (_dir, db) = database_with_failing_victim_delete();
+
+        let err = db.splice_out_branch("victim").unwrap_err();
+
+        assert!(err.to_string().contains("forced victim delete failure"));
+        let victim = db.branch_by_name("victim").unwrap().unwrap();
+        let child = db.branch_by_name("child").unwrap().unwrap();
+        assert_eq!(child.parent_branch_id, Some(victim.id));
+    }
+
+    #[test]
+    fn splice_out_branch_reads_topology_after_acquiring_the_writer_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stack.db");
+        let writer = Database::open(&path).unwrap();
+        writer.set_parent("victim", Some("main")).unwrap();
+        writer.set_parent("child", Some("victim")).unwrap();
+        writer.set_parent("replacement", Some("main")).unwrap();
+
+        let splicer = Database::open(&path).unwrap();
+        splicer
+            .conn
+            .busy_handler(Some(record_splice_writer_block))
+            .unwrap();
+        SPLICE_WRITER_BLOCKED.store(false, Ordering::Release);
+
+        let replacement = writer.branch_by_name("replacement").unwrap().unwrap();
+        let writer_tx =
+            Transaction::new_unchecked(&writer.conn, TransactionBehavior::Immediate).unwrap();
+        writer_tx
+            .execute(
+                "UPDATE branches SET parent_branch_id = ?1 WHERE name = 'victim'",
+                params![replacement.id],
+            )
+            .unwrap();
+
+        let splice_worker = std::thread::spawn(move || splicer.splice_out_branch("victim"));
+        let wait_started = Instant::now();
+        while !SPLICE_WRITER_BLOCKED.load(Ordering::Acquire) {
+            assert!(
+                wait_started.elapsed() < Duration::from_secs(5),
+                "splice writer did not wait for the competing transaction"
+            );
+            std::thread::yield_now();
+        }
+
+        writer_tx.commit().unwrap();
+        splice_worker.join().unwrap().unwrap();
+
+        let child = writer.branch_by_name("child").unwrap().unwrap();
+        assert_eq!(child.parent_branch_id, Some(replacement.id));
+        assert!(writer.branch_by_name("victim").unwrap().is_none());
     }
 
     #[test]
