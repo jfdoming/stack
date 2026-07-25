@@ -103,6 +103,43 @@ fn draft_release_recovers_artifacts_without_mutating_published_releases() {
 }
 
 #[test]
+fn existing_draft_is_retargeted_before_assets_are_replaced() {
+    let retarget = release_step("Retarget existing draft release");
+    assert!(
+        retarget.contains("if: steps.version.outputs.release_state == 'draft'"),
+        "only an existing draft should be retargeted"
+    );
+    assert!(retarget.contains("TAG: ${{ steps.version.outputs.tag }}"));
+    assert!(
+        retarget.contains("TARGET_SHA: ${{ github.event.workflow_run.head_sha }}"),
+        "the release target must come from the trusted triggering run"
+    );
+    assert!(retarget.contains("gh release edit \"$TAG\" --target \"$TARGET_SHA\""));
+    let retarget_script = retarget
+        .split_once("        run: |\n")
+        .expect("retarget run script")
+        .1;
+    assert!(
+        !retarget_script.contains("${{"),
+        "workflow expressions must reach the shell through quoted environment variables"
+    );
+
+    let validate_position = RELEASE_WORKFLOW
+        .find("      - name: Validate complete binary set")
+        .expect("validate step");
+    let retarget_position = RELEASE_WORKFLOW
+        .find("      - name: Retarget existing draft release")
+        .expect("retarget step");
+    let upload_position = RELEASE_WORKFLOW
+        .find("      - name: Attach or refresh draft binaries")
+        .expect("upload step");
+    assert!(
+        validate_position < retarget_position && retarget_position < upload_position,
+        "the draft must be validated, then retargeted, then refreshed"
+    );
+}
+
+#[test]
 fn build_workflow_token_is_read_only() {
     assert!(
         BUILD_WORKFLOW.contains("permissions:\n  contents: read"),
