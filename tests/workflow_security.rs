@@ -1,4 +1,5 @@
 const BUILD_WORKFLOW: &str = include_str!("../.github/workflows/build.yaml");
+const CARGO_LOCK: &str = include_str!("../Cargo.lock");
 const RELEASE_WORKFLOW: &str = include_str!("../.github/workflows/draft-release.yaml");
 
 fn release_job_guard() -> String {
@@ -107,4 +108,40 @@ fn build_workflow_token_is_read_only() {
         BUILD_WORKFLOW.contains("permissions:\n  contents: read"),
         "unprivileged build jobs must not inherit a write token"
     );
+}
+
+#[test]
+fn build_workflow_runs_a_pinned_rustsec_audit() {
+    assert!(
+        BUILD_WORKFLOW.contains(
+            "uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0"
+        ),
+        "CI must run the official RustSec audit action at a pinned revision"
+    );
+    assert!(
+        BUILD_WORKFLOW.contains("token: ${{ github.token }}"),
+        "the RustSec action requires the workflow token"
+    );
+    assert!(
+        BUILD_WORKFLOW.contains("run: cargo audit --deny warnings"),
+        "CI must fail on unsound, unmaintained, or yanked dependency warnings"
+    );
+}
+
+#[test]
+fn lockfile_excludes_known_advisory_affected_versions() {
+    for (name, version) in [
+        ("anyhow", "1.0.101"),
+        ("lru", "0.12.5"),
+        ("paste", "1.0.15"),
+    ] {
+        let retained = CARGO_LOCK.split("[[package]]").any(|package| {
+            package.contains(&format!("name = \"{name}\""))
+                && package.contains(&format!("version = \"{version}\""))
+        });
+        assert!(
+            !retained,
+            "Cargo.lock still retains advisory-affected {name} {version}"
+        );
+    }
 }
