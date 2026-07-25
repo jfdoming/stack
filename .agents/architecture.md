@@ -77,7 +77,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 
 ## Delete behaviour
 - `stack delete` refuses the configured base branch before any provider, Git, or metadata mutation.
-- Deleting a tracked non-base branch first snapshots and removes its exact `branch.<name>` configuration, then validates and conditionally deletes the unchanged local ref, atomically splices children to the deleted branch's parent, and only then closes a discovered open PR. Configuration-lock, ref, checkout, or database failures restore all reversible local state before leaving the PR unchanged; an ambiguous provider-close failure instead reports the completed local deletion for manual PR inspection. It never lets `gh` delete the local branch, preserves prefix-named configuration sections, and leaves already merged or closed PRs unchanged.
+- Deleting a tracked non-base branch first snapshots and removes its exact `branch.<name>` configuration, then validates and conditionally deletes the unchanged local ref, atomically splices children to the deleted branch's parent, and only then closes a discovered open PR. Configuration-lock, ref, checkout, or database failures restore all reversible local state before leaving the PR unchanged; an ambiguous provider-close failure instead reports the completed local deletion for manual PR inspection. It never lets `gh` delete the local branch, preserves prefix-named configuration sections, and leaves already merged or closed PRs unchanged. Successful porcelain output reports `closed_pr_number` only for an open PR that this invocation closed.
 
 ## Rename behaviour
 - `stack rename <old> <new>` renames a tracked branch in local git and updates the existing branch record name in stack metadata.

@@ -46,9 +46,10 @@ fn delete_command_splices_children_and_deletes_local_branch() {
         .success();
 
     stack_cmd(repo.path())
-        .args(["--yes", "delete", "feat/b"])
+        .args(["--yes", "delete", "feat/b", "--porcelain"])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("\"closed_pr_number\": null"));
 
     let branch_list = Command::new("git")
         .current_dir(repo.path())
@@ -656,9 +657,10 @@ fn delete_verifies_cached_pr_head_identity_and_preserves_repository_scope() {
 
     stack_cmd(repo.path())
         .env("PATH", test_path)
-        .args(["--yes", "delete", "feat/victim"])
+        .args(["--yes", "delete", "feat/victim", "--porcelain"])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("\"closed_pr_number\": 77"));
 
     let gh_calls = fs::read_to_string(&gh_log).expect("read gh log");
     assert!(gh_calls.contains("pr view 42"));
@@ -766,9 +768,10 @@ fn delete_skips_close_for_terminal_prs() {
 
         stack_cmd(repo.path())
             .env("PATH", test_path)
-            .args(["--yes", "delete", "feat/victim"])
+            .args(["--yes", "delete", "feat/victim", "--porcelain"])
             .assert()
-            .success();
+            .success()
+            .stdout(predicate::str::contains("\"closed_pr_number\": null"));
 
         let calls = fs::read_to_string(&gh_log).expect("read gh calls");
         assert!(
