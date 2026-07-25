@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.42 - 2026-07-24
+- Made branch deletion and splicing atomic immediate transactions so failed row deletion cannot leave children detached or reparented, and concurrent writers cannot race the splice topology read.
+
 ## 0.18.41 - 2026-07-24
 - Restored the previous stack topology when `stack move` sync planning or execution fails, including removing branch records introduced only by the failed move.
 
