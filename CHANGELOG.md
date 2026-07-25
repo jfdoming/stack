@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.48 - 2026-07-24
+- Corrected `stack delete --porcelain` so `closed_pr_number` is populated only when the command successfully closes an open PR, while merged, closed, and missing PRs report `null`.
+
 ## 0.18.47 - 2026-07-24
 - Made exact local branch-configuration removal a required precondition for ref deletion, with `stack delete` recovery for later local failures, so configuration-lock errors preserve the ref, stack topology, checkout, and open PR instead of leaving stale upstream settings for a recreated branch.
 

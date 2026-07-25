@@ -200,10 +200,11 @@ pub fn run(
         ));
     }
 
+    let closed_pr_number = if closes_open_pr { pr_number } else { None };
     if porcelain {
         return crate::views::print_json(&serde_json::json!({
             "deleted_branch": branch.name,
-            "closed_pr_number": pr_number,
+            "closed_pr_number": closed_pr_number,
             "spliced_to_parent": parent_name,
         }));
     }
