@@ -153,6 +153,168 @@ fn move_tracks_untracked_target_and_parent_when_needed() {
     assert_eq!(child_parent, "feat/parent");
 }
 
+#[cfg(unix)]
+#[test]
+fn move_restores_the_previous_parent_and_removes_an_inserted_parent_when_sync_fails() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/target"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["branch", "feat/new-parent", "main"]);
+
+    stack_cmd(repo.path())
+        .env("PATH", git_only_path(repo.path()))
+        .args(["move", "feat/target", "--parent", "feat/new-parent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to run gh"));
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let target_parent: String = conn
+        .query_row(
+            "SELECT p.name
+             FROM branches c
+             JOIN branches p ON p.id = c.parent_branch_id
+             WHERE c.name = 'feat/target'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("target parent");
+    assert_eq!(target_parent, "main");
+
+    let inserted_parent_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/new-parent'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inserted parent count");
+    assert_eq!(inserted_parent_count, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn move_removes_an_inserted_target_when_sync_fails() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["branch", "feat/untracked-target", "main"]);
+
+    stack_cmd(repo.path())
+        .env("PATH", git_only_path(repo.path()))
+        .args([
+            "move",
+            "feat/untracked-target",
+            "--parent",
+            "feat/parent",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to run gh"));
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let inserted_target_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM branches WHERE name = 'feat/untracked-target'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inserted target count");
+    assert_eq!(inserted_target_count, 0);
+
+    let parent_parent: String = conn
+        .query_row(
+            "SELECT p.name
+             FROM branches c
+             JOIN branches p ON p.id = c.parent_branch_id
+             WHERE c.name = 'feat/parent'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("parent branch parent");
+    assert_eq!(parent_parent, "main");
+}
+
+#[cfg(unix)]
+#[test]
+fn move_restores_the_previous_parent_when_sync_execution_fails() {
+    let repo = init_repo_without_origin();
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/target"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("target.txt"), "target\n").expect("write target change");
+    run_git(repo.path(), &["add", "target.txt"]);
+    run_git(repo.path(), &["commit", "-m", "target change"]);
+
+    run_git(repo.path(), &["checkout", "main"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/new-parent"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("parent.txt"), "parent\n").expect("write parent change");
+    run_git(repo.path(), &["add", "parent.txt"]);
+    run_git(repo.path(), &["commit", "-m", "parent change"]);
+    run_git(repo.path(), &["checkout", "main"]);
+
+    let fake_bin = repo.path().join("fake-bin-failing-move-sync");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("resolve real git");
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)
+        .expect("utf8 git path")
+        .trim()
+        .to_string();
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/usr/bin/env bash\nif [[ \"$1\" == \"replay\" || \"$1\" == \"rebase\" ]]; then\n  echo 'forced move sync failure' >&2\n  exit 1\nfi\nexec '{}' \"$@\"\n",
+            real_git
+        ),
+    )
+    .expect("write fake git");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).expect("chmod fake git");
+    let fake_gh = fake_bin.join("gh");
+    fs::write(&fake_gh, "#!/usr/bin/env bash\nexit 1\n").expect("write fake gh");
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).expect("chmod fake gh");
+    let test_path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
+
+    stack_cmd(repo.path())
+        .env("PATH", test_path)
+        .args(["move", "feat/target", "--parent", "feat/new-parent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sync failed"))
+        .stderr(predicate::str::contains("forced move sync failure"));
+
+    let conn = Connection::open(repo.path().join(".git/stack.db")).expect("open stack db");
+    let target_parent: String = conn
+        .query_row(
+            "SELECT p.name
+             FROM branches c
+             JOIN branches p ON p.id = c.parent_branch_id
+             WHERE c.name = 'feat/target'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("target parent");
+    assert_eq!(target_parent, "main");
+}
+
 #[test]
 fn move_rejects_a_tracked_parent_whose_git_ref_is_missing() {
     let repo = init_repo();
