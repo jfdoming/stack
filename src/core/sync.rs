@@ -8,7 +8,7 @@ use crate::git::{Git, LocalBranchRefTransition, StashHandle};
 use crate::provider::{PrIdentity, PrState, Provider};
 use crate::util::pr_body::{ManagedBranchRef, managed_pr_section, merge_managed_pr_section};
 use crate::util::url::github_repo_slug_from_web_url;
-use crate::views::{OperationView, SyncPlanView};
+use crate::views::{MergeBaseFallbackView, OperationView, SyncPlanView};
 
 #[derive(Debug, Clone)]
 pub enum RestackTarget {
@@ -130,6 +130,7 @@ pub enum SyncOp {
 
 #[derive(Debug, Clone)]
 pub struct SyncPlan {
+    pub merge_base_fallbacks: Vec<MergeBaseFallbackView>,
     pub base_branch: String,
     pub ops: Vec<SyncOp>,
 }
@@ -212,6 +213,7 @@ impl SyncPlan {
         SyncPlanView {
             base_branch: self.base_branch.clone(),
             operations,
+            merge_base_fallbacks: self.merge_base_fallbacks.clone(),
         }
     }
 
@@ -256,6 +258,7 @@ impl SyncPlan {
         SyncPlan {
             base_branch: self.base_branch.clone(),
             ops: provider_ops,
+            merge_base_fallbacks: Vec::new(),
         }
     }
 }
@@ -297,7 +300,7 @@ pub fn build_sync_plan(
     base_branch: &str,
     base_remote: &str,
 ) -> Result<(SyncPlan, SyncPlanTiming)> {
-    build_sync_plan_inner(db, git, provider, base_branch, base_remote, true)
+    build_sync_plan_inner(db, git, provider, base_branch, base_remote, true, true)
 }
 
 pub fn build_sync_plan_for_move(
@@ -307,7 +310,7 @@ pub fn build_sync_plan_for_move(
     base_branch: &str,
     base_remote: &str,
 ) -> Result<(SyncPlan, SyncPlanTiming)> {
-    build_sync_plan_inner(db, git, provider, base_branch, base_remote, false)
+    build_sync_plan_inner(db, git, provider, base_branch, base_remote, false, false)
 }
 
 fn build_sync_plan_inner(
@@ -317,6 +320,7 @@ fn build_sync_plan_inner(
     base_branch: &str,
     base_remote: &str,
     persist_pr_cache: bool,
+    allow_base_recovery: bool,
 ) -> Result<(SyncPlan, SyncPlanTiming)> {
     #[derive(Clone)]
     struct RestackCandidate {
@@ -325,6 +329,7 @@ fn build_sync_plan_inner(
         old_base: String,
     }
 
+    let mut merge_base_fallbacks = Vec::new();
     let setup_started = Instant::now();
     let sync_remote = git.preferred_sync_remote(base_remote)?;
     let tracked = db.list_branches()?;
@@ -606,6 +611,8 @@ fn build_sync_plan_inner(
                             parent_head,
                             &branch.name,
                             &current_sha,
+                            (allow_base_recovery && parent.name == base_branch)
+                                .then_some(&mut merge_base_fallbacks),
                         )?,
                     });
                 }
@@ -735,6 +742,7 @@ fn build_sync_plan_inner(
                             current_sha_by_branch.get(&child.name).ok_or_else(|| {
                                 anyhow!("missing planned head for '{}'", child.name)
                             })?,
+                            None,
                         )?,
                     });
                 }
@@ -939,6 +947,7 @@ fn build_sync_plan_inner(
     let plan = SyncPlan {
         base_branch: base_branch.to_string(),
         ops,
+        merge_base_fallbacks,
     };
     let timing = SyncPlanTiming {
         setup: setup_elapsed,
@@ -1036,18 +1045,34 @@ fn safe_restack_old_base(
     parent_head: &str,
     child: &str,
     child_head: &str,
+    recoveries: Option<&mut Vec<MergeBaseFallbackView>>,
 ) -> Result<String> {
     if git.is_ancestor(parent_head, child_head)? {
         return Ok(parent_head.to_string());
     }
 
-    let fork_point = git.merge_base_fork_point(parent, child_head)?.ok_or_else(|| {
-        anyhow!(
-            "cannot safely restack '{}' onto rewritten parent '{}': the prior fork point is unavailable",
-            child,
-            parent
-        )
-    })?;
+    let fork_point = match git.merge_base_fork_point(parent, child_head)? {
+        Some(point) => point,
+        None => {
+            let Some(recoveries) = recoveries else {
+                return Err(anyhow!(
+                    "cannot safely restack '{}' onto parent '{}': the prior fork point is unavailable",
+                    child,
+                    parent
+                ));
+            };
+            let old_base = git.unique_merge_base(parent_head, child_head)?;
+            let commits = git.commit_summaries_between(&old_base, child_head)?;
+            recoveries.push(MergeBaseFallbackView {
+                branch: child.to_string(),
+                parent: parent.to_string(),
+                old_base: old_base.clone(),
+                expected_head: child_head.to_string(),
+                commits,
+            });
+            return Ok(old_base);
+        }
+    };
     if !git.ref_exists(&fork_point)? || !git.is_ancestor(&fork_point, child_head)? {
         return Err(anyhow!(
             "cannot safely restack '{}' onto rewritten parent '{}': the prior fork point is invalid",
@@ -1696,6 +1721,7 @@ mod tests {
         let oid = "a".repeat(40);
         let mut plan = SyncPlan {
             base_branch: "main".to_string(),
+            merge_base_fallbacks: Vec::new(),
             ops: vec![
                 SyncOp::Fetch {
                     remote: "origin".to_string(),

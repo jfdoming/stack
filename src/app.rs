@@ -242,6 +242,7 @@ fn dispatch(ctx: &AppContext) -> Result<()> {
             &ctx.base_branch,
             &ctx.base_remote,
             commands::sync::SyncRunOptions {
+                allow_merge_base: args.allow_merge_base,
                 porcelain: ctx.cli.global.porcelain,
                 yes: ctx.cli.global.yes,
                 dry_run: args.dry_run,

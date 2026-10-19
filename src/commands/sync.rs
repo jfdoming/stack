@@ -1,16 +1,18 @@
 use std::io::{IsTerminal, stdin, stdout};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use crossterm::style::Stylize;
+use dialoguer::Confirm;
 
 use crate::core::{SyncPlanTiming, build_sync_plan};
 use crate::db::Database;
 use crate::git::Git;
 use crate::provider::Provider;
-use crate::ui::interaction::confirm_inline_yes_no;
+use crate::ui::interaction::{confirm_inline_yes_no, prompt_or_cancel};
 
 pub struct SyncRunOptions {
+    pub allow_merge_base: bool,
     pub porcelain: bool,
     pub yes: bool,
     pub dry_run: bool,
@@ -56,6 +58,21 @@ pub fn run(
         }
     }
 
+    if !opts.porcelain && !plan.merge_base_fallbacks.is_empty() {
+        println!(
+            "Fork-point history is unavailable for the branches below. Review the commits proposed for replay from their common ancestors; these may include changes previously removed from the base branch."
+        );
+        for recovery in &plan.merge_base_fallbacks {
+            println!(
+                "- {}: common ancestor {} with {}",
+                recovery.branch, recovery.old_base, recovery.parent
+            );
+            for commit in &recovery.commits {
+                println!("  {commit}");
+            }
+        }
+    }
+
     if opts.dry_run {
         emit_sync_timing(
             opts.debug,
@@ -79,6 +96,23 @@ pub fn run(
             &plan_timing,
         );
         return Ok(());
+    }
+
+    if !plan.merge_base_fallbacks.is_empty() && !opts.allow_merge_base {
+        if opts.yes || opts.porcelain || !stdout().is_terminal() || !stdin().is_terminal() {
+            return Err(anyhow!(
+                "fork-point recovery requires review: inspect `stack sync --dry-run`, then rerun with `stack sync --allow-merge-base --yes` to approve the common-ancestor boundaries"
+            ));
+        }
+        if !prompt_or_cancel(
+            Confirm::new()
+                .with_prompt("Use these common ancestors to replay the listed commits?")
+                .default(false)
+                .interact(),
+        )? {
+            println!("sync plan not applied");
+            return Ok(());
+        }
     }
 
     let should_apply = if opts.yes {

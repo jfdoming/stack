@@ -19,9 +19,20 @@ pub struct OperationView {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct MergeBaseFallbackView {
+    pub branch: String,
+    pub parent: String,
+    pub old_base: String,
+    pub expected_head: String,
+    pub commits: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SyncPlanView {
     pub base_branch: String,
     pub operations: Vec<OperationView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub merge_base_fallbacks: Vec<MergeBaseFallbackView>,
 }
 
 #[derive(Debug, Clone, Serialize)]

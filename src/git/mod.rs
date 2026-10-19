@@ -1613,6 +1613,36 @@ impl Git {
             .map(|s| s.trim().to_string())
     }
 
+    pub fn commit_summaries_between(&self, base: &str, head: &str) -> Result<Vec<String>> {
+        let range = format!(
+            "{}..{}",
+            self.resolve_object_id(base)?,
+            self.resolve_object_id(head)?
+        );
+        let output = self.capture([
+            "log",
+            "--reverse",
+            "--format=%h %s",
+            "--end-of-options",
+            &range,
+            "--",
+        ])?;
+        Ok(output.lines().map(ToOwned::to_owned).collect())
+    }
+
+    pub fn unique_merge_base(&self, parent_head: &str, child_head: &str) -> Result<String> {
+        let parent = self.resolve_object_id(parent_head)?;
+        let child = self.resolve_object_id(child_head)?;
+        let output = self.capture(["merge-base", "--all", &parent, &child])?;
+        let bases: Vec<_> = output.lines().collect();
+        match bases.as_slice() {
+            [base] => Ok((*base).to_string()),
+            _ => Err(anyhow!(
+                "cannot recover restack boundary: expected exactly one common ancestor"
+            )),
+        }
+    }
+
     pub fn merge_base_fork_point(&self, parent: &str, child: &str) -> Result<Option<String>> {
         let parent_ref = local_branch_ref(parent);
         let child = self.resolve_object_id(child)?;
@@ -1994,6 +2024,43 @@ mod tests {
 
         assert_eq!(git.preferred_sync_remote("origin").unwrap(), "upstream");
         assert_eq!(git.preferred_sync_remote("company").unwrap(), "upstream");
+    }
+
+    #[test]
+    fn recovery_requires_a_unique_common_ancestor() {
+        let (repo, git) = init_test_repo();
+        run_test_git(repo.path(), &["config", "user.email", "test@example.com"]);
+        run_test_git(repo.path(), &["config", "user.name", "Stack Test"]);
+        run_test_git(repo.path(), &["commit", "--allow-empty", "-m", "base"]);
+        let base = git.head_sha("main").unwrap();
+        let tree = git.capture(["rev-parse", "HEAD^{tree}"]).unwrap();
+        let commit = |parents: &[&str], subject: &str| {
+            let mut args = vec!["commit-tree", tree.trim(), "-m", subject];
+            for parent in parents {
+                args.extend(["-p", parent]);
+            }
+            let output = Command::new("git")
+                .current_dir(repo.path())
+                .args(["-c", "commit.gpgSign=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap().trim().to_string()
+        };
+        let a = commit(&[&base], "a");
+        let b = commit(&[&base], "b");
+        assert_eq!(git.unique_merge_base(&a, &b).unwrap(), base);
+        let left = commit(&[&a, &b], "left");
+        let right = commit(&[&b, &a], "right");
+        assert!(
+            git.unique_merge_base(&left, &right)
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one common ancestor")
+        );
+        let unrelated = commit(&[], "unrelated");
+        assert!(git.unique_merge_base(&a, &unrelated).is_err());
     }
 
     #[test]
