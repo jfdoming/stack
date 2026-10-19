@@ -3739,3 +3739,121 @@ fn sync_without_yes_does_not_push_in_non_interactive_mode() {
         "expected non-interactive sync without --yes not to push"
     );
 }
+
+#[test]
+fn sync_recovers_multiple_roots_with_missing_fork_points_after_explicit_consent() {
+    let repo = init_repo_without_origin();
+    let base = git_ref_sha(repo.path(), "refs/heads/main").unwrap();
+    let mut original_heads = Vec::new();
+    for branch in ["feat/one", "feat/two"] {
+        stack_cmd(repo.path())
+            .args(["create", "--parent", "main", "--name", branch])
+            .assert()
+            .success();
+        fs::write(repo.path().join("feature.txt"), branch).unwrap();
+        run_git(repo.path(), &["add", "feature.txt"]);
+        run_git(repo.path(), &["commit", "-m", branch]);
+        original_heads.push(git_ref_sha(repo.path(), &format!("refs/heads/{branch}")).unwrap());
+        run_git(repo.path(), &["checkout", "main"]);
+    }
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/one", "--name", "feat/child"])
+        .assert()
+        .success();
+    fs::write(repo.path().join("child.txt"), "child work\n").unwrap();
+    run_git(repo.path(), &["add", "child.txt"]);
+    run_git(repo.path(), &["commit", "-m", "child work"]);
+    run_git(repo.path(), &["checkout", "main"]);
+    fs::write(repo.path().join("upstream.txt"), "upstream work\n").unwrap();
+    run_git(repo.path(), &["add", "upstream.txt"]);
+    run_git(repo.path(), &["commit", "-m", "advance main"]);
+    run_git(repo.path(), &["reflog", "expire", "--expire=now", "--all"]);
+
+    let output = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let recoveries = plan["merge_base_fallbacks"].as_array().unwrap();
+    assert_eq!(recoveries.len(), 2);
+    for recovery in recoveries {
+        assert_eq!(recovery["old_base"], base);
+        assert_eq!(recovery["parent"], "main");
+        assert_eq!(recovery["commits"].as_array().unwrap().len(), 1);
+    }
+    stack_cmd(repo.path())
+        .args(["sync", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--allow-merge-base"));
+    for (branch, head) in ["feat/one", "feat/two"].iter().zip(&original_heads) {
+        assert_eq!(
+            git_ref_sha(repo.path(), &format!("refs/heads/{branch}")).as_ref(),
+            Some(head)
+        );
+    }
+    stack_cmd(repo.path())
+        .args(["sync", "--allow-merge-base", "--yes"])
+        .assert()
+        .success();
+    for branch in ["feat/one", "feat/two"] {
+        run_git(
+            repo.path(),
+            &["merge-base", "--is-ancestor", "main", branch],
+        );
+        let log = Command::new("git")
+            .current_dir(repo.path())
+            .args(["log", "--format=%s", &format!("main..{branch}")])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8(log.stdout).unwrap().trim(), branch);
+    }
+    run_git(
+        repo.path(),
+        &["merge-base", "--is-ancestor", "feat/one", "feat/child"],
+    );
+    let child_log = Command::new("git")
+        .current_dir(repo.path())
+        .args(["log", "--format=%s", "feat/one..feat/child"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(child_log.stdout).unwrap().trim(),
+        "child work"
+    );
+    let repeated = stack_cmd(repo.path())
+        .args(["sync", "--dry-run", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(repeated.status.success());
+    let plan: Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert!(plan.get("merge_base_fallbacks").is_none());
+}
+
+#[test]
+fn sync_recovery_does_not_guess_after_a_feature_parent_rewrite() {
+    let repo = init_repo_without_origin();
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/parent"])
+        .assert().success();
+    run_git(repo.path(), &["commit", "--allow-empty", "-m", "old parent"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "feat/parent", "--name", "feat/child"])
+        .assert().success();
+    run_git(repo.path(), &["commit", "--allow-empty", "-m", "child"]);
+    let child_head = git_ref_sha(repo.path(), "refs/heads/feat/child");
+    run_git(repo.path(), &["checkout", "feat/parent"]);
+    run_git(repo.path(), &["reset", "--hard", "main"]);
+    run_git(repo.path(), &["commit", "--allow-empty", "-m", "new parent"]);
+    run_git(repo.path(), &["reflog", "expire", "--expire=now", "--all"]);
+    stack_cmd(repo.path())
+        .args(["sync", "--allow-merge-base", "--yes"])
+        .assert().failure()
+        .stderr(predicate::str::contains("the prior fork point is unavailable"));
+    assert_eq!(git_ref_sha(repo.path(), "refs/heads/feat/child"), child_head);
+}

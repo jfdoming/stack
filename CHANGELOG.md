@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.51 - 2026-10-18
+- Added reviewed common-ancestor recovery for sync when base-branch fork points are missing, with an interactive confirmation and explicit `--allow-merge-base` approval for scripts.
+
 ## 0.18.50 - 2026-10-18
 - Added a `stack doctor --fix` suggestion when `stack doctor` reports repairable issues in human-readable output.
 

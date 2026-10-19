@@ -133,6 +133,11 @@ pub struct TrackArgs {
 
 #[derive(Debug, Args)]
 pub struct SyncArgs {
+    #[arg(
+        long,
+        help = "Allow reviewed common-ancestor recovery when base-branch fork points are unavailable"
+    )]
+    pub allow_merge_base: bool,
     #[arg(short = 'n', long, help = "Plan only; do not execute git operations")]
     pub dry_run: bool,
 }

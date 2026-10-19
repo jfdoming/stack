@@ -62,6 +62,14 @@ stack completions zsh > ~/.zsh/completions/_stack
 
 `stack pr --dry-run` stays offline and reports only its local push/link plan without checking for an existing PR. `stack pr` requires a named local head branch and rejects detached HEAD.
 
+## Recovering missing fork points
+
+If the reflog no longer contains the fork point for a branch directly based on the repository's base branch, `stack sync` shows its unique common ancestor and the commits proposed for replay. Review those commits before accepting the recovery prompt, which defaults to No: a common ancestor can include changes previously removed from the base branch. Sync then applies the approved plan to all affected branches and their descendants.
+
+Use `stack sync --dry-run` to preview recovery without changing branch refs. For scripts, approve the reviewed boundaries with `stack sync --allow-merge-base --yes`; `--yes` alone does not approve this recovery. Porcelain previews include `merge_base_fallbacks` with each affected branch, parent, common ancestor, original head, and commit summaries.
+
+Recovery requires exactly one common ancestor. Missing fork points after a feature parent was rewritten still require manual inspection.
+
 ## Fork and maintainer workflows
 
 `stack` stores repository metadata in Git's shared common directory (normally `.git/stack.db`, shared by linked worktrees) and treats the push target separately from the remote tracked by the base branch:
