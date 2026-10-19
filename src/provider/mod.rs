@@ -107,11 +107,20 @@ impl GithubProvider {
             .output()
             .with_context(|| format!("failed to run gh {args:?}"))?;
         if !output.status.success() {
-            eprintln!(
-                "warning: gh command failed {:?}: {}",
-                args,
-                String::from_utf8_lossy(&output.stderr)
-            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let ["pr", "view", number, ..] = args
+                && stderr.trim()
+                    == format!(
+                        "GraphQL: Could not resolve to a PullRequest with the number of {number}. (repository.pullRequest)"
+                    )
+            {
+                if self.debug {
+                    eprintln!("debug: cached PR lookup missed {args:?}: {}", stderr.trim());
+                }
+                return Ok(None);
+            }
+
+            eprintln!("warning: gh command failed {:?}: {}", args, stderr);
             return Ok(None);
         }
         Ok(Some(String::from_utf8(output.stdout)?))

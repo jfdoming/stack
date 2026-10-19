@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.52 - 2026-10-18
+- Suppressed expected cached PR lookup misses across forks while retaining other failure warnings and debug diagnostics.
+
 ## 0.18.51 - 2026-10-18
 - Added reviewed common-ancestor recovery for sync when base-branch fork points are missing, with an interactive confirmation and explicit `--allow-merge-base` approval for scripts.
 

@@ -112,7 +112,7 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - A named attached branch is required before any PR lookup or push planning.
 - PR creation is skipped when a PR already exists for the current head branch.
 - PR creation blocks fork-only child bases that GitHub cannot represent in the canonical repository.
-- PR lookup treats cached numbers as hints, verifies the exact head branch and owner, and retains the base repository scope for any later mutation.
+- PR lookup treats cached numbers as hints, verifies the exact head branch and owner, and retains the base repository scope for any later mutation. An exact GitHub GraphQL missing-PR response for the requested cached number is an expected lookup miss: continue searching without a warning and show the diagnostic only with `--debug`. Other failures, including mixed error responses, remain warnings.
 
 ## Navigation behaviour
 - Stack navigation treats the configured base branch as outside the stack.
