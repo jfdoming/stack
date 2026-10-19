@@ -1,4 +1,45 @@
 #[test]
+fn doctor_suggests_fix_for_missing_branch_records() {
+    let repo = init_repo();
+    let hint = "Run `stack doctor --fix` to repair these issues.";
+
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/missing"])
+        .assert()
+        .success();
+    run_git(repo.path(), &["checkout", "main"]);
+    run_git(repo.path(), &["branch", "-D", "feat/missing"]);
+
+    stack_cmd(repo.path())
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("missing_git_branch"))
+        .stdout(predicate::str::contains(hint).count(1));
+
+    let output = stack_cmd(repo.path())
+        .args(["doctor", "--porcelain"])
+        .output()
+        .expect("run porcelain doctor");
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
+    assert_eq!(json["issues"][0]["code"], "missing_git_branch");
+    assert_eq!(json["fix_applied"], false);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(hint));
+
+    stack_cmd(repo.path())
+        .args(["doctor", "--fix"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(hint).not());
+    stack_cmd(repo.path())
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout("doctor: no issues found\n");
+}
+
+#[test]
 fn doctor_fix_clears_parent_link_on_base_branch() {
     let repo = init_repo();
 
@@ -56,6 +97,12 @@ fn doctor_fix_clears_incomplete_pr_cache_fields() {
         [],
     )
     .expect("seed incomplete pr cache");
+
+    stack_cmd(repo.path())
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Run `stack doctor --fix` to repair these issues."));
 
     stack_cmd(repo.path())
         .args(["doctor", "--porcelain"])

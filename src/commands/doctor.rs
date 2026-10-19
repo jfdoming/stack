@@ -132,6 +132,9 @@ pub fn run(db: &Database, git: &Git, porcelain: bool, fix: bool) -> Result<()> {
         for issue in &issues {
             println!("- [{}] {}: {}", issue.severity, issue.code, issue.message);
         }
+        if !fix {
+            println!("Run `stack doctor --fix` to repair these issues.");
+        }
     }
     if fix {
         println!("doctor maintenance applied where possible");
