@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.53 - 2026-10-18
+- Updated the locked `lru` dependency to 0.18.2 to address RUSTSEC-2026-0253 and pass the release security audit.
+
 ## 0.18.52 - 2026-10-18
 - Suppressed expected cached PR lookup misses across forks while retaining other failure warnings and debug diagnostics.
 
