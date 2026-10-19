@@ -18,6 +18,12 @@ Use this file for documentation update rules and scope decisions.
   Released version sections are immutable once that version bump is committed/pushed.
   Put subsequent changes under `## Unreleased` until the next release.
 
+## README Scope
+- Keep `README.md` focused on the project overview, installation, quick start, and common workflows.
+- Do not add a README section for each feature, bug fix, troubleshooting case, recovery procedure, or implementation detail.
+- Document detailed behaviour and recovery procedures in `.agents/development.md` or `.agents/architecture.md`, as appropriate. Record release changes in `CHANGELOG.md`.
+- Update the README only when its existing overview or common usage guidance needs to change, or when the user explicitly requests an addition.
+
 ## Writing Style
 - Use Canadian English for user-facing docs.
 - Prefer concise, task-scoped updates over broad rewrites.
