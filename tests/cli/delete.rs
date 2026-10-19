@@ -1255,3 +1255,57 @@ fn delete_without_branch_in_non_interactive_mode_requires_argument_when_multiple
             "branch required in non-interactive mode",
         ));
 }
+
+#[cfg(unix)]
+#[test]
+fn cached_pr_lookup_misses_are_quiet_and_still_search_other_repositories() {
+    let repo = init_repo();
+    run_git(repo.path(), &["remote", "add", "fork", "git@github.com:alice/stack-test.git"]);
+    stack_cmd(repo.path())
+        .args(["create", "--parent", "main", "--name", "feat/lookup"])
+        .assert().success();
+    run_git(repo.path(), &["config", "branch.feat/lookup.remote", "fork"]);
+    let conn = Connection::open(repo.path().join(".git/stack.db")).unwrap();
+    conn.execute("UPDATE branches SET cached_pr_number = 8388, cached_pr_state = 'open' WHERE name = 'feat/lookup'", []).unwrap();
+    let fake_bin = repo.path().join("fake-bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let fake_gh = fake_bin.join("gh");
+    fs::write(&fake_gh, r#"#!/usr/bin/env bash
+if [[ "$1 $2" == "pr view" ]]; then
+  echo "$LOOKUP_ERROR" >&2
+  exit 1
+fi
+if [[ "$1 $2" == "pr list" && "$*" == *"--repo alice/stack-test"* ]]; then
+  echo '[{"number":77,"state":"OPEN","headRefName":"feat/lookup","headRepositoryOwner":{"login":"alice"},"url":"https://github.com/alice/stack-test/pull/77"}]'
+  exit 0
+fi
+echo '[]'
+"#).unwrap();
+    fs::set_permissions(&fake_gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let test_path = format!("{}:{}", fake_bin.display(), env::var("PATH").unwrap_or_default());
+    let missing = "GraphQL: Could not resolve to a PullRequest with the number of 8388. (repository.pullRequest)";
+    for (error, should_warn) in [
+        (missing.to_string(), false),
+        ("GraphQL: Could not resolve to a Repository with the name 'acme/stack-test'. (repository)".to_string(), true),
+        (missing.replace("8388", "9999"), true),
+        ("HTTP 401: Bad credentials".to_string(), true),
+        ("dial tcp: connection refused".to_string(), true),
+        (format!("{missing}\nHTTP 403: API rate limit exceeded"), true),
+    ] {
+        let output = stack_cmd(repo.path())
+            .env("PATH", &test_path).env("LOOKUP_ERROR", &error)
+            .args(["delete", "feat/lookup", "--dry-run"])
+            .output().unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("PR: #77"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr.contains("warning: gh command failed"), should_warn, "{stderr}");
+        if should_warn { assert!(stderr.contains(&error)); }
+    }
+    stack_cmd(repo.path())
+        .env("PATH", &test_path).env("LOOKUP_ERROR", missing)
+        .args(["--debug", "delete", "feat/lookup", "--dry-run"])
+        .assert().success()
+        .stderr(predicate::str::contains("debug: cached PR lookup missed"))
+        .stderr(predicate::str::contains("warning: gh command failed").not());
+}
