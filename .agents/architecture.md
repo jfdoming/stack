@@ -144,5 +144,5 @@ This project is a Rust CLI/TUI for stacked PR workflows.
 - Generated markdown link labels and branch path segments in stack-managed PR/compare content are escaped/URL-encoded to reduce malformed-link and markdown-injection risks.
 
 ## Doctor behaviour
-- `stack doctor` validates stack metadata integrity and reports repairable issues.
+- `stack doctor` validates stack metadata integrity and reports repairable issues. Human-readable output includes a `stack doctor --fix` suggestion when issues are found, unless `--fix` is already in use; porcelain output remains JSON only.
 - `stack doctor --fix` can remove missing-branch records, clear invalid base-parent links, break parent-link cycles by clearing only actual cycle-member links, and reset incomplete PR cache fields; descendants that merely lead into a cycle stay attached.

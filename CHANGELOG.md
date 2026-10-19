@@ -4,6 +4,9 @@ All notable changes to this repository are documented here. Each version in `Car
 
 ## Unreleased
 
+## 0.18.50 - 2026-10-18
+- Added a `stack doctor --fix` suggestion when `stack doctor` reports repairable issues in human-readable output.
+
 ## 0.18.49 - 2026-07-25
 - Replaced repository-wide failed-move rollback gating with schema-v7 per-branch topology stamps, preserving participant ABA detection while allowing compensation after unrelated topology changes.
 - Compensated failed merged-branch pruning by restoring the deleted ref and exact branch configuration when SQLite splicing fails, including guarded stale-configuration cleanup when the ref is already missing.
